@@ -1,0 +1,16 @@
+{
+    "source": "Example only: invented models and prices. Copy this file and replace both with your provider's model ids and its published rates.",
+    "models": {
+        "example-reasoning-model": {
+            "inputUsdPerMillionTokens": 0.5,
+            "outputUsdPerMillionTokens": 2,
+            "cachedInputUsdPerMillionTokens": 0.05,
+            "cacheWriteUsdPerMillionTokens": 0.6,
+            "reasoningUsdPerMillionTokens": 2
+        },
+        "example-vision-model": {
+            "inputUsdPerMillionTokens": 1,
+            "outputUsdPerMillionTokens": 4
+        }
+    }
+}

@@ -1,0 +1,65 @@
+# Build the container action image on CI.
+#
+# The action's `runs` block builds its image fresh inside every job that uses it, so a Dockerfile
+# change has no other way to prove itself before the PR merges — and no action-backed gate in this
+# repository exercises the image by default (the example workflow lives in forks). The recipe
+# carries its own build-time proofs: git and unzip round-trips, a headless launch of each browser,
+# and a boot of the face with no inputs that must end in the named failure. This job only has to
+# build it. It runs on the repository's own runners: the organization's IP allow list refuses
+# GitHub-hosted runners, and those runners route `docker build` to a remote builder with no daemon
+# to `docker run` an image — which is why the boot proof lives in the recipe. It runs only when a
+# pull request touches the image recipe or on manual dispatch.
+name: Action image build check
+
+on:
+    workflow_dispatch:
+    pull_request:
+        paths:
+            - action.Dockerfile
+            # The `runs` block builds the Dockerfile, so the metadata it points at travels with
+            # the recipe: a broken reference must not merge without an image check on the PR.
+            - action.yml
+            # A `src/` change is an image change: the recipe ships the sources and boots them
+            # through tsx, so the module graph inside the image is the checkout's.
+            - src/**
+            # tsx resolves the module graph through the tsconfig the COPY layer reads.
+            - tsconfig.json
+            # The build context's shape is load-bearing for the COPY layers: what the daemon
+            # receives (and what .dockerignore excludes from it) must never break the image
+            # silently.
+            - .dockerignore
+            # The frozen-lockfile layer reads `package.json` and the lockfile together, so either
+            # one alone can break it — a dependency added without regenerating the lock, or an
+            # `engines`/`packageManager` bump.
+            - package.json
+            - pnpm-lock.yaml
+            - .github/workflows/action-image-check.yml
+
+permissions: {}
+
+concurrency:
+    group: action-image-check-${{ github.ref }}
+    cancel-in-progress: true
+
+jobs:
+    build:
+        runs-on: team-filters
+        timeout-minutes: 30
+        permissions:
+            contents: read
+        steps:
+            - name: Check out the candidate source
+              uses: actions/checkout@v6
+              with:
+                  persist-credentials: false
+
+            # No secrets: the recipe fetches only the pnpm package registry and the browser
+            # builds, nothing authenticated — keeping it that way is why the checkout drops its
+            # credentials above.
+            - name: Build the container action image
+              run: |
+                  set -euo pipefail
+                  DOCKER_BUILDKIT=1 docker build \
+                      --progress plain \
+                      -f action.Dockerfile \
+                      .

@@ -1,0 +1,18 @@
+{
+    "$schema": "./node_modules/oxfmt/configuration_schema.json",
+    "printWidth": 100,
+    "tabWidth": 4,
+    "singleQuote": true,
+    "semi": true,
+    "trailingComma": "all",
+    "jsdoc": {
+        "commentLineStrategy": "multiline"
+    },
+    "ignorePatterns": [
+        "dist/",
+        "node_modules/",
+        "src/**/fixtures/",
+        "src/prompts/documents/",
+        "**/*.md"
+    ]
+}

@@ -1,0 +1,80 @@
+{
+    "$schema": "./node_modules/oxlint/configuration_schema.json",
+    "plugins": ["eslint", "typescript", "unicorn", "oxc", "jsdoc", "import"],
+    "jsPlugins": [
+        { "name": "jsdoc-js", "specifier": "eslint-plugin-jsdoc" },
+        { "name": "local", "specifier": "./lint/local-rules.mjs" }
+    ],
+    "categories": {
+        "correctness": "error",
+        "suspicious": "warn"
+    },
+    "settings": {
+        "jsdoc": {
+            "ignorePrivate": true,
+            "ignoreInternal": true
+        }
+    },
+    "rules": {
+        "curly": ["error", "all"],
+        "jsdoc-js/require-jsdoc": [
+            "error",
+            {
+                "checkConstructors": false,
+                "require": {
+                    "FunctionDeclaration": true,
+                    "MethodDefinition": true,
+                    "ClassDeclaration": true,
+                    "ArrowFunctionExpression": false,
+                    "FunctionExpression": false
+                },
+                "contexts": ["TSPropertySignature", "TSMethodSignature"]
+            }
+        ],
+        "jsdoc-js/require-param": "error",
+        "jsdoc-js/require-param-name": "error",
+        "jsdoc-js/require-param-description": "error",
+        "jsdoc-js/require-returns": "error",
+        "jsdoc-js/require-returns-description": "error",
+        "jsdoc-js/require-param-type": "off",
+        "jsdoc-js/require-returns-type": "off",
+        "jsdoc/check-tag-names": "error",
+        "jsdoc/check-property-names": "error",
+        "jsdoc/empty-tags": "error",
+        "jsdoc/implements-on-classes": "error",
+        "import/extensions": ["error", "never"],
+        "import/no-unassigned-import": "off",
+        "local/no-lab-imports": "error",
+        "local/no-adguard-cli-vocabulary": "error",
+        "unicorn/no-array-sort": "off"
+    },
+    "overrides": [
+        {
+            "files": ["**/*.test.ts"],
+            "rules": {
+                "jsdoc-js/require-jsdoc": "off",
+                "jsdoc-js/require-param": "off",
+                "jsdoc-js/require-param-description": "off",
+                "jsdoc-js/require-returns": "off",
+                "jsdoc-js/require-returns-description": "off"
+            }
+        },
+        {
+            "files": ["lint/**/*.mjs"],
+            "rules": {
+                "import/extensions": ["error", "always"]
+            }
+        },
+        {
+            // The environment layer is below knowledge and local: it owns the Host/model boundary
+            // contracts both of them depend on. A refusal vocabulary once lived in src/knowledge
+            // while its other half lived here, so src/environment imported upward to record its
+            // own refusals; this keeps the edge pointing one way.
+            "files": ["src/environment/**"],
+            "rules": {
+                "no-restricted-imports": ["error", { "patterns": ["../knowledge/*", "../local/*"] }]
+            }
+        }
+    ],
+    "ignorePatterns": ["dist/", "node_modules/"]
+}

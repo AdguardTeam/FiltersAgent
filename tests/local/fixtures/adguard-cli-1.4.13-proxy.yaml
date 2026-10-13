@@ -1,0 +1,97 @@
+proxy_mode: manual
+filtered_ports: 80:5221,5300:49151
+show_hints: false
+update_channel: default
+send_crash_reports: false
+log_level: info
+show_notifications: false
+listen_address: 127.0.0.1
+listen_ports:
+    http_proxy: -1
+    socks5_proxy: -1
+listen_auth:
+    enabled: false
+    username: admin
+    password: admin
+worker_threads: 4
+access_log_file: access.log
+outbound_interface: null
+ad_blocking_enabled: true
+adguard_headers_enabled: false
+auto_enable_language_filters: false
+filters:
+    - flm://
+dns_filtering:
+    enabled: false
+    upstream: default
+    fallbacks: default
+    bootstraps: default
+    filters: []
+    block_ech: false
+    listen_port: -1
+https_filtering:
+    enabled: true
+    certificates_cache: .
+    root_certificate_name: AdGuard Filters Agent
+    filter_ev_certificates: false
+    enable_tls13: true
+    ocsp_check_enabled: true
+    enforce_certificate_transparency: true
+    http3_filtering_enabled: false
+    exclusions: https_exclusions.txt
+    filter_secure_dns_mode: off
+    encrypted_client_hello: false
+safebrowsing:
+    enabled: false
+    send_anonymous_statistics: false
+crlite:
+    enabled: false
+stealthmode:
+    enabled: false
+    block_third_party_cookies: true
+    block_third_party_cookies_min: 180
+    block_first_party_cookies: false
+    block_first_party_cookies_min: 4320
+    disable_third_party_cache: true
+    remove_x_client_data_header: true
+    send_do_not_track_signals: true
+    hide_ip: false
+    custom_ip: 208.54.104.184
+    block_third_party_authorization: true
+    hide_search_queries: true
+    remove_referrer_from_third_party_requests: true
+    custom_referrer: ''
+    hide_user_agent: true
+    custom_user_agent: ''
+    block_web_rtc: false
+    block_browser_push_api: true
+    block_browser_location_api: true
+    block_browser_flash: true
+    block_browser_java: true
+    anti_dpi:
+        enabled: false
+        client_hello_split_fragment_size: 1
+        http_split_fragment_size: 1
+        split_delay_ms: 20
+        http_space_juggling: true
+        increase_first_packet_size: false
+outbound_proxy:
+    enabled: false
+    mode: HTTP
+    host: localhost
+    port: 3128
+    username: ''
+    password: ''
+    trust_any_certificate: false
+    udp_through_socks5_enabled: true
+userscripts: []
+har_writer:
+    enabled: false
+    location: .
+apps:
+    - include-list: browsers.yaml
+    - name: '*vpn*'
+      action: 'bypass'
+      skip_outbound_proxy: true
+    - name: '*'
+      action: 'bypass_https'

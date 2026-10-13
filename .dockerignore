@@ -1,0 +1,16 @@
+.git
+.env
+.env.*
+!.env.example
+node_modules
+dist
+artifacts
+traces
+coverage
+tmp
+# Local and test-only data no image reads: spec drafts and the screenshot fixtures of the
+# end-to-end cases. Source directories stay in the context, so a recipe that copies the whole
+# tree still receives them.
+.sdd
+lab/benchmark/e2e/cases
+*.log

@@ -1,0 +1,499 @@
+{
+    "getFilteringInfoByTabId": {
+        "tabId": 209794860,
+        "title": "וואלה חדשות. ספורט. סלבס. אוכל - עדכונים ודיווחים שוטפים",
+        "isExtensionTab": false,
+        "domain": "walla.co.il",
+        "filteringEvents": [
+            {
+                "eventId": "umMIt_KUtpb2vXLVFm3IR",
+                "requestUrl": "https://www.walla.co.il/",
+                "requestDomain": "walla.co.il",
+                "frameUrl": "https://www.walla.co.il/",
+                "frameDomain": "walla.co.il",
+                "requestType": "document",
+                "timestamp": 1790280216180.921,
+                "requestThirdParty": false,
+                "method": "GET",
+                "stealthActions": 8,
+                "statusCode": 200
+            },
+            {
+                "eventId": "-GFFdqJMZRkNanbJtRhpy",
+                "requestUrl": "https://www.walla.co.il/",
+                "frameUrl": "https://www.walla.co.il/",
+                "requestType": "csp",
+                "timestamp": 1790280216483,
+                "frameDomain": "walla.co.il",
+                "requestDomain": "walla.co.il",
+                "requestRule": {
+                    "filterId": 2,
+                    "ruleIndex": 1307085,
+                    "appliedRuleText": "@@||walla.co.il^$csp",
+                    "allowlistRule": true,
+                    "isImportant": false,
+                    "documentLevelRule": false,
+                    "isStealthModeRule": false,
+                    "cspRule": true,
+                    "cookieRule": false,
+                    "modifierValue": ""
+                }
+            },
+            {
+                "eventId": "G7VJfarZLH9LVi7lW9O73",
+                "requestUrl": "https://www.walla.co.il/",
+                "frameUrl": "https://www.walla.co.il/",
+                "requestType": "permissionsPolicy",
+                "timestamp": 1790280216483,
+                "frameDomain": "walla.co.il",
+                "requestDomain": "walla.co.il",
+                "requestRule": {
+                    "filterId": 3,
+                    "ruleIndex": 51957,
+                    "appliedRuleText": "/.*/$permissions=join-ad-interest-group=(),document",
+                    "allowlistRule": false,
+                    "isImportant": false,
+                    "documentLevelRule": false,
+                    "isStealthModeRule": false,
+                    "cspRule": false,
+                    "permissionsRule": true,
+                    "cookieRule": false,
+                    "modifierValue": "join-ad-interest-group=()"
+                }
+            },
+            {
+                "eventId": "pucM8q6B_e127GXBhYa7X",
+                "requestUrl": "https://www.walla.co.il/_next/static/css/bcb06c741eb696c9.css",
+                "requestDomain": "walla.co.il",
+                "frameUrl": "https://www.walla.co.il",
+                "frameDomain": "walla.co.il",
+                "requestType": "stylesheet",
+                "timestamp": 1790280216496.209,
+                "requestThirdParty": false,
+                "method": "GET",
+                "stealthActions": 8,
+                "statusCode": 200,
+                "declarativeRuleInfo": {
+                    "sourceRules": [
+                        {
+                            "sourceRule": "||walla.co.il^$csp=script-src 'self' * blob: data: 'unsafe-inline',domain=animals.walla.co.il|b.walla.co.il|buzzit.walla.co.il|cars.walla.co.il|celebs.walla.co.il|e.walla.co.il|elections.walla.co.il|fashion.walla.co.il|finance.walla.co.il|food.walla.co.il|healthy.walla.co.il|home.walla.co.il|judaism.walla.co.il|mag.walla.co.il|movies.walla.co.il|nadlan.walla.co.il|news.walla.co.il|sports.walla.co.il|tags.walla.co.il|tech.walla.co.il|travel.walla.co.il|tv-guide.walla.co.il|viva.walla.co.il|vod.walla.co.il|weather.walla.co.il|www.walla.co.il",
+                            "filterId": 108
+                        }
+                    ],
+                    "declarativeRuleJson": "{\"action\":{\"responseHeaders\":[{\"header\":\"Content-Security-Policy\",\"operation\":\"append\",\"value\":\"script-src 'self' * blob: data: 'unsafe-inline'\"}],\"type\":\"modifyHeaders\"},\"condition\":{\"initiatorDomains\":[\"animals.walla.co.il\",\"b.walla.co.il\",\"buzzit.walla.co.il\",\"cars.walla.co.il\",\"celebs.walla.co.il\",\"e.walla.co.il\",\"elections.walla.co.il\",\"fashion.walla.co.il\",\"finance.walla.co.il\",\"food.walla.co.il\",\"healthy.walla.co.il\",\"home.walla.co.il\",\"judaism.walla.co.il\",\"mag.walla.co.il\",\"movies.walla.co.il\",\"nadlan.walla.co.il\",\"news.walla.co.il\",\"sports.walla.co.il\",\"tags.walla.co.il\",\"tech.walla.co.il\",\"travel.walla.co.il\",\"tv-guide.walla.co.il\",\"viva.walla.co.il\",\"vod.walla.co.il\",\"weather.walla.co.il\",\"www.walla.co.il\"],\"resourceTypes\":[\"main_frame\",\"sub_frame\",\"stylesheet\",\"script\",\"image\",\"font\",\"object\",\"xmlhttprequest\",\"ping\",\"csp_report\",\"media\",\"websocket\",\"webtransport\",\"webbundle\",\"other\"],\"urlFilter\":\"||walla.co.il^\"},\"id\":438971924,\"priority\":105}"
+                }
+            },
+            {
+                "eventId": "QFuXi9siGPvY5XclhKmt_",
+                "requestUrl": "https://www.walla.co.il/_next/static/css/4edc98c131ac62da.css",
+                "requestDomain": "walla.co.il",
+                "frameUrl": "https://www.walla.co.il",
+                "frameDomain": "walla.co.il",
+                "requestType": "stylesheet",
+                "timestamp": 1790280216497.136,
+                "requestThirdParty": false,
+                "method": "GET",
+                "stealthActions": 8,
+                "statusCode": 200,
+                "declarativeRuleInfo": {
+                    "sourceRules": [
+                        {
+                            "sourceRule": "||walla.co.il^$csp=script-src 'self' * blob: data: 'unsafe-inline',domain=animals.walla.co.il|b.walla.co.il|buzzit.walla.co.il|cars.walla.co.il|celebs.walla.co.il|e.walla.co.il|elections.walla.co.il|fashion.walla.co.il|finance.walla.co.il|food.walla.co.il|healthy.walla.co.il|home.walla.co.il|judaism.walla.co.il|mag.walla.co.il|movies.walla.co.il|nadlan.walla.co.il|news.walla.co.il|sports.walla.co.il|tags.walla.co.il|tech.walla.co.il|travel.walla.co.il|tv-guide.walla.co.il|viva.walla.co.il|vod.walla.co.il|weather.walla.co.il|www.walla.co.il",
+                            "filterId": 108
+                        }
+                    ],
+                    "declarativeRuleJson": "{\"action\":{\"responseHeaders\":[{\"header\":\"Content-Security-Policy\",\"operation\":\"append\",\"value\":\"script-src 'self' * blob: data: 'unsafe-inline'\"}],\"type\":\"modifyHeaders\"},\"condition\":{\"initiatorDomains\":[\"animals.walla.co.il\",\"b.walla.co.il\",\"buzzit.walla.co.il\",\"cars.walla.co.il\",\"celebs.walla.co.il\",\"e.walla.co.il\",\"elections.walla.co.il\",\"fashion.walla.co.il\",\"finance.walla.co.il\",\"food.walla.co.il\",\"healthy.walla.co.il\",\"home.walla.co.il\",\"judaism.walla.co.il\",\"mag.walla.co.il\",\"movies.walla.co.il\",\"nadlan.walla.co.il\",\"news.walla.co.il\",\"sports.walla.co.il\",\"tags.walla.co.il\",\"tech.walla.co.il\",\"travel.walla.co.il\",\"tv-guide.walla.co.il\",\"viva.walla.co.il\",\"vod.walla.co.il\",\"weather.walla.co.il\",\"www.walla.co.il\"],\"resourceTypes\":[\"main_frame\",\"sub_frame\",\"stylesheet\",\"script\",\"image\",\"font\",\"object\",\"xmlhttprequest\",\"ping\",\"csp_report\",\"media\",\"websocket\",\"webtransport\",\"webbundle\",\"other\"],\"urlFilter\":\"||walla.co.il^\"},\"id\":438971924,\"priority\":105}"
+                }
+            },
+            {
+                "eventId": "GIyR_vNANxiLVgdhF6DZV",
+                "requestUrl": "https://image-resizer-walla.walla.cloud/image/2026/9/4/images/1790274593021_walla-media-picture_3974x2649.webp?width=720&quality=75",
+                "requestDomain": "image-resizer-walla.walla.cloud",
+                "frameUrl": "https://www.walla.co.il",
+                "frameDomain": "walla.co.il",
+                "requestType": "image",
+                "timestamp": 1790280216497.614,
+                "requestThirdParty": true,
+                "method": "GET",
+                "stealthActions": 8,
+                "statusCode": 200
+            },
+            {
+                "eventId": "eUIloF0OUVgdAI3aJiiO7",
+                "requestUrl": "https://tags.dxmdp.com/tags/bc8a7a32-7d98-4226-8af9-d2a43a8621cc/dmp-provider.js",
+                "requestDomain": "tags.dxmdp.com",
+                "frameUrl": "https://www.walla.co.il",
+                "frameDomain": "walla.co.il",
+                "requestType": "script",
+                "timestamp": 1790280216499.319,
+                "requestThirdParty": true,
+                "method": "GET",
+                "requestRule": {
+                    "filterId": 3,
+                    "ruleIndex": 2789844,
+                    "appliedRuleText": "||tags.dxmdp.com^",
+                    "allowlistRule": false,
+                    "isImportant": false,
+                    "documentLevelRule": false,
+                    "isStealthModeRule": false,
+                    "cspRule": false,
+                    "cookieRule": false
+                },
+                "declarativeRuleInfo": {
+                    "sourceRules": [
+                        {
+                            "sourceRule": "||tags.dxmdp.com^",
+                            "filterId": 3
+                        }
+                    ],
+                    "declarativeRuleJson": "{\"action\":{\"type\":\"block\"},\"condition\":{\"urlFilter\":\"||tags.dxmdp.com^\"},\"id\":1070282910,\"priority\":1}"
+                }
+            },
+            {
+                "script": true,
+                "eventId": "DNnUXiW3RAUCVGH2f28FY",
+                "requestUrl": "https://www.walla.co.il/",
+                "frameUrl": "https://www.walla.co.il/",
+                "frameDomain": "walla.co.il",
+                "requestType": "document",
+                "timestamp": 1790280216607.17,
+                "requestRule": {
+                    "filterId": 2,
+                    "ruleIndex": 1307267,
+                    "appliedRuleText": "walla.co.il#%#window.atob = function() { };",
+                    "cssRule": false,
+                    "scriptRule": true,
+                    "contentRule": false
+                }
+            },
+            {
+                "script": true,
+                "eventId": "b8C2m5l3hzhTLMvD2YIIY",
+                "requestUrl": "https://www.walla.co.il/",
+                "frameUrl": "https://www.walla.co.il/",
+                "frameDomain": "walla.co.il",
+                "requestType": "document",
+                "timestamp": 1790280216607.17,
+                "requestRule": {
+                    "filterId": 108,
+                    "ruleIndex": 209359,
+                    "appliedRuleText": "6days.walla.co.il,animals.walla.co.il,astrology.walla.co.il,b.walla.co.il,buzzit.walla.co.il,cars.walla.co.il,celebs.walla.co.il,e.walla.co.il,elections.walla.co.il,euro.walla.co.il,fashion.walla.co.il,finance.walla.co.il,food.walla.co.il,healthy.walla.co.il,home.walla.co.il,judaism.walla.co.il,kids.walla.co.il,mag.walla.co.il,movies.walla.co.il,mundial.walla.co.il,nadlan.walla.co.il,news.walla.co.il,nick.walla.co.il,olympics.walla.co.il,sports.walla.co.il,tags.walla.co.il,tech.walla.co.il,travel.walla.co.il,tv-guide.walla.co.il,usaelections.walla.co.il,viva.walla.co.il,vod.walla.co.il,weather.walla.co.il,www.walla.co.il#%#//scriptlet('ubo-aopr', 'btoa')",
+                    "cssRule": false,
+                    "scriptRule": true,
+                    "contentRule": false
+                }
+            },
+            {
+                "script": true,
+                "eventId": "ML25WSTT31ZX8jG6ndAuv",
+                "requestUrl": "https://www.walla.co.il/",
+                "frameUrl": "https://www.walla.co.il/",
+                "frameDomain": "walla.co.il",
+                "requestType": "document",
+                "timestamp": 1790280216607.17,
+                "requestRule": {
+                    "filterId": 108,
+                    "ruleIndex": 210023,
+                    "appliedRuleText": "walla.co.il#%#//scriptlet('ubo-aopr', 'isMobileasokita')",
+                    "cssRule": false,
+                    "scriptRule": true,
+                    "contentRule": false
+                }
+            },
+            {
+                "script": true,
+                "eventId": "d9kQaVLNn5yG7bz4YZ4zl",
+                "requestUrl": "https://www.walla.co.il/",
+                "frameUrl": "https://www.walla.co.il/",
+                "frameDomain": "walla.co.il",
+                "requestType": "document",
+                "timestamp": 1790280216607.17,
+                "requestRule": {
+                    "filterId": 108,
+                    "ruleIndex": 210081,
+                    "appliedRuleText": "walla.co.il#%#//scriptlet('ubo-nowebrtc')",
+                    "cssRule": false,
+                    "scriptRule": true,
+                    "contentRule": false
+                }
+            },
+            {
+                "script": true,
+                "eventId": "Q-Nb-8mGuQo6lT14FsHe4",
+                "requestUrl": "https://www.walla.co.il/",
+                "frameUrl": "https://www.walla.co.il/",
+                "frameDomain": "walla.co.il",
+                "requestType": "document",
+                "timestamp": 1790280216607.17,
+                "requestRule": {
+                    "filterId": 108,
+                    "ruleIndex": 210179,
+                    "appliedRuleText": "walla.co.il#%#//scriptlet('ubo-nostif', '()', '1500')",
+                    "cssRule": false,
+                    "scriptRule": true,
+                    "contentRule": false
+                }
+            },
+            {
+                "script": true,
+                "eventId": "WKSb_nOVUtNJfvXVlrUiR",
+                "requestUrl": "https://www.walla.co.il/",
+                "frameUrl": "https://www.walla.co.il/",
+                "frameDomain": "walla.co.il",
+                "requestType": "document",
+                "timestamp": 1790280216607.17,
+                "requestRule": {
+                    "filterId": 108,
+                    "ruleIndex": 210507,
+                    "appliedRuleText": "sheee.co.il,walla.co.il#%#//scriptlet('ubo-no-fetch-if', 'adsbygoogle')",
+                    "cssRule": false,
+                    "scriptRule": true,
+                    "contentRule": false
+                }
+            },
+            {
+                "script": true,
+                "eventId": "d3NOBTpllczYQDK-PHXJz",
+                "requestUrl": "https://www.walla.co.il/",
+                "frameUrl": "https://www.walla.co.il/",
+                "frameDomain": "walla.co.il",
+                "requestType": "document",
+                "timestamp": 1790280216607.17,
+                "requestRule": {
+                    "filterId": 108,
+                    "ruleIndex": 210580,
+                    "appliedRuleText": "sheee.co.il,walla.co.il,~mail.walla.co.il#%#//scriptlet('ubo-aopr', 'googletag.cmd')",
+                    "cssRule": false,
+                    "scriptRule": true,
+                    "contentRule": false
+                }
+            },
+            {
+                "eventId": "8_lSzLJLmNdwdSSll6lBc",
+                "requestUrl": "https://cdn.valuad.cloud/hb/wallacoil-prod.js?timestamp=1790208000000",
+                "requestDomain": "cdn.valuad.cloud",
+                "frameUrl": "https://www.walla.co.il",
+                "frameDomain": "walla.co.il",
+                "requestType": "script",
+                "timestamp": 1790280216659.205,
+                "requestThirdParty": true,
+                "method": "GET",
+                "requestRule": {
+                    "filterId": 108,
+                    "ruleIndex": 2550,
+                    "appliedRuleText": "||valuad.cloud^$third-party",
+                    "allowlistRule": false,
+                    "isImportant": false,
+                    "documentLevelRule": false,
+                    "isStealthModeRule": false,
+                    "cspRule": false,
+                    "cookieRule": false
+                },
+                "declarativeRuleInfo": {
+                    "sourceRules": [
+                        {
+                            "sourceRule": "||valuad.cloud^$third-party",
+                            "filterId": 108
+                        }
+                    ],
+                    "declarativeRuleJson": "{\"action\":{\"type\":\"block\"},\"condition\":{\"domainType\":\"thirdParty\",\"urlFilter\":\"||valuad.cloud^\"},\"id\":1920424043,\"priority\":2}"
+                }
+            },
+            {
+                "eventId": "ttYcZsGJBjCnOXinBTFlh",
+                "requestUrl": "wss://pikud-a0b24.firebaseio.com/.ws?v=5",
+                "requestDomain": "pikud-a0b24.firebaseio.com",
+                "frameUrl": "https://www.walla.co.il",
+                "frameDomain": "walla.co.il",
+                "requestType": "websocket",
+                "timestamp": 1790280217258.088,
+                "requestThirdParty": true,
+                "method": "GET",
+                "requestRule": {
+                    "filterId": 108,
+                    "ruleIndex": 32732,
+                    "appliedRuleText": "||firebaseio.com^$third-party,domain=walla.co.il",
+                    "allowlistRule": false,
+                    "isImportant": false,
+                    "documentLevelRule": false,
+                    "isStealthModeRule": false,
+                    "cspRule": false,
+                    "cookieRule": false
+                },
+                "declarativeRuleInfo": {
+                    "sourceRules": [
+                        {
+                            "sourceRule": "||firebaseio.com^$third-party,domain=walla.co.il",
+                            "filterId": 108
+                        }
+                    ],
+                    "declarativeRuleJson": "{\"action\":{\"type\":\"block\"},\"condition\":{\"domainType\":\"thirdParty\",\"initiatorDomains\":[\"walla.co.il\"],\"urlFilter\":\"||firebaseio.com^\"},\"id\":749975252,\"priority\":202}"
+                }
+            },
+            {
+                "eventId": "wJ_E3-mxzc8aOUB2BplCe",
+                "requestUrl": "https://pikud-a0b24.firebaseio.com/.lp?start=t&ser=456985&cb=1&v=5",
+                "requestDomain": "pikud-a0b24.firebaseio.com",
+                "frameUrl": "https://www.walla.co.il",
+                "frameDomain": "walla.co.il",
+                "requestType": "script",
+                "timestamp": 1790280218022.668,
+                "requestThirdParty": true,
+                "method": "GET",
+                "requestRule": {
+                    "filterId": 108,
+                    "ruleIndex": 32732,
+                    "appliedRuleText": "||firebaseio.com^$third-party,domain=walla.co.il",
+                    "allowlistRule": false,
+                    "isImportant": false,
+                    "documentLevelRule": false,
+                    "isStealthModeRule": false,
+                    "cspRule": false,
+                    "cookieRule": false
+                },
+                "declarativeRuleInfo": {
+                    "sourceRules": [
+                        {
+                            "sourceRule": "||firebaseio.com^$third-party,domain=walla.co.il",
+                            "filterId": 108
+                        }
+                    ],
+                    "declarativeRuleJson": "{\"action\":{\"type\":\"block\"},\"condition\":{\"domainType\":\"thirdParty\",\"initiatorDomains\":[\"walla.co.il\"],\"urlFilter\":\"||firebaseio.com^\"},\"id\":749975252,\"priority\":202}"
+                }
+            },
+            {
+                "eventId": "yhMkuODfc1b8cP5mY4bBl",
+                "element": "<div class=\"OUTBRAIN\" data-src=\"https://www.walla.co.il\" data-widget-id=\"CRHP_6\">",
+                "frameUrl": "https://www.walla.co.il/",
+                "frameDomain": "walla.co.il",
+                "requestType": "document",
+                "timestamp": 1790280219644,
+                "requestRule": {
+                    "filterId": 2,
+                    "ruleIndex": 5044340,
+                    "appliedRuleText": "##.OUTBRAIN",
+                    "cssRule": true,
+                    "scriptRule": false,
+                    "contentRule": false
+                }
+            },
+            {
+                "eventId": "vJXhnksEBfZlgsTWVJVXD",
+                "element": "<div class=\"OUTBRAIN\" data-src=\"https://www.walla.co.il\" data-widget-id=\"HPP\">",
+                "frameUrl": "https://www.walla.co.il/",
+                "frameDomain": "walla.co.il",
+                "requestType": "document",
+                "timestamp": 1790280219644,
+                "requestRule": {
+                    "filterId": 2,
+                    "ruleIndex": 5044340,
+                    "appliedRuleText": "##.OUTBRAIN",
+                    "cssRule": true,
+                    "scriptRule": false,
+                    "contentRule": false
+                }
+            },
+            {
+                "eventId": "nzchpt66S8vNaS0OQSp4q",
+                "element": "<a href=\"https://mazaltov.walla.co.il/article/daily-bride/13620/?utm_source=walla_news&utm_campaign=merkaz\" target=\"_self\">",
+                "frameUrl": "https://www.walla.co.il/",
+                "frameDomain": "walla.co.il",
+                "requestType": "document",
+                "timestamp": 1790280219644,
+                "requestRule": {
+                    "filterId": 108,
+                    "ruleIndex": 200472,
+                    "appliedRuleText": "walla.co.il##[href*=\"?utm_source=\"][href*=\"&utm_campaign=\"]",
+                    "cssRule": true,
+                    "scriptRule": false,
+                    "contentRule": false
+                }
+            }
+        ]
+    },
+    "getFilteringLogData": {
+        "filtersMetadata": [
+            {
+                "description": "EasyList + AdGuard Base filter. This filter is necessary for quality ad blocking.",
+                "displayNumber": 1,
+                "expires": 864000,
+                "filterId": 2,
+                "groupId": 1,
+                "homepage": "https://adguard.com/kb/general/ad-filtering/adguard-filters/",
+                "name": "AdGuard Base filter",
+                "tags": [10, 1, 9, 11],
+                "version": "2.4.86.8",
+                "languages": [],
+                "timeAdded": "2014-06-30T07:56:55+0000",
+                "timeUpdated": "2026-08-25T06:13:30+0000",
+                "subscriptionUrl": "https://filters.adtidy.org/extension/chromium-mv3/filters/2.txt",
+                "deprecated": false
+            },
+            {
+                "description": "The most comprehensive list of various online counters and web analytics tools. Use this filter, if you do not want your actions on the Internet to be tracked.",
+                "displayNumber": 1,
+                "expires": 864000,
+                "filterId": 3,
+                "groupId": 2,
+                "homepage": "https://adguard.com/kb/general/ad-filtering/adguard-filters/",
+                "name": "AdGuard Tracking Protection filter",
+                "tags": [2, 10],
+                "version": "2.1.9.90",
+                "languages": [],
+                "timeAdded": "2014-06-30T07:56:55+0000",
+                "timeUpdated": "2026-08-25T06:13:47+0000",
+                "subscriptionUrl": "https://filters.adtidy.org/extension/chromium-mv3/filters/3.txt",
+                "deprecated": false
+            },
+            {
+                "description": "Blocks all kinds of pop-ups that are not necessary for websites' operation according to our Filter policy.",
+                "displayNumber": 2,
+                "expires": 864000,
+                "filterId": 19,
+                "groupId": 4,
+                "homepage": "https://adguard.com/kb/general/ad-filtering/adguard-filters/",
+                "name": "AdGuard Popups filter",
+                "tags": [5, 10, 11],
+                "version": "2.0.81.39",
+                "languages": [],
+                "timeAdded": "2022-07-07T07:53:39+0000",
+                "timeUpdated": "2026-08-25T06:14:15+0000",
+                "subscriptionUrl": "https://filters.adtidy.org/extension/chromium-mv3/filters/19.txt",
+                "deprecated": false
+            },
+            {
+                "description": "Additional filter list for websites in Hebrew.",
+                "displayNumber": 2,
+                "expires": 864000,
+                "filterId": 108,
+                "groupId": 7,
+                "homepage": "https://github.com/easylist/EasyListHebrew",
+                "name": "EasyList Hebrew",
+                "tags": [1, 9, 10, 34],
+                "version": "2.0.6.43",
+                "languages": ["he"],
+                "timeAdded": "2014-06-30T07:56:55+0000",
+                "timeUpdated": "2026-08-21T16:43:54+0000",
+                "subscriptionUrl": "https://raw.githubusercontent.com/easylist/EasyListHebrew/master/EasyListHebrew.txt",
+                "deprecated": false
+            },
+            {
+                "description": "Blocks domains that are known to be used to propagate malware and spyware.",
+                "displayNumber": 1,
+                "expires": 864000,
+                "filterId": 208,
+                "groupId": 5,
+                "homepage": "https://gitlab.com/malware-filter/urlhaus-filter#malicious-url-blocklist",
+                "name": "Online Malicious URL Blocklist",
+                "tags": [10, 4],
+                "version": "2.1.9.21",
+                "languages": [],
+                "timeAdded": "2020-08-10T18:34:22+0000",
+                "timeUpdated": "2026-08-25T00:47:30+0000",
+                "subscriptionUrl": "https://urlhaus-filter.pages.dev/urlhaus-filter-ag-online.txt",
+                "deprecated": false
+            }
+        ],
+        "preserveLogEnabled": false
+    }
+}

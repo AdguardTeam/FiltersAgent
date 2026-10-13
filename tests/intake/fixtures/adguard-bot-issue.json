@@ -1,0 +1,22 @@
+{
+    "number": 234430,
+    "reporterAuthor": "adguard-bot",
+    "url": "https://github.com/AdguardTeam/AdguardFilters/issues/234430",
+    "title": "www.rmcbfmplay.com",
+    "body": "### Issue URL (Anti Adblock Script)\n[https://www.rmcbfmplay.com/video/episode/mickey-dans-tous-les-foyers-la-folie-du-merchandising-1020905975577](https://adguardteam.github.io/AnonymousRedirect/redirect.html?url=https%3A%2F%2Fwww.rmcbfmplay.com%2Fvideo%2Fepisode%2Fmickey-dans-tous-les-foyers-la-folie-du-merchandising-1020905975577)\n\n\n\n\n### Screenshots\n<details>\n  <summary>Screenshot 1</summary>\n\n  ![Screenshot 1](https://cdn.adguardcdn.com/sitereports/fh08kpn91pssw4s4sso8gg8og8gsgk4fkvsh9k1tvc.png?nc=1)\n</details>\n\n\n### System configuration\n\n| Information | Value |\n|-------------|-------|\nAdGuard product: | AdGuard Browser Extension v5.4.3.79 MV3\nSystem version: | `Mac OS 26.2.0`\nBrowser: | Chrome\nFilters: | **Ad Blocking:**<br>AdGuard Base filter<br><br>**Other:**<br>Filter unblocking search ads and self-promotion<br><br>**Language-specific:**<br>AdGuard Russian filter, <br>AdGuard German filter, <br>AdGuard Dutch filter, <br>AdGuard Spanish/Portuguese filter, <br>AdGuard Turkish filter, <br>AdGuard French filter, <br>EasyList Italy, <br>Liste AR, <br>Official Polish filters for AdBlock, uBlock Origin & AdGuard\nFilters last update: | 2026-06-26T09:00:59Z\n\n\n\n### Issue configuration\n[Import](https://reports.adguard.com/settings/import.html?scheme_version=4&amp;product_type=ext&amp;product_version=5.4.3.79&amp;system_version=Mac+OS+26.2.0&amp;ext.manifest_version=3&amp;browser=chrome&amp;regular_filters=1%2C2%2C6%2C8%2C9%2C10%2C13%2C16%2C109%2C112%2C216&amp;filters_last_update=2026-06-26T09%3A00%3A59Z&amp;stealth.enabled=0)\n",
+    "state": "closed",
+    "labels": [
+        "T: Anti Adblock Script",
+        "A: Resolved",
+        "P1: Critical",
+        "N: AdGuard Browser Extension"
+    ],
+    "assignee": "AdamWr",
+    "comments": [
+        {
+            "author": "github-actions[bot]",
+            "body": "This issue has been automatically marked as stale because it has been open for 3 days with no activity.\nUnfortunately, our resources are limited and we can not always take the time to respond to requests about websites that are not popular enough. The issue will be closed if no further activity occurs.\nPlease note, that AdGuard Filters is an open-source project that is used by different content blockers and we welcome contributions. If you have some technical knowledge about how websites work, you are welcome to create a pull request following [these instructions](https://github.com/AdguardTeam/AdguardFilters/blob/master/CONTRIBUTING.md).",
+            "createdAt": "2026-06-30T05:22:18Z"
+        }
+    ]
+}

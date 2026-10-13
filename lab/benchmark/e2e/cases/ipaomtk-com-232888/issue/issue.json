@@ -1,0 +1,25 @@
+{
+    "schemaVersion": 1,
+    "rawIssue": {
+        "number": 232888,
+        "reporterAuthor": "adguard-bot",
+        "url": "https://github.com/AdguardTeam/AdguardFilters/issues/232888",
+        "title": "ipaomtk.com",
+        "body": "### Issue URL (Ads)\n[https://ipaomtk.com/](https://adguardteam.github.io/AnonymousRedirect/redirect.html?url=https%3A%2F%2Fipaomtk.com%2F)\n\n\n\n\n### Screenshots\n<details>\n  <summary>Screenshot 1</summary>\n\n  ![Screenshot 1](https://cdn.adguardcdn.com/sitereports/3bjiass7eps0gosoksg0scg4oskc84wnidvlhsmwes.png?nc=1)\n</details>\n\n\n### System configuration\n\n| Information | Value |\n|-------------|-------|\nAdGuard product: | AdGuard Browser Extension v5.4.3.38 MV3\nSystem version: | `Windows 11`\nBrowser: | Chrome\nFilters: | **Ad Blocking:**<br>AdGuard Base filter<br><br>**Annoyances:**<br>AdGuard Cookie Notices filter, <br>AdGuard Popups filter, <br>AdGuard Mobile App Banners filter, <br>AdGuard Other Annoyances filter, <br>AdGuard Widgets filter<br><br>**Language-specific:**<br>AdGuard Chinese filter\nFilters last update: | 2026-06-03T20:00:58Z\n\n\n\n### Issue configuration\n[Import](https://reports.adguard.com/settings/import.html?scheme_version=4&amp;product_type=ext&amp;product_version=5.4.3.38&amp;system_version=Windows+11&amp;ext.manifest_version=3&amp;browser=chrome&amp;regular_filters=2%2C18%2C19%2C20%2C21%2C22%2C224&amp;filters_last_update=2026-06-03T20%3A00%3A58Z&amp;stealth.enabled=0)\n",
+        "state": "closed",
+        "labels": ["T: Ads", "A: Resolved", "P3: Medium", "N: AdGuard Browser Extension"],
+        "assignee": "AdamWr",
+        "comments": []
+    },
+    "reporterComments": [],
+    "attachments": [
+        {
+            "kind": "issue_screenshot",
+            "sourceUrl": "https://cdn.adguardcdn.com/sitereports/3bjiass7eps0gosoksg0scg4oskc84wnidvlhsmwes.png?nc=1",
+            "localPath": "attachments/01-3a83095a100eefa2.png",
+            "sha256": "3a83095a100eefa205a8bf06517bc94d357afb742c7b86db1b6aa0d107088f00",
+            "promptVisible": true,
+            "source": "body"
+        }
+    ]
+}

@@ -1,0 +1,109 @@
+# The AdGuard CLI blocker module of the `filters-agent` action. A workflow step runs this before the
+# action: it installs a pinned, verified AdGuard CLI release and the module that drives it into the
+# workspace, and outputs the manifest to pass to the action's `blockerModules` input.
+#
+# It also restores the newest seeded CLI home from the Actions cache, an activated licence every run
+# shares as one device, so AdGuard CLI runs need not wait for each other. Without a seed each run
+# activates the licence itself and resets it at the end. `seedHome: 'true'` makes the seed instead.
+#
+# The release pins are `releaseUrl` and `releaseSha256` below: bump them together.
+name: 'filters-agent AdGuard CLI module'
+description: >-
+    Installs the AdGuard CLI blocker module for the filters-agent action: the official AdGuard CLI
+    release, checked against its checksum and AdGuard's signature, and the module that drives it.
+
+inputs:
+    path:
+        description: >-
+            Workspace-relative directory to install the module into.
+        required: false
+        default: .filters-agent/adguard-cli
+    releaseUrl:
+        description: >-
+            AdGuard CLI release archive to install; change it together with releaseSha256.
+        required: false
+        default: https://github.com/AdguardTeam/AdGuardCLI/releases/download/v1.5.0-rc.1/adguard-cli-1.5.0-rc.1-linux-x86_64.tar.gz
+    releaseSha256:
+        description: >-
+            SHA-256 of the release archive.
+        required: false
+        default: f782aa950be96ea6817d935bfe55a8f445bc972d10c4eee5b9db6c15a88dbfa1
+    seedHome:
+        description: >-
+            'true' activates the licence from ADGUARD_LICENSE_KEY in this step's env once and saves
+            the activated CLI home to the Actions cache, where every later run restores it. Run it
+            from a manually dispatched workflow on the default branch, so every branch can read the
+            seed. Each seed binds one more licence device.
+        required: false
+        default: 'false'
+
+outputs:
+    manifest:
+        description: >-
+            Workspace-relative path of the module manifest; pass it to the action's blockerModules
+            input.
+        value: ${{ steps.install.outputs.manifest }}
+    homeRestored:
+        description: >-
+            'true' when a seeded CLI home was restored for the run.
+        value: ${{ steps.restore.outputs.cache-matched-key != '' }}
+
+runs:
+    using: composite
+    steps:
+        - id: install
+          shell: bash
+          env:
+              INSTALL_PATH: ${{ inputs.path }}
+              RELEASE_URL: ${{ inputs.releaseUrl }}
+              RELEASE_SHA256: ${{ inputs.releaseSha256 }}
+          run: |
+              set -euo pipefail
+              relative="${INSTALL_PATH%/}"
+              target="${GITHUB_WORKSPACE}/${relative}"
+              mkdir -p "${target}"
+              node "${GITHUB_ACTION_PATH}/fetch-adguard-cli.mjs" \
+                  "${RELEASE_URL}" "${RELEASE_SHA256}" "${target}/bin"
+              cp "${GITHUB_ACTION_PATH}/module.mjs" "${GITHUB_ACTION_PATH}/blocker-module.json" \
+                  "${target}/"
+              # The install lives in the analyzed checkout; keep it out of the checkout's status.
+              if [[ -d "${GITHUB_WORKSPACE}/.git/info" ]]; then
+                  echo "/${relative}/" >> "${GITHUB_WORKSPACE}/.git/info/exclude"
+              fi
+              echo "manifest=${relative}/blocker-module.json" >> "${GITHUB_OUTPUT}"
+              echo "cli=${target}/bin/adguard-cli" >> "${GITHUB_OUTPUT}"
+              # The seed holds licence state, so it stays out of the workspace the analysis reads
+              # and publishes from. The action's container sees RUNNER_TEMP at its own path, and the
+              # runner translates the variable below to it.
+              echo "archive=${RUNNER_TEMP}/filters-agent-adguard-cli-home.tar.gz" >> "${GITHUB_OUTPUT}"
+              # A seed belongs to one CLI release: a new release needs a new seed.
+              echo "key-prefix=filters-agent-adguard-cli-home-v1-${RELEASE_SHA256:0:16}-" \
+                  >> "${GITHUB_OUTPUT}"
+
+        # Seeds are saved under unique keys, so the prefix restores the newest one.
+        - id: restore
+          if: ${{ inputs.seedHome != 'true' }}
+          uses: actions/cache/restore@v4
+          with:
+              path: ${{ steps.install.outputs.archive }}
+              key: ${{ steps.install.outputs.key-prefix }}newest
+              restore-keys: ${{ steps.install.outputs.key-prefix }}
+
+        - if: ${{ inputs.seedHome != 'true' && steps.restore.outputs.cache-matched-key != '' }}
+          shell: bash
+          env:
+              ARCHIVE: ${{ steps.install.outputs.archive }}
+          run: echo "ADGUARD_CLI_HOME_ARCHIVE=${ARCHIVE}" >> "${GITHUB_ENV}"
+
+        - if: ${{ inputs.seedHome == 'true' }}
+          shell: bash
+          env:
+              CLI: ${{ steps.install.outputs.cli }}
+              ARCHIVE: ${{ steps.install.outputs.archive }}
+          run: bash "${GITHUB_ACTION_PATH}/seed-adguard-cli-home.sh" "${CLI}" "${ARCHIVE}"
+
+        - if: ${{ inputs.seedHome == 'true' }}
+          uses: actions/cache/save@v4
+          with:
+              path: ${{ steps.install.outputs.archive }}
+              key: ${{ steps.install.outputs.key-prefix }}${{ github.run_id }}-${{ github.run_attempt }}

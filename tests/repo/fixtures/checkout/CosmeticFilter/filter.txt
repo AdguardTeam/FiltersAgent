@@ -1,0 +1,9 @@
+! Title: AdGuard Cosmetic Filter (fixture)
+! Section: Banner selectors
+example.com##.ad-banner
+example.com,sub.example.com##.ad-banner
+##.generic-ad
+example.com#%#//scriptlet('abort-on-property-read', 'I10C')
+! Section: Other selectors
+news.com##.ad-banner
+shellshock.*,shellshockers.*##+js(set-constant, aipAPItag.sdkBlocked, false)

@@ -1,0 +1,9 @@
+! Title: AdGuard Base Filter (fixture)
+! Section: Generic network rules
+||ads.example.com^
+||tracker.example.com^$third-party
+||ads.example.com^$script
+||cdn.example.net^$domain=site.com
+! Section: Domain-specific rules
+||video.example.com^$domain=news.com
+||ads.example.com/banner^

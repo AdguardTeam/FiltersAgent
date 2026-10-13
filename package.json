@@ -1,0 +1,73 @@
+{
+    "name": "filters-agent",
+    "version": "0.1.0",
+    "private": true,
+    "description": "AI agent and GitHub Action that investigates filter-list issues in a real browser and verifies candidate rules",
+    "homepage": "https://github.com/AdguardTeam/FiltersAgent#readme",
+    "bugs": {
+        "url": "https://github.com/AdguardTeam/FiltersAgent/issues"
+    },
+    "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/AdguardTeam/FiltersAgent.git"
+    },
+    "type": "module",
+    "scripts": {
+        "build": "tsc",
+        "typecheck": "tsc -p tsconfig.test.json",
+        "build:adguard-cli": "node --import tsx scripts/build-adguard-cli-module.ts adguard-cli",
+        "benchmark:case:add": "tsx lab/e2e/case-add.ts",
+        "benchmark:verify-run": "tsx lab/benchmark/verify-run.ts",
+        "start": "tsx lab/main.ts",
+        "test:e2e": "tsx lab/e2e/run.ts",
+        "lint": "oxlint && node lint/scan-prompt-documents.mjs",
+        "fmt": "oxfmt && eslint --config eslint.config.js --fix src/ lab/",
+        "fmt:check": "oxfmt --check && eslint --config eslint.config.js src/ lab/",
+        "test": "vitest"
+    },
+    "dependencies": {
+        "@earendil-works/pi-ai": "0.84.1",
+        "@earendil-works/pi-coding-agent": "0.84.1",
+        "@octokit/rest": "^21.1.0",
+        "@valibot/to-json-schema": "^1.7.0",
+        "acorn": "8.16.0",
+        "cloakbrowser": "^0.3.31",
+        "commander": "^14.0.3",
+        "dotenv": "^16.4.0",
+        "pino": "^9.6.0",
+        "playwright-core": "^1.50.0",
+        "undici": "^8.10.0",
+        "valibot": "^1.4.1"
+    },
+    "devDependencies": {
+        "@stylistic/eslint-plugin": "^5.10.0",
+        "@types/node": "^24.0.0",
+        "@typescript-eslint/parser": "^8.60.0",
+        "esbuild": "0.28.0",
+        "eslint": "^10.4.0",
+        "eslint-import-resolver-typescript": "^4.4.4",
+        "eslint-plugin-import": "^2.32.0",
+        "eslint-plugin-jsdoc": "^63.0.0",
+        "oxfmt": "^0.52.0",
+        "oxlint": "^1.67.0",
+        "tsx": "^4.19.0",
+        "typescript": "^5.7.0",
+        "vitest": "^3.0.0"
+    },
+    "engines": {
+        "node": ">=24"
+    },
+    "pnpm": {
+        "overrides": {
+            "brace-expansion@1": "^1.1.12",
+            "brace-expansion@5": "^5.0.9",
+            "@earendil-works/pi-agent-core": "0.84.1",
+            "@earendil-works/pi-ai": "0.84.1",
+            "@earendil-works/pi-client": "0.84.1",
+            "@earendil-works/pi-protocol": "0.84.1",
+            "@earendil-works/pi-telemetry": "0.84.1",
+            "@earendil-works/pi-tui": "0.84.1"
+        }
+    }
+}

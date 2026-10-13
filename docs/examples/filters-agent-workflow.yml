@@ -1,0 +1,136 @@
+# Example workflow for the `filters-agent` action. Copy this into a filter-list repository's
+# `.github/workflows/` to connect it — see docs/guides/github-action.md in the FiltersAgent
+# repository for the full connection steps.
+#
+# This file is a template, not active configuration, which is why it lives in docs/examples/
+# rather than .github/workflows/: left active here, it would analyze this repository's own issues.
+name: 'filters-agent'
+
+on:
+    # Every new issue gets a run. Each run is a paid LLM call; to run only on issues a maintainer
+    # picks, replace `opened` with `labeled` and label an issue `filters-agent` to start a run.
+    # GitHub cannot filter by label name in this block, so the job below checks it.
+    issues:
+        types:
+            - opened
+    workflow_dispatch:
+        inputs:
+            issueNumber:
+                description: 'Issue number to analyze'
+                required: true
+                type: string
+
+# The report comment posts from the workflow token. `contents: write` lets the run commit the
+# before and after screenshots of a verified rule to a branch of this repository (the
+# `screenshotsBranch` input, `filters-agent-screenshots` by default), which the comment shows them
+# from; with `contents: read` the comment posts without them.
+permissions:
+    contents: write
+    issues: write
+
+# Needed when a plugged-in blocker holds a licence per run (see `blockerModules` below) and no
+# shared seed is set up (github-action.md, "The AdGuard CLI module"): one run at a time keeps the
+# licence within its device limit. GitHub keeps one run pending and cancels older pending ones.
+# concurrency:
+#     group: filters-agent-blocker
+#     cancel-in-progress: false
+
+jobs:
+    analyze:
+        # A new issue and a manual dispatch always run; a label event runs only for the label this
+        # workflow owns.
+        if: ${{ github.event.action != 'labeled' || github.event.label.name == 'filters-agent' }}
+        runs-on: ubuntu-latest
+        # The investigation has a 60-minute budget and the action's image builds before it, so a
+        # job takes a little over an hour at most; GitHub's default of 6 hours is far more.
+        timeout-minutes: 90
+        steps:
+            - uses: actions/checkout@v6
+              with:
+                  # The action takes its own token, so dropping the checkout credential keeps it out of
+                  # .git/config in the mounted workspace, where run commands could read it.
+                  persist-credentials: false
+
+            # Optional: install the repository's own linter so the action can run it over each
+            # candidate rule (see lintCommand below and github-action.md, "Lint with your
+            # repository's linter"). The action's container sees the workspace, so node_modules
+            # installed here is what the command finds.
+            # - name: Install the repository's linter
+            #   run: npm ci
+
+            # @v1 follows every v1.x.y release; pin @v1.2.3 to stay on one release, or use @main for
+            # what is not released yet.
+            - name: Analyze the issue
+              id: agent
+              uses: AdguardTeam/FiltersAgent@v1
+              with:
+                  # Mandatory in every run: the action only serves GitHub-read modes, and the report
+                  # comment posts through this token (the issues: write permission above).
+                  githubToken: ${{ github.token }}
+                  # Only the API key is a secret; the endpoint and the two model slugs below are
+                  # plain values in this file. Replace all three with your own provider's — shown
+                  # here in the shape an OpenRouter-compatible endpoint takes.
+                  llmBaseUrl: https://openrouter.ai/api/v1
+                  llmApiKey: ${{ secrets.FILTERS_AGENT_LLM_API_KEY }}
+                  llmModel: <reasoning model slug>
+                  llmVisionModel: <vision model slug>
+                  # Required: the reasoning model's context window and completion cap, from your
+                  # provider's model page. A limit above the provider's own fails every request, so
+                  # there are no defaults; a run without them fails before it spends anything.
+                  llmContextWindowTokens: '<context window in tokens>'
+                  llmMaxOutputTokens: '<completion cap in tokens>'
+                  # Required when the vision model differs from the reasoning model: its own
+                  # completion cap. A gateway that routes by the requested cap finds no endpoint
+                  # for a model whose own limit is lower. Remove it when both slugs name one model.
+                  llmVisionMaxOutputTokens: '<vision completion cap in tokens>'
+                  # Optional: 'off' for a reasoning model slug that does not reason, so no
+                  # reasoning parameter is sent; defaults to 'high'.
+                  # llmReasoningEffort: 'off'
+                  # Optional: total attempts per LLM request (1-3, default 2). Raise it when your
+                  # gateway drops responses mid-stream more than once in a row.
+                  # llmRequestMaxAttempts: '3'
+                  # Optional plain config, not a secret: routing preferences an
+                  # OpenRouter-compatible gateway takes as the request's provider object, to route
+                  # around an upstream provider that is faulting.
+                  # llmProviderRouting: '{"ignore":["Together"]}'
+                  # Optional: which blockers verify the rule. Unset runs the browser extension alone;
+                  # a blocker module adds its own executor (github-action.md, "Plug in another
+                  # blocker"). Its secrets go in this step's env.
+                  # blockerModules: .filters-agent/my-proxy/blocker-module.json
+                  # executors: browser_extension,my_proxy
+                  # Optional: the repository's own lint command, run in the checkout over each
+                  # candidate rule with the candidate file's path appended. A failure adds a note
+                  # to the report and never stops the rule; unset runs no lint.
+                  # lintCommand: npx aglint
+                  # Optional: issue labels the agent never processes. Such an issue is skipped before
+                  # its page is opened, so no screenshot of it is ever committed.
+                  # excludedLabels: NSFW
+                  # Optional: the label your maintainers put on an issue they picked up. An issue
+                  # carrying it gets no report, unless the run is forced.
+                  # inProgressLabels: 'A: In progress'
+                  # Optional: bot accounts that file issues for your reporting tool without GitHub's
+                  # bot marking. Their comments are not a maintainer's and stay out of the prompt.
+                  # reportBots: adguard-bot
+                  # The label event carries the issue number directly; a manual dispatch carries it
+                  # as the issueNumber input instead.
+                  issueNumber: ${{ github.event.issue.number || inputs.issueNumber }}
+                  # A label or a manual dispatch comes from a maintainer, who is often the assignee:
+                  # force the report then, so a maintainer on the issue does not silence it.
+                  force: ${{ github.event_name == 'workflow_dispatch' || github.event.action == 'labeled' }}
+                  # repository, checkoutPath and artifactsDir are not passed: the binding falls back to
+                  # the runner's GITHUB_REPOSITORY and GITHUB_WORKSPACE. Inside the action's container
+                  # the default artifacts directory is filters-agent-artifacts/artifacts under the
+                  # checkout, and the artifacts-dir output is already workspace-relative, so the upload
+                  # step below resolves it unchanged. The checkout's default instruction
+                  # (.github/filters-agent/AGENTS.md) is probed automatically; pass instructionPath to
+                  # override it.
+
+            # A failed run is the one whose entry-result.json matters most, so the upload does not wait
+            # for success; it is skipped only when the job was cancelled or the action exited before it
+            # published an artifacts directory (missing inputs, missing browser).
+            - name: Upload run artifacts
+              if: ${{ !cancelled() && steps.agent.outputs.artifacts-dir != '' }}
+              uses: actions/upload-artifact@v5
+              with:
+                  name: filters-agent-artifacts-${{ github.run_number }}
+                  path: ${{ steps.agent.outputs.artifacts-dir }}

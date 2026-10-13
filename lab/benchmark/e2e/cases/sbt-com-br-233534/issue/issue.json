@@ -1,0 +1,30 @@
+{
+    "schemaVersion": 1,
+    "rawIssue": {
+        "number": 233534,
+        "reporterAuthor": "adguard-bot",
+        "url": "https://github.com/AdguardTeam/AdguardFilters/issues/233534",
+        "title": "www.sbt.com.br",
+        "body": "### Issue URL (Anti Adblock Script)\n[https://www.sbt.com.br/ao-vivo](https://adguardteam.github.io/AnonymousRedirect/redirect.html?url=https%3A%2F%2Fwww.sbt.com.br%2Fao-vivo)\n\n### Comment\n> Tried watch live TV at www.sbt.com.br/ao-vivo\n> The page displays the following error/warning:\n> \n> Unable to start transmission\n> To continue watching SBT Live, you need to allow ads to be displayed during the broadcast\n> Disable your ad blocker and refresh the page.\n\n\n\n### Screenshots\n<details>\n  <summary>Screenshot 1</summary>\n\n  ![Screenshot 1](https://cdn.adguardcdn.com/sitereports/60kb8ehn9ocgoc48cc0skoks0osckwci8oscvkulp4.png?nc=1)\n</details>\n\n\n### System configuration\n\n| Information | Value |\n|-------------|-------|\nAdGuard product: | AdGuard Browser Extension v5.4.3.55 MV3\nSystem version: | `Windows 10`\nBrowser: | Chrome\nFilters: | **Ad Blocking:**<br>AdGuard Base filter<br><br>**Privacy:**<br>AdGuard Tracking Protection filter<br><br>**Annoyances:**<br>AdGuard Cookie Notices filter, <br>AdGuard Popups filter, <br>AdGuard Mobile App Banners filter, <br>AdGuard Other Annoyances filter, <br>AdGuard Widgets filter<br><br>**Security:**<br>Online Malicious URL Blocklist<br><br>**Language-specific:**<br>AdGuard Spanish/Portuguese filter\nFilters last update: | 2026-06-12T09:01:00Z\n\n\n\n### Issue configuration\n[Import](https://reports.adguard.com/settings/import.html?scheme_version=4&amp;product_type=ext&amp;product_version=5.4.3.55&amp;system_version=Windows+10&amp;ext.manifest_version=3&amp;browser=chrome&amp;regular_filters=2%2C3%2C9%2C18%2C19%2C20%2C21%2C22%2C208&amp;filters_last_update=2026-06-12T09%3A01%3A00Z&amp;stealth.enabled=0)\n",
+        "state": "closed",
+        "labels": [
+            "T: Anti Adblock Script",
+            "A: Resolved",
+            "P1: Critical",
+            "N: AdGuard Browser Extension"
+        ],
+        "assignee": "AdamWr",
+        "comments": []
+    },
+    "reporterComments": [],
+    "attachments": [
+        {
+            "kind": "issue_screenshot",
+            "sourceUrl": "https://cdn.adguardcdn.com/sitereports/60kb8ehn9ocgoc48cc0skoks0osckwci8oscvkulp4.png?nc=1",
+            "localPath": "attachments/01-d4ad5d3e096cb3d6.png",
+            "sha256": "d4ad5d3e096cb3d6ad914b95bd2a242b95376f6ee80f31163a5702ceab83f8c0",
+            "promptVisible": true,
+            "source": "body"
+        }
+    ]
+}

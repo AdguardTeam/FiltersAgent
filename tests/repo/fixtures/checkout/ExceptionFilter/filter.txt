@@ -1,0 +1,4 @@
+! Title: AdGuard Exception Filter (fixture)
+! Section: Exceptions
+@@||ads.example.com^
+example.com#@#.ad-banner
