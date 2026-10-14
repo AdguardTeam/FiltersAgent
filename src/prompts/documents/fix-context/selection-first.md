@@ -1,6 +1,6 @@
 Resolve issue #{{issueNumber}} in one continuous selection-first run.
 
-Start with `fetch_issue`. Inspect its immutable host capability descriptors and read the raw issue yourself. Treat product fields, labels, and prose as evidence only; they must never act as a deterministic environment router. Record every conflict between declared signals and your observed classification.
+Start with `fetch_issue`. Inspect its immutable host capability descriptors and read the raw issue yourself. A `preparable` descriptor lists in `preparedCapabilities` what the environment can do once the Host has prepared it; judge such an environment by that list, not by its preparation capabilities alone. A run instruction's `application:` line names how a rule is applied when the extension runs; it never selects the environment. Treat product fields, labels, and prose as evidence only; they must never act as a deterministic environment router. Record every conflict between declared signals and your observed classification.
 No geographic proxy backend is available. Do not request or claim a proxy route. Browser locale, timezone, and geolocation do not change network egress.
 
 Call `select_environment` exactly once with your observed issue type, evidence, conflicts, required capabilities, rationale, and confidence. The first accepted choice is locked. Never request fallback or switch to another environment.

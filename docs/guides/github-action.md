@@ -253,20 +253,27 @@ application: adguard-extension
 ```
 
 `adguard-extension` is the only route today: the built-in AdGuard Browser Extension in Chromium,
-which the action prepares, launches, applies and reads back itself. Without that line an instruction
+which the action prepares, launches, applies and reads back itself. The line says how a rule is
+applied when a run uses the extension; it does not choose the blocker. A run with
+[the AdGuard CLI module](#the-adguard-cli-module) among its `executors` still picks AdGuard CLI for
+reports from AdGuard apps, so do not describe the extension as the run's only blocker in the
+instruction's prose either: the agent follows that prose. Without that line an instruction
 is expected to carry its own `## Rule application` and `## State verification` sections, and a run
 whose instruction carries neither spends its whole budget before refusing to apply anything.
 Declaring the route *and* writing those sections is a contradiction: the run fails at start, naming
 the instruction and both facts.
 
-A complete guidance-only instruction, for a repository whose users run the built-in extension:
+A complete guidance-only instruction, for a repository whose runs use the built-in extension and
+the AdGuard CLI module:
 
 ```markdown
 # Run instruction: AdguardFilters
 
-The run's blocker is the built-in AdGuard Browser Extension in Chromium — the host prepares,
-launches, applies and reads it back itself. This file adds nothing to that route but the guidance
-documents this repository writes its rules against.
+The run verifies a rule in one of two blockers, chosen per report by the routing guidance: the
+built-in AdGuard Browser Extension in Chromium, or AdGuard CLI as a filtering proxy for reports
+from AdGuard apps that filter at the network level. The host prepares, launches and reads both back
+itself. This file adds nothing to those routes but the guidance documents this repository writes
+its rules against.
 
 application: adguard-extension
 

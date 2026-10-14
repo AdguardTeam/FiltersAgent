@@ -15,6 +15,7 @@ import type { PiRuntime } from './runtime';
 import { attachSessionTelemetry, emitSessionUsage } from './session-telemetry';
 import { type TerminalToolController } from './terminal-tool';
 import { createToolCallObservation } from './tool-bounce';
+import { unwrapStringifiedArguments } from './stringified-arguments';
 import { toAdvertisedSchema } from './tool-schema';
 import { extendTransientGatewayRetry } from './transient-gateway-retry';
 import type { RunBudgets } from './guard-types';
@@ -231,18 +232,32 @@ export interface RunAgentSessionOptions<T> {
  *   stop-after-batch hint.
  * @param markExecuted - Records that this call reached `execute`, which is what tells the run's
  *   tool-call observation a failed call apart from one pi refused before `execute`.
+ * @param logger - Run logger; every argument the model sent as JSON text is logged when parsed.
  * @returns The pi tool definition to register as a custom tool.
  */
 function toPiTool(
     spec: SessionToolSpec,
     terminal: boolean,
     markExecuted: (toolCallId: string) => void,
+    logger: Logger,
 ): ToolDefinition {
+    const parameters = toAdvertisedSchema(spec.parameters);
     return defineTool({
         name: spec.name,
         label: spec.name,
         description: spec.description,
-        parameters: toAdvertisedSchema(spec.parameters),
+        parameters,
+        // pi runs this on the raw arguments before its own schema check.
+        prepareArguments: (args) => {
+            const { args: prepared, unwrapped } = unwrapStringifiedArguments(args, parameters);
+            if (unwrapped.length > 0) {
+                logger.info(
+                    { tool: spec.name, paths: unwrapped.map((argument) => argument.path) },
+                    'parsed tool arguments the model sent as JSON text',
+                );
+            }
+            return prepared;
+        },
         ...(spec.executionMode === undefined ? {} : { executionMode: spec.executionMode }),
         execute: async (toolCallId, params, signal) => {
             markExecuted(toolCallId);
@@ -341,8 +356,10 @@ export async function runAgentSession<T>(
         logger,
     });
     const customTools = [
-        ...(options.tools ?? []).map((spec) => toPiTool(spec, false, toolCalls.markExecuted)),
-        toPiTool(options.terminal.tool, true, toolCalls.markExecuted),
+        ...(options.tools ?? []).map((spec) =>
+            toPiTool(spec, false, toolCalls.markExecuted, logger),
+        ),
+        toPiTool(options.terminal.tool, true, toolCalls.markExecuted, logger),
     ];
     const { session } = await createAgentSession({
         cwd: SESSION_LOGICAL_CWD,

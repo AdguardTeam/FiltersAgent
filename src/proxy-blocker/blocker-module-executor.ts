@@ -21,6 +21,7 @@ import {
     FilteringEnvironmentAvailability,
     type FilteringEnvironmentDescriptor,
 } from '../environment/environment-vocabulary';
+import { EVIDENCE_ROUTE_CAPABILITIES } from '../environment/environment-selection-support';
 import type { ExecutorName } from '../environment/executor-name';
 import type { ExecutorPreparationOutcome } from '../environment/executor-preparation';
 import { FilterBaselineStatus } from '../environment/filter-baseline-status';
@@ -193,6 +194,12 @@ export function createBlockerModuleExecutor(
         preparationState: EnvironmentPreparationState.Preparable,
         limitationCode: null,
         capabilities: [EnvironmentCapability.CliInstallation, EnvironmentCapability.CliActivation],
+        // The evidence route grants these once it is ready (`attachCliEvidenceRouteReady`).
+        preparedCapabilities: [
+            EnvironmentCapability.CliInstallation,
+            EnvironmentCapability.CliActivation,
+            ...EVIDENCE_ROUTE_CAPABILITIES,
+        ],
     };
 
     /**

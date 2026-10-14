@@ -8,7 +8,10 @@ import {
     type BlockerContract,
     type BlockerDescription,
 } from '../../src/blocker-contract/blocker-contract';
-import { type FilteringEnvironmentDescriptor } from '../../src/environment/environment-vocabulary';
+import {
+    EnvironmentCapability,
+    type FilteringEnvironmentDescriptor,
+} from '../../src/environment/environment-vocabulary';
 import { EnvironmentSelectionHost } from '../../src/environment/environment-selection';
 import type { ExecutorActivationContext } from '../../src/orchestrator/filtering-executors';
 import {
@@ -68,8 +71,10 @@ function fakeBlocker(describeModule: () => Promise<BlockerDescription>): Blocker
 
 /**
  * Lock the module's executor as the run's selection, the way select_environment does.
+ *
+ * @param requiredCapabilities - The capabilities the selection requires.
  */
-function lockedHost(): EnvironmentSelectionHost {
+function lockedHost(requiredCapabilities: EnvironmentCapability[] = []): EnvironmentSelectionHost {
     const executor = createBlockerModuleExecutor({
         executor: EXECUTOR,
         selectionGuidance: 'Route desktop reports here.',
@@ -81,7 +86,7 @@ function lockedHost(): EnvironmentSelectionHost {
     );
     host.select({
         kind: EXECUTOR,
-        requiredCapabilities: [],
+        requiredCapabilities,
         intent: {
             issueType: 'ads',
             rationale: 'The desktop report describes ordinary website filtering.',
@@ -98,8 +103,9 @@ function lockedHost(): EnvironmentSelectionHost {
 async function activate(
     blocker: BlockerContract | null,
     activateEvidenceRoute = vi.fn(),
+    requiredCapabilities: EnvironmentCapability[] = [],
 ): Promise<EnvironmentSelectionHost> {
-    const host = lockedHost();
+    const host = lockedHost(requiredCapabilities);
     const workspaceDir = await mkdtemp(join(tmpdir(), 'module-executor-'));
     temporaryRoots.push(workspaceDir);
     const dependencies: BlockerModuleRunDependencies | undefined =
@@ -166,6 +172,34 @@ describe('createBlockerModuleExecutor', () => {
         });
         expect(activateEvidenceRoute).toHaveBeenCalledOnce();
         expect(JSON.stringify(snapshot)).not.toContain(tmpdir());
+    });
+
+    it('advertises before selection exactly what its ready route grants', async () => {
+        // A model that read only the preparation capabilities judged the module unable to browse
+        // or apply a rule, and kept reports whose product filters at the network level on the
+        // extension.
+        const { descriptor } = createBlockerModuleExecutor({
+            executor: EXECUTOR,
+            selectionGuidance: 'Route desktop reports here.',
+        });
+        const prepared = descriptor.preparedCapabilities ?? [];
+
+        const host = await activate(
+            fakeBlocker(async () => description()),
+            vi.fn(),
+            prepared,
+        );
+        host.attachCliEvidenceRouteReady(EXECUTOR);
+
+        expect(prepared).toEqual(
+            expect.arrayContaining([
+                EnvironmentCapability.BrowserNavigation,
+                EnvironmentCapability.CandidateApplication,
+            ]),
+        );
+        expect(host.capabilities()[0]?.preparedCapabilities).toEqual(prepared);
+        expect(host.snapshot()?.state).toBe('ready');
+        expect(host.snapshot()?.missingCapabilities).toEqual([]);
     });
 
     it('hands apply_rule the lists the route runs when the report has no settings link', async () => {

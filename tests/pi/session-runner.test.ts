@@ -967,6 +967,123 @@ describe('runAgentSession', () => {
     });
 });
 
+/**
+ * A terminal payload shaped like a fix verdict: a union keyed by `outcome` whose rule branch nests
+ * an object holding another object and a list.
+ */
+const ProposalSchema = v.variant('outcome', [
+    v.object({
+        outcome: v.literal('propose_rule'),
+        ruleProposal: v.object({
+            rule: v.string(),
+            risk: v.object({ level: v.picklist(['low', 'high']), reasons: v.array(v.string()) }),
+        }),
+    }),
+    v.object({ outcome: v.literal('analysis_only'), summary: v.string() }),
+]);
+type Proposal = v.InferOutput<typeof ProposalSchema>;
+
+const RULE_PROPOSAL = {
+    rule: 'example.com##.ad',
+    risk: { level: 'low', reasons: ['scoped to one site'] },
+} as const;
+
+/**
+ * Run one session whose terminal tool takes a {@link ProposalSchema} payload.
+ *
+ * @param payloads - The terminal arguments the scripted model submits, one reply each.
+ * @returns The sealed outcome.
+ */
+async function runProposal(payloads: Record<string, unknown>[]) {
+    provider = await startHermeticProvider({
+        scenario: HermeticScenario.Scripted,
+        script: payloads.map((payload) => ({
+            kind: ScriptedReplyKind.ToolCall,
+            toolName: TERMINAL_TOOL_NAME,
+            toolArguments: JSON.stringify(payload),
+        })),
+    });
+    const runtime: PiRuntime = await createTestPiRuntime({ baseUrl: provider.baseUrl });
+    return runAgentSession<Proposal>({
+        runtime,
+        systemPrompt: 'You are a test agent. Finish by calling submit_verdict.',
+        userTask: 'Submit the verdict now.',
+        nudge: NUDGE_TEXT,
+        terminal: buildTerminalTool<Proposal>({
+            name: TERMINAL_TOOL_NAME,
+            description: 'Submit the final verdict.',
+            schema: ProposalSchema,
+        }),
+        budgets: TEST_RUN_BUDGETS,
+        retries: TEST_RUN_RETRIES,
+        reasoningEffort: TEST_REASONING_EFFORT,
+        workDir,
+    });
+}
+
+describe('stringified structured arguments', () => {
+    it('accepts a nested object the model sent as JSON text on the first submission', async () => {
+        // The live failure: deep into a session the model serialized `ruleProposal` a second
+        // time, pi bounced every attempt with "must be object", and the run sealed on the cap.
+        const outcome = await runProposal([
+            { outcome: 'propose_rule', ruleProposal: JSON.stringify(RULE_PROPOSAL) },
+        ]);
+
+        expect(outcome.kind).toBe(SealKind.Terminal);
+        if (outcome.kind !== SealKind.Terminal) {
+            return;
+        }
+        expect(outcome.payload).toEqual({ outcome: 'propose_rule', ruleProposal: RULE_PROPOSAL });
+        expect(outcome.rejections).toBe(0);
+    });
+
+    it('accepts a list nested inside an object, each sent as JSON text', async () => {
+        const outcome = await runProposal([
+            {
+                outcome: 'propose_rule',
+                ruleProposal: JSON.stringify({
+                    rule: RULE_PROPOSAL.rule,
+                    risk: JSON.stringify({
+                        level: RULE_PROPOSAL.risk.level,
+                        reasons: JSON.stringify(RULE_PROPOSAL.risk.reasons),
+                    }),
+                }),
+            },
+        ]);
+
+        expect(outcome.kind).toBe(SealKind.Terminal);
+        if (outcome.kind !== SealKind.Terminal) {
+            return;
+        }
+        expect(outcome.payload).toEqual({ outcome: 'propose_rule', ruleProposal: RULE_PROPOSAL });
+    });
+
+    it('keeps JSON text in an argument the schema declares as a string', async () => {
+        const summary = JSON.stringify({ note: 'the model quoted a JSON object' });
+
+        const outcome = await runProposal([{ outcome: 'analysis_only', summary }]);
+
+        expect(outcome.kind).toBe(SealKind.Terminal);
+        if (outcome.kind !== SealKind.Terminal) {
+            return;
+        }
+        expect(outcome.payload).toEqual({ outcome: 'analysis_only', summary });
+    });
+
+    it('still rejects a string that is not JSON where the schema expects an object', async () => {
+        const outcome = await runProposal([
+            { outcome: 'propose_rule', ruleProposal: 'example.com##.ad' },
+            { outcome: 'propose_rule', ruleProposal: RULE_PROPOSAL },
+        ]);
+
+        expect(outcome.kind).toBe(SealKind.Terminal);
+        if (outcome.kind !== SealKind.Terminal) {
+            return;
+        }
+        expect(outcome.rejections).toBe(1);
+    });
+});
+
 describe('onSessionUsage', () => {
     it('reports one pi-free report carrying the accepted assistant replies', async () => {
         const reports: UsageReport[] = [];

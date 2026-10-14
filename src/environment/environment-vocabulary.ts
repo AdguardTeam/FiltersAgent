@@ -262,6 +262,9 @@ export const FilteringEnvironmentDescriptorSchema = v.strictObject({
     preparationState: EnvironmentPreparationStateSchema,
     limitationCode: v.nullable(EnvironmentLimitationCodeSchema),
     capabilities: v.pipe(v.array(EnvironmentCapabilitySchema), v.maxLength(16)),
+    // What a preparable environment can do once the Host has prepared it. Without it the model
+    // sees only the preparation capabilities and judges the environment unable to browse.
+    preparedCapabilities: v.optional(v.pipe(v.array(EnvironmentCapabilitySchema), v.maxLength(16))),
 });
 
 /**
