@@ -8,7 +8,7 @@ import {
     writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import * as v from 'valibot';
 import {
     afterEach as cleanupLocalCycleFixturesAfterEachTestCase,
@@ -265,12 +265,12 @@ describe('runExportedSnapshotCycle', () => {
         expect(result.investigationResultPath).toBeNull();
     });
 
-    it('gives the CLI module one private OS-temp workspace and removes it after the cycle', async () => {
+    it('gives a plugged-in module a private OS-temp workspace and removes it after the cycle', async () => {
         const fixture = createFixture();
         const resultPath = join(fixture.outputDir, 'investigation/run-result.json');
         let privateCycleRoot = '';
         const runLocalFixFromRevision = vi.fn(async (_config, _revision, options) => {
-            privateCycleRoot = options.adguardCliModule.workspaceDir;
+            privateCycleRoot = dirname(options.executorDependencies.demo_proxy.workspaceDir);
             expect(existsSync(privateCycleRoot)).toBe(true);
             writeFileSync(resultPath, JSON.stringify({ result: { runStatus: 'analysis_only' } }));
             return {
@@ -283,12 +283,18 @@ describe('runExportedSnapshotCycle', () => {
             };
         });
 
-        await runExportedSnapshotCycle(cycleOptions(fixture), {
-            loadLocalCoreConfig: () => coreConfig,
-            runLocalFixFromRevision,
-            createCycleId: () => '11111111-1111-4111-8111-111111111111',
-            now: () => '2026-07-23T10:04:00.000Z',
-        });
+        await runExportedSnapshotCycle(
+            {
+                ...cycleOptions(fixture),
+                blockerModules: [{ executor: 'demo_proxy', startBlocker: vi.fn() }],
+            },
+            {
+                loadLocalCoreConfig: () => coreConfig,
+                runLocalFixFromRevision,
+                createCycleId: () => '11111111-1111-4111-8111-111111111111',
+                now: () => '2026-07-23T10:04:00.000Z',
+            },
+        );
 
         expect(privateCycleRoot.startsWith(`${realpathSync(tmpdir())}/`)).toBe(true);
         expect(privateCycleRoot.startsWith(`${realpathSync(process.cwd())}/`)).toBe(false);

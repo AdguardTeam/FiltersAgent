@@ -1,11 +1,11 @@
 /**
  * The manifest a blocker module ships beside its code: the executor it registers, the routing
  * guidance the model reads, the command that starts it, and the environment variables it needs or
- * can use. A workflow plugs a module in by naming its manifest; the action reads the manifest,
- * registers the executor, and starts the module per run with exactly the variables the manifest
- * lists.
+ * can use. A run plugs a module in by naming its manifest (the action's `blockerModules` input, the
+ * local CLI's and the benchmark's `--blocker-module`); the run reads the manifest, registers the
+ * executor, and starts the module per issue with exactly the variables the manifest lists.
  *
- * A manifest comes from whatever repository the action runs in, so it is validated here, once.
+ * A manifest comes from whatever repository the run is pointed at, so it is validated here, once.
  */
 import { readFileSync } from 'node:fs';
 import { dirname, isAbsolute, resolve } from 'node:path';
@@ -70,10 +70,22 @@ export interface LoadedBlockerModule {
  *
  * @param path - Absolute path of the manifest.
  * @returns The manifest and its directory.
- * @throws {Error} Naming the file and every problem when it is not a valid manifest.
+ * @throws {Error} Naming the file and every problem when it cannot be read or is not a valid
+ *   manifest.
  */
 export function loadBlockerModuleManifest(path: string): LoadedBlockerModule {
-    const parsed = v.safeParse(BlockerModuleManifestSchema, JSON.parse(readFileSync(path, 'utf8')));
+    let content: unknown;
+    try {
+        content = JSON.parse(readFileSync(path, 'utf8'));
+    } catch (error) {
+        // A missing file names the path itself, a JSON syntax error does not: name it either way.
+        throw new Error(
+            `${path} is not a readable blocker module manifest: ` +
+                `${error instanceof Error ? error.message : String(error)}`,
+            { cause: error },
+        );
+    }
+    const parsed = v.safeParse(BlockerModuleManifestSchema, content);
     if (!parsed.success) {
         throw new Error(`${path} is not a blocker module manifest: ${v.summarize(parsed.issues)}`);
     }

@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { Logger } from '../../src/logger/logger';
 import {
+    blockerModuleProcessEnvironment,
     enableBlockerModule,
     loadBlockerModuleManifest,
     type LoadedBlockerModule,
@@ -33,7 +34,23 @@ describe('the bundled AdGuard CLI module', () => {
     it('ships a manifest that plugs the adguard_cli executor in with only the licence', () => {
         expect(module.manifest.executor).toBe('adguard_cli');
         expect(module.manifest.env).toEqual(['ADGUARD_LICENSE_KEY']);
-        expect(module.manifest.optionalEnv).toEqual(['ADGUARD_CLI_HOME_ARCHIVE']);
+    });
+
+    it('passes a local CLI release and a seeded home to the module process when they are set', () => {
+        const environment = blockerModuleProcessEnvironment(
+            module,
+            {
+                ADGUARD_LICENSE_KEY: 'licence-1',
+                ADGUARD_CLI_PATH: '/opt/adguard-cli/adguard-cli',
+                ADGUARD_CLI_HOME_ARCHIVE: '/cache/home.tar.gz',
+            },
+            '/private/workspace',
+        );
+
+        expect(environment).toMatchObject({
+            ADGUARD_CLI_PATH: '/opt/adguard-cli/adguard-cli',
+            ADGUARD_CLI_HOME_ARCHIVE: '/cache/home.tar.gz',
+        });
     });
 
     it('runs as a module process and names the licence a workflow did not pass', async () => {

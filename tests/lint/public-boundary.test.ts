@@ -125,7 +125,7 @@ describe('public boundary lint', () => {
     it('allows the same executor name in the lab tree', () => {
         const { status } = lintFixture({
             'src/ok.ts': 'export const ok = 1;\n',
-            'lab/cli/executor-set.ts': "const kind = 'adguard_cli';\nexport { kind };\n",
+            'lab/local/blocker-modules.ts': "const kind = 'adguard_cli';\nexport { kind };\n",
         });
         expect(status).toBe(0);
     });

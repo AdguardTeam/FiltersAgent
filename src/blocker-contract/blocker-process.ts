@@ -185,6 +185,11 @@ export function spawnBlockerProcess(input: BlockerProcessInput): BlockerContract
         });
         spawned.once('error', (error) => {
             input.logger.warn({ err: error, module: input.command }, 'blocker module failed');
+            // A process that never started has no pid and never emits `exit`: without this, stop
+            // would wait for an answer and an exit that never come.
+            if (spawned.pid === undefined) {
+                exited = true;
+            }
             failPending(new Error('The blocker module could not run.', { cause: error }));
         });
         spawned.once('exit', (code, signal) => {

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { CommanderError } from 'commander';
@@ -13,8 +13,7 @@ import {
     createLabBacklogEntryInputs,
     createLabFixEntryDelegate,
 } from '../../../lab/cli/entry-delegate';
-import { LAB_EXECUTOR_SET } from '../../../lab/cli/executor-set';
-import { AdguardCliExecutorName } from '../../../src/adguard-cli/executor-name';
+import { loadLabBlockerModules } from '../../../lab/local/blocker-modules';
 import { BrowserExtensionExecutorName } from '../../../src/environment/executor-name';
 import { runMainRuntime } from '../../../lab/cli/main-runtime';
 import type { MainRuntimeContext } from '../../../lab/cli/main-secret-boundary';
@@ -100,9 +99,35 @@ function fixCommand(options: {
             repository: options.repository,
             keepTemporaryFiles: options.keepTemporaryFiles ?? false,
             executors: options.executors,
+            blockerModules: [],
             noComment: false,
         },
     };
+}
+
+/**
+ * The executor the fixture blocker module registers.
+ */
+const DEMO_MODULE_EXECUTOR = 'demo_proxy';
+
+/**
+ * Write one blocker module manifest into the workspace, as a module author ships it.
+ *
+ * @param workspaceRoot - Workspace root the manifest is written under.
+ * @returns The manifest path relative to the workspace root.
+ */
+function writeDemoModuleManifest(workspaceRoot: string): string {
+    mkdirSync(join(workspaceRoot, 'demo-module'));
+    writeFileSync(
+        join(workspaceRoot, 'demo-module', 'blocker-module.json'),
+        JSON.stringify({
+            executor: DEMO_MODULE_EXECUTOR,
+            selectionGuidance: 'Desktop reports belong to demo_proxy.',
+            command: ['node', './module.mjs'],
+            env: ['DEMO_LICENSE_KEY'],
+        }),
+    );
+    return join('demo-module', 'blocker-module.json');
 }
 
 /**
@@ -295,7 +320,7 @@ describe('createLabFixEntryDelegate', () => {
         expect(delegate.inputs.artifactsDir).toBe(paths.cycleDir);
     });
 
-    it('locks the declared lab executor set into the entry inputs when --executors is absent', () => {
+    it('locks the browser extension alone when --executors is absent and no module is plugged in', () => {
         const paths = createPaths();
 
         const delegate = createLabFixEntryDelegate(
@@ -303,10 +328,10 @@ describe('createLabFixEntryDelegate', () => {
             { env: { ...TEST_PROVIDER_ENV }, workspaceRoot: paths.workspaceRoot },
         );
 
-        expect(delegate.inputs.executors).toEqual([...LAB_EXECUTOR_SET]);
+        expect(delegate.inputs.executors).toEqual([BrowserExtensionExecutorName]);
     });
 
-    it('lets a parsed --executors flag win over the declared lab set', () => {
+    it('lets a parsed --executors flag win over the default set', () => {
         const paths = createPaths();
 
         const delegate = createLabFixEntryDelegate(
@@ -322,8 +347,7 @@ describe('createLabFixEntryDelegate', () => {
     });
 
     it('threads a parsed --executors flag into the snapshot cycle the delegate actually runs', async () => {
-        // `delegate.inputs.executors` alone does not prove the flag reaches the
-        // investigation — the lab cycle used to always lock LAB_EXECUTOR_SET regardless. This
+        // `delegate.inputs.executors` alone does not prove the flag reaches the investigation. This
         // exercises the same boundary labCycleRunIssue drives the real cycle through.
         const paths = createPaths();
         const runExportedSnapshotCycle = vi.fn(async (_options: ExportedSnapshotCycleOptions) =>
@@ -358,14 +382,20 @@ describe('createLabFixEntryDelegate', () => {
         });
     });
 
-    it('locks the declared lab executor set in the snapshot cycle when --executors is absent', async () => {
+    it('locks a plugged-in module beside the browser extension and starts it in the snapshot cycle', async () => {
         const paths = createPaths();
+        const env = { ...TEST_PROVIDER_ENV, DEMO_LICENSE_KEY: 'licence-1' };
+        const blockerModules = loadLabBlockerModules(
+            [writeDemoModuleManifest(paths.workspaceRoot)],
+            paths.workspaceRoot,
+            env,
+        );
         const runExportedSnapshotCycle = vi.fn(async (_options: ExportedSnapshotCycleOptions) =>
             completedCycleResult(join(paths.cycleDir, 'investigation', 'run-result.json')),
         );
         const delegate = createLabFixEntryDelegate(
             fixCommand({ issueFile: paths.issueFile, outputDir: paths.cycleDir }),
-            { env: { ...TEST_PROVIDER_ENV }, workspaceRoot: paths.workspaceRoot },
+            { env, workspaceRoot: paths.workspaceRoot, blockerModules },
             {
                 cycleCommands: { runExportedSnapshotCycle },
                 readInvestigationResult: () => fixtureRunResult(4, false),
@@ -384,7 +414,8 @@ describe('createLabFixEntryDelegate', () => {
         });
 
         expect(runExportedSnapshotCycle.mock.calls[0]?.[0]).toMatchObject({
-            executors: [...LAB_EXECUTOR_SET],
+            executors: [BrowserExtensionExecutorName, DEMO_MODULE_EXECUTOR],
+            blockerModules: [expect.objectContaining({ executor: DEMO_MODULE_EXECUTOR })],
         });
     });
 
@@ -576,6 +607,7 @@ describe('createLabBacklogEntryInputs', () => {
                     outputDir: paths.cycleDir,
                     model: 'deepseek-v4-flash',
                     verbose: true,
+                    blockerModules: [],
                     noComment: false,
                 },
             },
@@ -594,7 +626,7 @@ describe('createLabBacklogEntryInputs', () => {
         });
         expect(inputs.artifactsDir).toBe(paths.cycleDir);
         expect(inputs.model).toBe('deepseek-v4-flash');
-        expect(inputs.executors).toEqual([...LAB_EXECUTOR_SET]);
+        expect(inputs.executors).toEqual([BrowserExtensionExecutorName]);
     });
 
     it('lets a parsed backlog --no-comment flag disable comments even with a token configured', () => {
@@ -612,6 +644,7 @@ describe('createLabBacklogEntryInputs', () => {
                     outputDir: paths.cycleDir,
                     model: 'deepseek-v4-flash',
                     verbose: true,
+                    blockerModules: [],
                     noComment: true,
                 },
             },
@@ -628,7 +661,7 @@ describe('createLabBacklogEntryInputs', () => {
         });
     });
 
-    it('lets a parsed backlog --executors flag win over the declared lab set', () => {
+    it('lets a parsed backlog --executors flag win over the default set', () => {
         const paths = createPaths();
 
         const inputs = createLabBacklogEntryInputs(
@@ -640,7 +673,8 @@ describe('createLabBacklogEntryInputs', () => {
                     outputDir: paths.cycleDir,
                     model: 'deepseek-v4-flash',
                     verbose: true,
-                    executors: AdguardCliExecutorName,
+                    executors: BrowserExtensionExecutorName,
+                    blockerModules: [],
                     noComment: false,
                 },
             },
@@ -650,7 +684,7 @@ describe('createLabBacklogEntryInputs', () => {
             },
         );
 
-        expect(inputs.executors).toEqual([AdguardCliExecutorName]);
+        expect(inputs.executors).toEqual([BrowserExtensionExecutorName]);
     });
 });
 
@@ -740,6 +774,78 @@ describe('lab delegation through the main runtime', () => {
                 LOCAL_PUBLICATION_PATCH_FILE_NAME,
             )}`,
         );
+    });
+
+    it('plugs in the module a --blocker-module manifest describes and starts it in the cycle', async () => {
+        const paths = createPaths();
+        const manifestPath = writeDemoModuleManifest(paths.workspaceRoot);
+        const runExportedSnapshotCycle = vi.fn(async (_options: ExportedSnapshotCycleOptions) =>
+            completedCycleResult(
+                join(
+                    paths.cycleDir,
+                    'investigation',
+                    'runs',
+                    FIXTURE_PUBLICATION_ID,
+                    'run-result.json',
+                ),
+            ),
+        );
+        const { context, state } = runtimeContext(
+            paths.workspaceRoot,
+            { ...TEST_PROVIDER_ENV, DEMO_LICENSE_KEY: 'licence-1' },
+            [
+                'fix',
+                'issue',
+                '4',
+                '--issue-file',
+                paths.issueFile,
+                '--output-dir',
+                paths.cycleDir,
+                '--blocker-module',
+                manifestPath,
+                '--executors',
+                DEMO_MODULE_EXECUTOR,
+            ],
+        );
+
+        await runMainRuntime(context, {
+            entryDelegate: {
+                cycleCommands: { runExportedSnapshotCycle },
+                readInvestigationResult: () => fixtureRunResult(4, false),
+            },
+        });
+
+        expect(state.failed).toBe(false);
+        expect(runExportedSnapshotCycle.mock.calls[0]?.[0]).toMatchObject({
+            executors: [DEMO_MODULE_EXECUTOR],
+            blockerModules: [expect.objectContaining({ executor: DEMO_MODULE_EXECUTOR })],
+        });
+    });
+
+    it('fails named with the manifest path when a --blocker-module manifest is invalid', async () => {
+        const paths = createPaths();
+        const manifestPath = join(paths.workspaceRoot, 'broken-module.json');
+        writeFileSync(manifestPath, JSON.stringify({ executor: 'broken_proxy' }));
+        const runExportedSnapshotCycle = vi.fn();
+        const { context, state } = runtimeContext(paths.workspaceRoot, { ...TEST_PROVIDER_ENV }, [
+            'fix',
+            'issue',
+            '4',
+            '--issue-file',
+            paths.issueFile,
+            '--output-dir',
+            paths.cycleDir,
+            '--blocker-module',
+            'broken-module.json',
+        ]);
+
+        await runMainRuntime(context, {
+            entryDelegate: { cycleCommands: { runExportedSnapshotCycle } },
+        });
+
+        expect(state.stderr).toContain(`${manifestPath} is not a blocker module manifest`);
+        expect(state.failed).toBe(true);
+        expect(runExportedSnapshotCycle).not.toHaveBeenCalled();
     });
 
     it('surfaces the shared combined error through stderr with a failure exit', async () => {
@@ -871,6 +977,7 @@ describe('backlog command parsing', () => {
                 outputDir: '/tmp/backlog-run',
                 model: 'deepseek-v4-flash',
                 verbose: true,
+                blockerModules: [],
                 noComment: false,
             },
         });

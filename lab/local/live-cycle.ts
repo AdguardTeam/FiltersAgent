@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import * as v from 'valibot';
 import type { GithubReadConfig } from '../../src/github/fetch-issue';
+import type { EnabledBlockerModule } from '../../src/proxy-blocker/blocker-module-run-issue';
 import { sanitizeFailureMessage } from '../../src/tracer/redactor';
 import type { BrowserMode } from '../../src/types/fix-run-result';
 import type { UsageRatesTable } from '../../src/types/usage-summary';
@@ -56,9 +57,14 @@ export interface LiveCycleRuntimeOptions {
 
     /**
      * Validated executor set this run locks, already checked against the registered names; absent
-     * locks the lab's own declared set.
+     * locks the browser extension and every module in `blockerModules`.
      */
     executors?: readonly string[];
+
+    /**
+     * The blocker modules this run's locked selections start; absent starts none.
+     */
+    blockerModules?: readonly EnabledBlockerModule[];
 
     /**
      * The repository's own lint command line, run over each candidate in the local filters source
@@ -273,6 +279,7 @@ export async function runTargetedLiveIssueCycle(
                 pricingSnapshot: options.pricingSnapshot,
                 signal: options.signal,
                 executors: options.executors,
+                blockerModules: options.blockerModules,
                 lintCommand: options.lintCommand,
             },
             exactSecrets: [options.github.token],

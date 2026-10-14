@@ -20,8 +20,13 @@ import {
     disposeHermeticRunSeams,
     hermeticVerifiedHandler,
     latestHermeticBaseUrl,
+    SMOKE_MODULE_EXECUTOR,
     smokeCoreConfig,
+    writeSmokeBlockerModule,
 } from './hermetic-run-seams';
+import { loadLabBlockerModules } from '../../../lab/local/blocker-modules';
+import { createLogger } from '../../../src/logger/logger';
+import { enableBlockerModules } from '../../../src/proxy-blocker/blocker-module-loader';
 import { TEST_PROVIDER_ENV } from '../../config/test-core-config';
 
 afterEach(async () => {
@@ -82,13 +87,14 @@ function smokeRuntimeContext(
 describe('CLI smoke on an exported issue snapshot', () => {
     it('leaves the same artifacts as the directly driven cycle and never comments without a token', async () => {
         const fixture = createSnapshotSmokeFixture();
+        const manifestPath = writeSmokeBlockerModule(join(fixture.workspaceRoot, 'smoke-module'));
         const entryHandler = await hermeticVerifiedHandler(fixture.checkoutPath);
         const entryCoreConfig = smokeCoreConfig(latestHermeticBaseUrl());
         const { context, state } = smokeRuntimeContext(
             fixture.workspaceRoot,
             // The explicit provider environment resolves the entry inputs; no token exists, so the
-            // comment was never available to attempt.
-            { ...TEST_PROVIDER_ENV },
+            // comment was never available to attempt. PATH lets the module process find node.
+            { ...TEST_PROVIDER_ENV, PATH: process.env.PATH },
             [
                 'fix',
                 'issue',
@@ -97,6 +103,10 @@ describe('CLI smoke on an exported issue snapshot', () => {
                 fixture.issueFile,
                 '--output-dir',
                 fixture.entryOutputDir,
+                // The scripted run selects the module's executor, which only a plugged-in module
+                // makes selectable.
+                '--blocker-module',
+                manifestPath,
             ],
         );
 
@@ -135,11 +145,27 @@ describe('CLI smoke on an exported issue snapshot', () => {
 
         const oracleHandler = await hermeticVerifiedHandler(fixture.checkoutPath);
         const oracleCoreConfig = smokeCoreConfig(latestHermeticBaseUrl());
-        const oracle = await runExportedSnapshotCycle(oracleCycleOptions(fixture), {
-            loadLocalCoreConfig: () => oracleCoreConfig,
-            runLocalFixFromRevision: oracleHandler.runLocalFixFromRevision,
-            startAdguardCliBlocker: oracleHandler.startAdguardCliBlocker,
-        });
+        const moduleEnvironment = { PATH: process.env.PATH };
+        const oracleModules = loadLabBlockerModules(
+            [manifestPath],
+            fixture.workspaceRoot,
+            moduleEnvironment,
+        );
+        const oracle = await runExportedSnapshotCycle(
+            {
+                ...oracleCycleOptions(fixture),
+                blockerModules: enableBlockerModules(
+                    [SMOKE_MODULE_EXECUTOR],
+                    oracleModules,
+                    moduleEnvironment,
+                    createLogger(),
+                ),
+            },
+            {
+                loadLocalCoreConfig: () => oracleCoreConfig,
+                runLocalFixFromRevision: oracleHandler.runLocalFixFromRevision,
+            },
+        );
 
         // The unchanged cycle seam is the oracle: the entry-driven terminal record binds the same
         // fixture revision, the same product outcome, and a written investigation.

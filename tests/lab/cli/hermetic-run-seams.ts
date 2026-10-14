@@ -1,4 +1,3 @@
-import { vi } from 'vitest';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -273,22 +272,35 @@ function preparedCheckoutStub(checkoutPath: string) {
 }
 
 /**
- * The AdGuard CLI module stand-in: it cannot describe itself, exactly as an unconfigured module, so
- * the locked proxy selection stays capability-limited without spawning anything.
- *
- * @returns The blocker factory injected into the cycle dependencies.
+ * The executor the smoke's blocker module registers.
  */
-function unconfiguredBlockerStub(): LocalCycleDependencies['startAdguardCliBlocker'] {
-    return vi.fn(() => ({
-        describe: async () => {
-            throw new Error('The AdGuard CLI module is not configured in the smoke fixture.');
-        },
-        start: vi.fn(),
-        apply: vi.fn(),
-        state: vi.fn(),
-        log: vi.fn(),
-        stop: async () => ({ licenceReleased: false }),
-    }));
+export const SMOKE_MODULE_EXECUTOR = 'smoke_proxy';
+
+/**
+ * Write the smoke's blocker module into a directory, as a module author ships one: a manifest and a
+ * module process that exits on its first request, exactly as an unconfigured module, so the locked
+ * module selection stays capability-limited.
+ *
+ * @param directory - Directory the module is written into.
+ * @returns Absolute path of the manifest.
+ */
+export function writeSmokeBlockerModule(directory: string): string {
+    mkdirSync(directory, { recursive: true });
+    writeFileSync(
+        join(directory, 'module.mjs'),
+        "process.stdin.once('data', () => process.exit(3));\n",
+    );
+    const manifestPath = join(directory, 'blocker-module.json');
+    writeFileSync(
+        manifestPath,
+        JSON.stringify({
+            executor: SMOKE_MODULE_EXECUTOR,
+            selectionGuidance: 'Desktop website-filtering reports belong to smoke_proxy.',
+            command: ['node', './module.mjs'],
+            env: [],
+        }),
+    );
+    return manifestPath;
 }
 
 /**
@@ -301,7 +313,7 @@ function scriptedAnalysisOnlyLoop(): ScriptedReply[] {
     return [
         toolCall('fetch_issue', { issueNumber: 4 }),
         toolCall('select_environment', {
-            kind: 'adguard_cli',
+            kind: SMOKE_MODULE_EXECUTOR,
             requiredCapabilities: [],
             intent: {
                 issueType: 'ads',
@@ -332,11 +344,11 @@ function scriptedAnalysisOnlyLoop(): ScriptedReply[] {
  * established local-fix-runner suite pattern, shared verbatim by both smoke legs.
  *
  * @param checkoutPath - The fixture filters checkout the fixture preparer hands the run.
- * @returns The cycle-dependency block (handler and host stub) carrying the fresh provider.
+ * @returns The cycle-dependency block carrying the fresh provider.
  */
 export async function hermeticVerifiedHandler(
     checkoutPath: string,
-): Promise<Pick<LocalCycleDependencies, 'runLocalFixFromRevision' | 'startAdguardCliBlocker'>> {
+): Promise<Pick<LocalCycleDependencies, 'runLocalFixFromRevision'>> {
     const provider = await startHermeticProvider({
         scenario: HermeticScenario.Scripted,
         script: scriptedAnalysisOnlyLoop(),
@@ -374,6 +386,5 @@ export async function hermeticVerifiedHandler(
     return {
         runLocalFixFromRevision: (coreConfig, revision, options) =>
             runLocalFixFromRevision(coreConfig, revision, options, runnerDependencies),
-        startAdguardCliBlocker: unconfiguredBlockerStub(),
     };
 }

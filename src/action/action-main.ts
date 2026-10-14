@@ -39,7 +39,11 @@ import {
     openPreflightDiagnosticLog,
     type PreflightDiagnosticLog,
 } from '../local/preflight-diagnostic-log';
-import { blockerModuleEntryDependencies, loadActionBlockerModules } from './action-blocker-modules';
+import { loadBlockerModules } from '../proxy-blocker/blocker-module-loader';
+import {
+    ACTION_MODULE_ENVIRONMENT_NAME,
+    blockerModuleEntryDependencies,
+} from './action-blocker-modules';
 import { mapAgentRunSources } from './action-input-binding';
 import {
     workspaceArtifactsAncestors,
@@ -362,7 +366,12 @@ export async function runFiltersAgentAction(
         runEnv = { ...env, ...binding.envAdditions };
         // Modules register their executors before resolution, so the `executors` input may name
         // them; a manifest that cannot be read or a variable the step does not set fails named.
-        modules = loadActionBlockerModules(binding.blockerModulePaths, workspaceDir, runEnv);
+        modules = loadBlockerModules(
+            binding.blockerModulePaths,
+            workspaceDir,
+            runEnv,
+            ACTION_MODULE_ENVIRONMENT_NAME,
+        );
         inputs = resolveAgentRunInputs(runEnv, {
             ...binding.sources,
             knownExecutorNames: filteringExecutors.names(),

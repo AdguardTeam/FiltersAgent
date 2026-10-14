@@ -121,27 +121,45 @@ file.
 
 The `adguard_cli` executor investigates reports from desktop AdGuard products
 through [AdGuard CLI](https://github.com/AdguardTeam/AdGuardCLI) running as a
-filtering proxy. It needs two variables:
+filtering proxy. Local runs plug it in the same way the action does: as the
+blocker module committed in `adguard-cli/`, named with `--blocker-module`. The
+module needs two variables:
 
 | Variable | Purpose |
 | --- | --- |
-| `ADGUARD_CLI_PATH` | Absolute path of the `adguard-cli` executable |
 | `ADGUARD_LICENSE_KEY` | AdGuard licence the CLI is activated with for each run |
+| `ADGUARD_CLI_PATH` | Absolute path of the `adguard-cli` executable; without it the module runs `adguard-cli/bin/adguard-cli` |
 
 To run it locally:
 
 1. Download the official release for your platform from
    https://github.com/AdguardTeam/AdGuardCLI/releases and extract it. Do not run
    its installer.
-2. Pass the licence on the command line rather than writing it into `.env`. With
-   the 1Password CLI, `op run` resolves an `op://` reference only from the
-   command line or an `--env-file`:
+2. Set both variables in `.env` or in the environment, and name the module:
+
+   ```bash
+   ADGUARD_CLI_PATH=/path/to/adguard-cli \
+   ADGUARD_LICENSE_KEY=<your-licence-key> \
+   pnpm start -- fix issue 12345 --browser on \
+       --blocker-module adguard-cli/blocker-module.json
+   ```
+
+   To keep the licence out of `.env` and the shell history, pass a 1Password
+   reference through the 1Password CLI instead. `op run` resolves an `op://`
+   reference only from the command line or an `--env-file`:
 
    ```bash
    ADGUARD_CLI_PATH=/path/to/adguard-cli \
    ADGUARD_LICENSE_KEY='op://<vault>/<item>/<field>' \
-   op run -- pnpm start -- fix issue 12345 --browser on
+   op run -- pnpm start -- fix issue 12345 --browser on \
+       --blocker-module adguard-cli/blocker-module.json
    ```
+
+Without `--blocker-module` a run has only the browser extension. Without
+`ADGUARD_LICENSE_KEY` the run stops before it starts and names the variable.
+The run executes the bundle, not the sources: after changing
+`src/adguard-cli/`, rebuild it as described in
+[Build the AdGuard CLI module](#build-the-adguard-cli-module).
 
 What a run does with the CLI (`src/adguard-cli/adguard-cli-proxy.ts`):
 
@@ -345,7 +363,9 @@ the sources and the lockfile, so two builds give byte-identical files. The
 committed copy.
 
 The action image leaves `src/adguard-cli/` out, so the action itself never
-carries the CLI code.
+carries the CLI code. The local CLI and the benchmark run the same bundle
+through `--blocker-module adguard-cli/blocker-module.json`; see
+[Run the AdGuard CLI executor](#run-the-adguard-cli-executor).
 
 ### Try a change on a fork of AdguardFilters
 

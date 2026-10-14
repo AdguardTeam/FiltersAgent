@@ -20,12 +20,12 @@ import {
     createLabFixEntryDelegate,
     type LabEntryDelegateDependencies,
 } from './entry-delegate';
+import { enableBlockerModules } from '../../src/proxy-blocker/blocker-module-loader';
 import {
     createBlockerModuleRunIssue,
     type BlockerModuleRunIssueDependencies,
 } from '../../src/proxy-blocker/blocker-module-run-issue';
-import { startAdguardCliBlocker } from '../../src/adguard-cli/adguard-cli-module';
-import { AdguardCliExecutorName } from '../../src/adguard-cli/executor-name';
+import { loadLabBlockerModules } from '../local/blocker-modules';
 import {
     createPiRuntimeFromConfig,
     createConfiguredSingleShotClient,
@@ -52,8 +52,7 @@ export interface MainRuntimeDependencies {
     entryDelegate?: LabEntryDelegateDependencies;
 
     /**
-     * Injectable seams of the backlog's AdGuard CLI-wired per-issue engine; production passes
-     * nothing.
+     * Injectable seams of the backlog's module-wired per-issue engine; production passes nothing.
      */
     backlogRunIssue?: BlockerModuleRunIssueDependencies;
 }
@@ -124,12 +123,21 @@ async function runCommand(
     const logger = createLogger({ verbose: parsed.flags.verbose });
 
     if (parsed.command === CommandName.Fix) {
+        const env = context.env as Record<string, string | undefined>;
+        // Modules register their executors before resolution, so `--executors` may name them; a
+        // manifest that cannot be read or a variable the environment lacks fails named.
+        const blockerModules = loadLabBlockerModules(
+            parsed.flags.blockerModules,
+            context.workspaceRoot,
+            env,
+        );
         const delegate = createLabFixEntryDelegate(
             parsed,
             {
-                env: context.env as Record<string, string | undefined>,
+                env,
                 workspaceRoot: context.workspaceRoot,
                 signal: context.signal,
+                blockerModules,
             },
             dependencies.entryDelegate,
         );
@@ -240,9 +248,8 @@ async function handleExportCommand(
 /**
  * Run the backlog command through the shared agent entry: the resolver validates the shared input
  * surface (the lab inherits the combined mandatory-input checks), the per-issue engine is the
- * public composition wrapped with the lab's own AdGuard CLI wiring so a locked `adguard_cli`
- * selection activates against this run's configuration instead of the module state only `fix`'s
- * local cycle used to set, and the exit contract follows the result's exit code.
+ * public composition wrapped with the plugged-in modules the run locks, the same seam the action
+ * builds, and the exit contract follows the result's exit code.
  *
  * @param backlogCmd - Parsed backlog queue run.
  * @param context - Secret-free runtime context with sanitized writers.
@@ -253,24 +260,20 @@ async function handleBacklogCommand(
     context: MainRuntimeContext,
     dependencies: MainRuntimeDependencies,
 ): Promise<void> {
+    const env = context.env as Record<string, string | undefined>;
+    const blockerModules = loadLabBlockerModules(
+        backlogCmd.flags.blockerModules,
+        context.workspaceRoot,
+        env,
+    );
     const inputs = createLabBacklogEntryInputs(
         backlogCmd,
-        {
-            env: context.env as Record<string, string | undefined>,
-            workspaceRoot: context.workspaceRoot,
-        },
+        { env, workspaceRoot: context.workspaceRoot, blockerModules },
         dependencies.entryDelegate,
     );
-    const env = context.env as Record<string, string | undefined>;
-    const logger = createLogger();
     const runIssue = createBlockerModuleRunIssue(
         context.workspaceRoot,
-        [
-            {
-                executor: AdguardCliExecutorName,
-                startBlocker: (workspaceDir) => startAdguardCliBlocker(env, workspaceDir, logger),
-            },
-        ],
+        enableBlockerModules(inputs.executors, blockerModules, env, createLogger()),
         dependencies.backlogRunIssue,
     );
     const result = await runFiltersAgentEntry(inputs, { runIssue });

@@ -10,6 +10,7 @@ prices.
 - [Before you start](#before-you-start)
 - [Configure the provider](#configure-the-provider)
 - [Run one case or the whole set](#run-one-case-or-the-whole-set)
+- [Run the cases with a blocker module](#run-the-cases-with-a-blocker-module)
 - [Read the results](#read-the-results)
 - [Count the cost](#count-the-cost)
 - [Add a case](#add-a-case)
@@ -31,8 +32,9 @@ You need:
 
 You do not need a browser install: the stealth Chromium build is downloaded
 on the first run. You do not need the AdGuard CLI either: every case is a
-Chrome MV3 browser extension report, and the benchmark does not use the
-desktop executor.
+Chrome MV3 browser extension report, and a case runs only the browser
+extension unless you
+[plug in a blocker module](#run-the-cases-with-a-blocker-module).
 
 Install the dependencies from the repository root:
 
@@ -100,6 +102,31 @@ pnpm test:e2e -- --all
 
 Each case is a complete agent investigation with a real browser, so expect
 minutes per case. Each run of a case replaces that case's previous output.
+
+## Run the cases with a blocker module
+
+To check that a blocker module does not pull extension reports away from the
+browser extension, plug it in with `--blocker-module`, once per module. Every
+case then lets the agent choose between the browser extension and the module:
+
+```bash
+pnpm test:e2e -- --all --blocker-module path/to/blocker-module.json
+```
+
+Set the variables the manifest lists in `env` in `.env` or the shell. A
+manifest that cannot be loaded, or a missing variable, stops the command
+before the first case and names the problem.
+
+For the AdGuard CLI module in `adguard-cli/`, pass its licence and release as
+described in [DEVELOPMENT.md](../../DEVELOPMENT.md#run-the-adguard-cli-executor):
+
+```bash
+pnpm test:e2e -- --case nettg-pl-235988 \
+    --blocker-module adguard-cli/blocker-module.json
+```
+
+What a module process receives from the environment is listed in the
+[CLI reference](../reference/cli.md#blocker-modules).
 
 ## Read the results
 

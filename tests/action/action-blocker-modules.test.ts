@@ -3,11 +3,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+    ACTION_MODULE_ENVIRONMENT_NAME,
     blockerModuleEntryDependencies,
-    loadActionBlockerModules,
 } from '../../src/action/action-blocker-modules';
 import { runFiltersAgentAction } from '../../src/action/action-main';
-import { ConfigError } from '../../src/config/config-error';
 import {
     AgentEntryExitCode,
     AgentEntryStatus,
@@ -15,10 +14,7 @@ import {
 } from '../../src/entry/entry-run';
 import type { AgentRunInputs } from '../../src/entry/entry-inputs';
 import type { Logger } from '../../src/logger/logger';
-import {
-    blockerModuleProcessEnvironment,
-    loadBlockerModuleManifest,
-} from '../../src/proxy-blocker/blocker-module-manifest';
+import { loadBlockerModules } from '../../src/proxy-blocker/blocker-module-loader';
 
 const temporaryRoots: string[] = [];
 
@@ -89,59 +85,15 @@ describe('blocker modules on the action face', () => {
         expect(captured?.executors).toEqual(['browser_extension', 'demo_proxy']);
     });
 
-    it('fails named when the step env lacks a variable the module needs', async () => {
-        const workspace = await workspaceWithManifest({ ...MANIFEST, executor: 'needy_proxy' });
-
-        expect(() => loadActionBlockerModules(['blocker-module.json'], workspace, {})).toThrow(
-            new ConfigError(
-                "Blocker module needy_proxy needs DEMO_LICENSE_KEY in the action step's env.",
-            ),
-        );
-    });
-
-    it('passes an optional variable only when the step sets it', async () => {
-        const workspace = await workspaceWithManifest({
-            ...MANIFEST,
-            optionalEnv: ['DEMO_CACHED_STATE'],
-        });
-        const module = loadBlockerModuleManifest(join(workspace, 'blocker-module.json'));
-
-        expect(
-            blockerModuleProcessEnvironment(
-                module,
-                { PATH: '/bin', DEMO_LICENSE_KEY: 'licence-1', UNRELATED_SECRET: 'nope' },
-                '/private/workspace',
-            ),
-        ).toEqual({
-            PATH: '/bin',
-            DEMO_LICENSE_KEY: 'licence-1',
-            FILTERS_AGENT_BLOCKER_WORKSPACE: '/private/workspace',
-        });
-        expect(
-            blockerModuleProcessEnvironment(
-                module,
-                { DEMO_LICENSE_KEY: 'licence-1', DEMO_CACHED_STATE: '/cache/state.tar.gz' },
-                '/private/workspace',
-            ),
-        ).toEqual({
-            DEMO_LICENSE_KEY: 'licence-1',
-            DEMO_CACHED_STATE: '/cache/state.tar.gz',
-            FILTERS_AGENT_BLOCKER_WORKSPACE: '/private/workspace',
-        });
-    });
-
-    it('fails named on a manifest that is not one', async () => {
-        const workspace = await workspaceWithManifest({ executor: 'broken_proxy' });
-
-        expect(() => loadActionBlockerModules(['blocker-module.json'], workspace, {})).toThrow(
-            /blocker-module\.json is not a blocker module manifest/u,
-        );
-    });
-
     it('starts modules only for a run that enables them, with only the variables they list', async () => {
         const workspace = await workspaceWithManifest({ ...MANIFEST, executor: 'listed_proxy' });
         const environment = { DEMO_LICENSE_KEY: 'licence-1', UNRELATED_SECRET: 'nope' };
-        const modules = loadActionBlockerModules(['blocker-module.json'], workspace, environment);
+        const modules = loadBlockerModules(
+            ['blocker-module.json'],
+            workspace,
+            environment,
+            ACTION_MODULE_ENVIRONMENT_NAME,
+        );
         const createRunIssue = vi.fn(() => vi.fn());
 
         expect(

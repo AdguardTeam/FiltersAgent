@@ -111,6 +111,32 @@ export interface BlockerModuleRunIssueDependencies {
 }
 
 /**
+ * The executor dependencies one investigation passes its enabled modules: each module keeps its own
+ * files in a directory of the investigation's private workspace named after its executor.
+ *
+ * @param modules - The modules the run enables.
+ * @param workspaceDir - The investigation's private workspace.
+ * @param filterCacheDir - Directory the official filter lists are cached in across runs.
+ * @returns The dependencies, keyed by executor name.
+ */
+export function blockerModuleRunDependencies(
+    modules: readonly EnabledBlockerModule[],
+    workspaceDir: string,
+    filterCacheDir: string,
+): Record<ExecutorName, BlockerModuleRunDependencies> {
+    return Object.fromEntries(
+        modules.map((module): [ExecutorName, BlockerModuleRunDependencies] => [
+            module.executor,
+            {
+                startBlocker: module.startBlocker,
+                workspaceDir: join(workspaceDir, module.executor),
+                filterCacheDir,
+            },
+        ]),
+    );
+}
+
+/**
  * Build the per-issue `runIssue` seam: the shared public engine, with every enabled module wired
  * into every issue's own investigation. Each issue gets its own private workspace and its own
  * module instance, so two issues running back to back never share blocker state.
@@ -136,15 +162,10 @@ export function createBlockerModuleRunIssue(
         // the overlap check see it.
         mkdirSync(request.artifactsDir, { recursive: true, mode: 0o700 });
         const workspaceDir = reserve([workspaceRoot, request.artifactsDir]);
-        const moduleDependencies = Object.fromEntries(
-            modules.map((module): [ExecutorName, BlockerModuleRunDependencies] => [
-                module.executor,
-                {
-                    startBlocker: module.startBlocker,
-                    workspaceDir: join(workspaceDir, module.executor),
-                    filterCacheDir,
-                },
-            ]),
+        const moduleDependencies = blockerModuleRunDependencies(
+            modules,
+            workspaceDir,
+            filterCacheDir,
         );
         try {
             return await runIssue(request, {

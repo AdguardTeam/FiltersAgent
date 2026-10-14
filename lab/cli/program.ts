@@ -87,10 +87,15 @@ export interface ParsedCommand {
         repository?: string;
 
         /**
-         * Comma-separated executor names this run locks; absent hands the declared lab set to the
-         * entry resolver.
+         * Comma-separated executor names this run locks; absent locks the browser extension and
+         * every module `blockerModules` plugs in.
          */
         executors?: string;
+
+        /**
+         * Manifest paths of the blocker modules this run plugs in, in the order given.
+         */
+        blockerModules: string[];
 
         /**
          * Whether the temporary disposable checkouts should be retained for debugging.
@@ -198,10 +203,15 @@ export interface BacklogParsedCommand {
         model?: string;
 
         /**
-         * Comma-separated executor names each per-issue run locks; absent hands the declared lab
-         * set to the entry resolver.
+         * Comma-separated executor names each per-issue run locks; absent locks the browser
+         * extension and every module `blockerModules` plugs in.
          */
         executors?: string;
+
+        /**
+         * Manifest paths of the blocker modules each per-issue run plugs in, in the order given.
+         */
+        blockerModules: string[];
 
         /**
          * Comma-separated GitHub author-association names trusted to change a backlog issue's
@@ -361,6 +371,11 @@ export interface ActionOpts {
     executors?: string;
 
     /**
+     * Repeated `--blocker-module` manifest paths.
+     */
+    blockerModule: string[];
+
+    /**
      * Whether to retain the temporary disposable checkouts.
      */
     keepTemporaryFiles?: boolean;
@@ -442,6 +457,11 @@ interface BacklogActionOpts {
     executors?: string;
 
     /**
+     * Repeated `--blocker-module` manifest paths.
+     */
+    blockerModule: string[];
+
+    /**
      * Comma-separated GitHub author-association names trusted to change a backlog issue's revision;
      * absent falls back to the queue default.
      */
@@ -480,6 +500,13 @@ interface BacklogActionOpts {
      */
     comment?: boolean;
 }
+
+/**
+ * Help text of the `--blocker-module` option the `fix` and `backlog` commands share.
+ */
+const BLOCKER_MODULE_OPTION_HELP =
+    'Plug in the blocker module this manifest describes, relative to the working directory; ' +
+    'repeat for several modules';
 
 /**
  * Help text of the `--lint-command` option the `fix` and `backlog` commands share.
@@ -586,8 +613,10 @@ export function buildProgram(
             .option('--model <name>', 'Override the LLM model for this run')
             .option(
                 '--executors <names>',
-                'Comma-separated executor names this run locks; absent locks the declared lab set',
+                'Comma-separated executor names this run locks; absent locks browser_extension ' +
+                    'and every plugged-in blocker module',
             )
+            .option('--blocker-module <manifest>', BLOCKER_MODULE_OPTION_HELP, collectOption, [])
             .option('--verbose', 'Verbose (debug-level) logging', false)
             .option('--browser <mode>', 'Browser mode (auto, on, off)', 'auto')
             .option(
@@ -711,6 +740,7 @@ export function buildProgram(
                         runConfig: opts.runConfig,
                         repository: opts.repository,
                         executors: opts.executors,
+                        blockerModules: opts.blockerModule,
                         keepTemporaryFiles: Boolean(opts.keepTemporaryFiles),
                         instructionPath: opts.instruction,
                         lintCommand: opts.lintCommand,
@@ -739,8 +769,10 @@ export function buildProgram(
         .option('--model <name>', 'Override the LLM model for this run')
         .option(
             '--executors <names>',
-            'Comma-separated executor names each per-issue run locks; absent locks the declared lab set',
+            'Comma-separated executor names each per-issue run locks; absent locks ' +
+                'browser_extension and every plugged-in blocker module',
         )
+        .option('--blocker-module <manifest>', BLOCKER_MODULE_OPTION_HELP, collectOption, [])
         .option(
             '--trusted-roles <names>',
             'Comma-separated GitHub author associations trusted to change a backlog revision (default: OWNER,MEMBER,COLLABORATOR)',
@@ -810,6 +842,7 @@ export function buildProgram(
                     outputDir: opts.outputDir,
                     model: opts.model,
                     executors: opts.executors,
+                    blockerModules: opts.blockerModule,
                     trustedRoles: opts.trustedRoles,
                     maxRevisionsPerWindow,
                     revisionWindowMs,

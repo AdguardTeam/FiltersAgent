@@ -36,7 +36,8 @@ historical issues as a benchmark.
 - **Target Platform**: a Linux container on GitHub Actions runners (`action.Dockerfile`) and
   developer machines (macOS, Linux) for the local CLI and the benchmark.
 - **Project Type**: GitHub Action (container) plus a local CLI tool and a benchmark harness. A
-  pluggable blocker module (`adguard-cli/`) is generated from the sources and committed.
+  pluggable blocker module (`adguard-cli/`) is generated from the sources and committed; the
+  action, the local CLI and the benchmark plug it in by manifest.
 - **Performance Goals**: N/A — a run is bounded by `AGENT_INVESTIGATION_BUDGET_MS`.
 - **Constraints**: an OpenAI-compatible LLM endpoint configured in full; the CloakBrowser binary
   must not be redistributed; the repository is mirrored publicly (see [Other](#other)).
@@ -59,7 +60,7 @@ filters-agent/
 │   ├── browser/               # Browser engines (CloakBrowser Chromium, Playwright Firefox), tools
 │   ├── environment/           # Host/model boundary contracts and environment adapters
 │   ├── local/                 # Local Host implementations: checkouts, issue capture, output
-│   ├── adguard-cli/           # AdGuard CLI executor, a separately pluggable module
+│   ├── adguard-cli/           # AdGuard CLI blocker module, plugged in by manifest only
 │   ├── types/                 # Shared Valibot schemas and value sets (fix outcome, run result)
 │   └── ...                    # config, github, intake, knowledge, publisher, repo, rules, validator
 ├── lab/                       # Development tools outside the action: local CLI, benchmark
@@ -198,9 +199,15 @@ lab/ (local CLI, benchmark)        src/action/ (GitHub Action)
 - `src/` is the action; `lab/` holds the development tools built on it (local CLI, benchmark,
   end-to-end cases). The dependency runs `lab/` → `src/` only: `src/` never imports `lab/`
   (enforced by the `local/no-lab-imports` oxlint rule).
-- `src/adguard-cli/` is a separately pluggable executor; the action and the lab register it by
-  importing it. The `adguard_cli` name MUST NOT appear in `src/` outside that folder (enforced by
-  `local/no-adguard-cli-vocabulary`) — import its constants instead.
+- Blocker modules plug in through the module protocol only: a manifest
+  (`src/proxy-blocker/blocker-module-manifest.ts`) and a process on stdio. The action
+  (`blockerModules` input), the local CLI and the benchmark (`--blocker-module`) load manifests
+  through one loader, `src/proxy-blocker/blocker-module-loader.ts`. The browser extension is the
+  only executor registered in-process.
+- `src/adguard-cli/` is one such module: `pnpm build:adguard-cli` bundles it into `adguard-cli/`
+  with its manifest. Apart from its tests, only `scripts/build-adguard-cli-module.ts` imports it —
+  do not register it in-process from `lab/` or `src/`. The `adguard_cli` name MUST NOT appear in
+  `src/` outside that folder (enforced by `local/no-adguard-cli-vocabulary`).
 - Prompts live as Markdown in `src/prompts/documents/`: edit the Markdown, never build prompt prose
   in code. Every declared `{{camelCase}}` placeholder must be filled and every fill declared, or the
   render throws.

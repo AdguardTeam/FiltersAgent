@@ -1,8 +1,8 @@
 /**
  * The AdGuard CLI as a blocker module: its executor name, the routing guidance the model reads, and
- * the blocker each run starts from the environment. A process that registers this module drives the
- * CLI in-process; the action runs the same blocker as a separate module process
- * (`adguard-cli-module-main.ts`).
+ * the blocker each run starts from the environment. Every run drives it as a separate module
+ * process (`adguard-cli-module-main.ts`), plugged in by the manifest
+ * `scripts/build-adguard-cli-module.ts` generates from the definition below.
  */
 import type { BlockerContract } from '../blocker-contract/blocker-contract';
 import type { BlockerModuleDefinition } from '../proxy-blocker/blocker-module-executor';

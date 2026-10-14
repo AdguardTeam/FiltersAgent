@@ -1,6 +1,7 @@
 import { existsSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { CoreConfig } from '../../src/config/config';
+import type { EnabledBlockerModule } from '../../src/proxy-blocker/blocker-module-run-issue';
 import type { UsageRatesTable } from '../../src/types/usage-summary';
 import { readRunCost, type RunCost } from '../pricing/run-cost';
 import type { GoldenE2EResult } from './golden-comparator';
@@ -39,6 +40,11 @@ export interface RunGoldenE2ESuiteOptions {
      * The user's price table every case is priced from; absent, no case computes a cost.
      */
     pricingSnapshot?: UsageRatesTable;
+
+    /**
+     * The blocker modules every case plugs in; absent plugs in none.
+     */
+    blockerModules?: readonly EnabledBlockerModule[];
 }
 
 /**
@@ -130,6 +136,7 @@ export async function runGoldenE2ESuite(
                 evaluationDirectory: join(resolve(options.evaluationRoot), caseName),
                 verbose: options.verbose,
                 pricingSnapshot: options.pricingSnapshot,
+                blockerModules: options.blockerModules,
             },
             dependencies,
         );

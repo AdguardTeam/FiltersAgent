@@ -123,9 +123,34 @@ describe('buildProgram', () => {
                 runConfig: undefined,
                 repository: undefined,
                 keepTemporaryFiles: false,
+                blockerModules: [],
                 noComment: false,
             },
         });
+    });
+
+    it('collects every repeated --blocker-module manifest in the order given', () => {
+        const { onCommand, error } = run([
+            'fix',
+            'issue',
+            '4',
+            '--blocker-module',
+            'adguard-cli/blocker-module.json',
+            '--blocker-module',
+            '/opt/demo-module/blocker-module.json',
+        ]);
+
+        expect(error).toBeUndefined();
+        expect(onCommand).toHaveBeenCalledWith(
+            expect.objectContaining({
+                flags: expect.objectContaining({
+                    blockerModules: [
+                        'adguard-cli/blocker-module.json',
+                        '/opt/demo-module/blocker-module.json',
+                    ],
+                }),
+            }),
+        );
     });
 
     it('parses --repository as a repository identity override', () => {
@@ -417,6 +442,7 @@ describe('buildProgram', () => {
                 runConfig: undefined,
                 repository: undefined,
                 keepTemporaryFiles: false,
+                blockerModules: [],
                 noComment: false,
             },
         });

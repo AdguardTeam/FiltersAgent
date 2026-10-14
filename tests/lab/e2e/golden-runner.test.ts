@@ -296,6 +296,39 @@ describe('runGoldenE2ECase', () => {
         });
     });
 
+    it('starts a plugged-in module in the case run from a private workspace it removes after', async () => {
+        const caseDirectory = mkdtempSync(join(tmpdir(), 'golden-runner-module-'));
+        const outputDirectory = mkdtempSync(join(tmpdir(), 'golden-output-module-'));
+        writeRunSide(caseDirectory);
+        const startBlocker = vi.fn();
+        let moduleWorkspace = '';
+
+        await runGoldenE2ECase(
+            coreConfig,
+            {
+                caseName: 'plugged-module',
+                caseDirectory,
+                outputDirectory,
+                evaluationDirectory: evaluationDirectoryFor(outputDirectory),
+                blockerModules: [{ executor: 'demo_proxy', startBlocker }],
+            },
+            {
+                runLocalFix: vi.fn(async (_config, options) => {
+                    const module = options.executorDependencies?.['demo_proxy'];
+                    expect(module?.startBlocker).toBe(startBlocker);
+                    moduleWorkspace = module?.workspaceDir ?? '';
+                    expect(moduleWorkspace.startsWith(realpathSync(tmpdir()))).toBe(true);
+                    const resultPath = join(outputDirectory, 'result.json');
+                    writeFileSync(resultPath, '{"invalid":true}', 'utf8');
+                    return localOutputPaths(outputDirectory, resultPath);
+                }),
+            },
+        );
+
+        expect(moduleWorkspace).not.toBe('');
+        expect(existsSync(join(moduleWorkspace, '..'))).toBe(false);
+    });
+
     it('clears all prior owned run output before validating the next case input', async () => {
         const caseDirectory = mkdtempSync(join(tmpdir(), 'golden-runner-invalid-input-'));
         const outputDirectory = mkdtempSync(join(tmpdir(), 'golden-output-invalid-input-'));

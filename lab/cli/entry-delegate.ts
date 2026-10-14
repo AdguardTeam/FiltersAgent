@@ -18,9 +18,12 @@ import {
 } from '../../src/entry/single-issue-run-types';
 import { resolveLocalRunOutputDir } from '../../src/local/output-directory';
 import { readLocalRunOutput } from '../../src/local/run-output';
+import { createLogger } from '../../src/logger/logger';
 import { filteringExecutors } from '../../src/orchestrator/filtering-executors';
+import { enableBlockerModules } from '../../src/proxy-blocker/blocker-module-loader';
+import type { LoadedBlockerModule } from '../../src/proxy-blocker/blocker-module-manifest';
 import type { FixRunResult } from '../../src/types/fix-run-result';
-import { LAB_EXECUTOR_SET } from './executor-set';
+import { labExecutorSet } from '../local/blocker-modules';
 import type { LocalCycleResult } from '../local/local-cycle';
 import {
     runExportedSnapshotFixCommand,
@@ -51,6 +54,12 @@ export interface LabEntryDelegateContext {
      * Optional merged command interruption signal, threaded into the cycle untouched.
      */
     signal?: AbortSignal;
+
+    /**
+     * The blocker modules the command plugs in, already loaded and registered; absent plugs in
+     * none.
+     */
+    blockerModules?: readonly LoadedBlockerModule[];
 }
 
 /**
@@ -112,6 +121,26 @@ function resolveLabEntryInputs(
         ),
         knownExecutorNames: filteringExecutors.names(),
     });
+}
+
+/**
+ * The executor set a command locks: a parsed `--executors` wins; absent, the browser extension and
+ * every module the command plugs in, instead of whatever happens to be registered.
+ *
+ * @param executors - The parsed `--executors` value, when given.
+ * @param context - Host-owned process context carrying the loaded modules.
+ * @returns The comma-separated executor names the entry resolver validates.
+ */
+function labExecutorsSource(
+    executors: string | undefined,
+    context: LabEntryDelegateContext,
+): string {
+    return (
+        executors ??
+        labExecutorSet(
+            (context.blockerModules ?? []).map((module) => module.manifest.executor),
+        ).join(',')
+    );
 }
 
 /**
@@ -232,7 +261,7 @@ function failedSingleIssue(
  * @param dependencies - Delegation seams.
  * @param executors - The resolved entry-input executor set (the entry resolver already rejected an
  *   unknown name at this point), threaded into the lab cycle so a parsed `--executors` actually
- *   reaches the investigation instead of always locking the declared two-executor set.
+ *   reaches the investigation, and the plugged-in modules it names start.
  * @param lintCommand - The resolved repository lint command line, threaded into the lab cycle the
  *   same way; absent runs no lint.
  * @returns The per-issue seam.
@@ -257,6 +286,12 @@ function labCycleRunIssue(
             workspaceRoot: context.workspaceRoot,
             signal: context.signal,
             executors,
+            blockerModules: enableBlockerModules(
+                executors,
+                context.blockerModules ?? [],
+                context.env,
+                createLogger(),
+            ),
             ...(lintCommand === undefined ? {} : { lintCommand }),
         };
         const passthrough: LocalCycleCommandDependencies = dependencies.cycleCommands ?? {};
@@ -297,11 +332,9 @@ export function createLabFixEntryDelegate(
         artifactsDir,
         issueSnapshotPath: command.flags.issueFile,
         model: command.flags.model,
-        // A parsed `--executors` wins; absent, the declared lab set locks the two executors
-        // entry-driven faces run, instead of the implicitly registered set. The resolver has
-        // already rejected an unknown name here, so `inputs.executors` below is the
-        // validated set the lab cycle itself must honor rather than re-locking its own.
-        executors: command.flags.executors ?? LAB_EXECUTOR_SET.join(','),
+        // The resolver rejects an unknown name here, so `inputs.executors` below is the validated
+        // set the lab cycle itself must honor rather than re-locking its own.
+        executors: labExecutorsSource(command.flags.executors, context),
         // Mapped for parity with the action face: `fix`'s own lab cycle never publishes
         // (`--dry-run`'s own description already says so), so neither field changes this face's
         // behavior today, but both flow into the validated entry inputs like every other source.
@@ -345,8 +378,8 @@ export function createLabBacklogEntryInputs(
         limit: command.flags.limit,
         artifactsDir: command.flags.outputDir,
         model: command.flags.model,
-        // Same executor lock as the fix face: parsed `--executors` wins, else the declared lab set.
-        executors: command.flags.executors ?? LAB_EXECUTOR_SET.join(','),
+        // Same executor lock as the fix face.
+        executors: labExecutorsSource(command.flags.executors, context),
         trustedRoles: command.flags.trustedRoles,
         maxRevisionsPerWindow: command.flags.maxRevisionsPerWindow,
         revisionWindowMs: command.flags.revisionWindowMs,

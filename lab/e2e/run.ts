@@ -1,6 +1,9 @@
 import 'dotenv/config';
 import { join } from 'node:path';
 import { loadCoreConfig } from '../../src/config/config';
+import { createLogger } from '../../src/logger/logger';
+import { enableBlockerModules } from '../../src/proxy-blocker/blocker-module-loader';
+import { loadLabBlockerModules } from '../local/blocker-modules';
 import { describeRunCost, formatUsd } from '../pricing/run-cost';
 import { loadUsagePricing } from '../pricing/usage-pricing';
 import { parseGoldenE2EArgs } from './golden-cli';
@@ -25,10 +28,18 @@ async function main(): Promise<void> {
         throw new Error(`Unknown golden E2E case: ${selection.caseName}`);
     }
 
-    // Both loads fail before the first case starts, so a missing variable or a broken price file
-    // never costs a browser launch.
+    // Every load fails before the first case starts, so a missing variable, a broken price file
+    // or a broken module manifest never costs a browser launch.
     const coreConfig = loadCoreConfig();
     const pricingSnapshot = loadUsagePricing(process.env, workspaceRoot) ?? undefined;
+    const modules = loadLabBlockerModules(selection.blockerModules, workspaceRoot, process.env);
+    // A case locks the browser extension and every plugged-in module, so each one is enabled.
+    const blockerModules = enableBlockerModules(
+        modules.map((module) => module.manifest.executor),
+        modules,
+        process.env,
+        createLogger(),
+    );
     const suite = await runGoldenE2ESuite(
         coreConfig,
         {
@@ -37,6 +48,7 @@ async function main(): Promise<void> {
             outputRoot: join(workspaceRoot, 'tmp', 'e2e-runs'),
             evaluationRoot: join(workspaceRoot, 'tmp', 'e2e-evaluations'),
             pricingSnapshot,
+            blockerModules,
         },
         { probeHumanCandidate: createGoldenBrowserOracleProbe(coreConfig) },
     );

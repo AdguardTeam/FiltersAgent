@@ -4,8 +4,10 @@
  * runs: the fetch that installs a verified CLI release and the seed that activates it once.
  *
  * Its output is the repository's committed `adguard-cli/` directory, so a workflow plugs the CLI in
- * with `uses: AdguardTeam/FiltersAgent/adguard-cli@<ref>`. The output depends only on the sources
- * and the locked dependencies, so CI rebuilds it and fails when the committed copy differs.
+ * with `uses: AdguardTeam/FiltersAgent/adguard-cli@<ref>`, and the local CLI and the benchmark plug
+ * it in with `--blocker-module adguard-cli/blocker-module.json`. The output depends only on the
+ * sources and the locked dependencies, so CI rebuilds it and fails when the committed copy
+ * differs.
  *
  * Usage: node --import tsx scripts/build-adguard-cli-module.ts <out-dir>; the build empties
  * `<out-dir>` first.
@@ -19,6 +21,7 @@ import { build } from 'esbuild';
 import { ADGUARD_CLI_MODULE } from '../src/adguard-cli/adguard-cli-module';
 import {
     ADGUARD_CLI_HOME_ARCHIVE_ENV,
+    ADGUARD_CLI_PATH_ENV,
     ADGUARD_LICENSE_KEY_ENV,
 } from '../src/adguard-cli/adguard-cli-proxy';
 import type { BlockerModuleManifest } from '../src/proxy-blocker/blocker-module-manifest';
@@ -59,14 +62,15 @@ await build({
 });
 
 // The release path is the module's own default (bin/adguard-cli beside module.mjs), so the
-// manifest requires only the licence the workflow must supply. The seeded HOME the setup action
-// restores is optional: without it the module activates the licence itself.
+// manifest requires only the licence the run must supply. ADGUARD_CLI_PATH overrides that default:
+// a local run points it at the release extracted for the developer's own platform. The seeded HOME
+// the setup action restores is optional: without it the module activates the licence itself.
 const manifest: BlockerModuleManifest = {
     executor: ADGUARD_CLI_MODULE.executor,
     selectionGuidance: ADGUARD_CLI_MODULE.selectionGuidance,
     command: ['node', './module.mjs'],
     env: [ADGUARD_LICENSE_KEY_ENV],
-    optionalEnv: [ADGUARD_CLI_HOME_ARCHIVE_ENV],
+    optionalEnv: [ADGUARD_CLI_PATH_ENV, ADGUARD_CLI_HOME_ARCHIVE_ENV],
 };
 writeFileSync(join(outDir, 'blocker-module.json'), `${JSON.stringify(manifest, null, 4)}\n`);
 

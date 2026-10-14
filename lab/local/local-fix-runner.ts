@@ -9,8 +9,8 @@ import {
 } from 'node:path';
 import * as v from 'valibot';
 import type { BlockerModuleRunDependencies } from '../../src/proxy-blocker/blocker-module-executor';
-import { AdguardCliExecutorName } from '../../src/adguard-cli/executor-name';
-import { LAB_EXECUTOR_SET } from '../cli/executor-set';
+import type { ExecutorName } from '../../src/environment/executor-name';
+import { labExecutorSet } from './blocker-modules';
 import type { CoreConfig } from '../../src/config/config';
 import { createRunUsageCollector } from '../../src/pi/usage-collector';
 import { type RunUsageSummary, type UsageRatesTable } from '../../src/types/usage-summary';
@@ -152,6 +152,12 @@ export interface RunLocalFixOptions {
      * Trusted campaign-wide KnowledgeBase commit used instead of resolving moving master.
      */
     knowledgeBaseSha?: string;
+
+    /**
+     * The blocker modules this run's locked selections start, keyed by executor name; the run locks
+     * the browser extension and every module listed here.
+     */
+    executorDependencies?: Readonly<Record<ExecutorName, BlockerModuleRunDependencies>>;
 }
 
 /**
@@ -219,14 +225,15 @@ export interface RunVerifiedLocalFixOptions {
     knowledgeBaseSha?: string;
 
     /**
-     * The AdGuard CLI module this run's locked CLI selections start, created by the outer local
-     * cycle.
+     * The blocker modules this run's locked selections start, keyed by executor name; built by the
+     * caller from the modules `--blocker-module` plugs in.
      */
-    adguardCliModule?: BlockerModuleRunDependencies;
+    executorDependencies?: Readonly<Record<ExecutorName, BlockerModuleRunDependencies>>;
 
     /**
      * Validated executor set this run locks, already checked against the registered names by the
-     * entry resolver; absent locks the lab's own declared set.
+     * entry resolver; absent locks the browser extension and every module in
+     * `executorDependencies`.
      */
     executors?: readonly string[];
 
@@ -980,18 +987,17 @@ async function runLocalFixWithInput(
                                       },
                                   }),
                             agentRuntime: {
-                                // A parsed `--executors` wins; absent, the lab locks its own
-                                // declared two-executor set instead of the implicitly registered
-                                // one.
-                                executors: options.executors ?? LAB_EXECUTOR_SET,
-                                // This run threads its own module into the activation context
-                                // instead of module state, so a locked proxy selection
+                                // A parsed `--executors` wins; absent, the lab locks the
+                                // browser extension and the modules this run plugs in instead
+                                // of the implicitly registered set.
+                                executors:
+                                    options.executors ??
+                                    labExecutorSet(Object.keys(options.executorDependencies ?? {})),
+                                // This run threads its own modules into the activation context
+                                // instead of module state, so a locked module selection
                                 // activates against exactly this run's module, never a
                                 // concurrently running one's.
-                                executorDependencies:
-                                    options.adguardCliModule === undefined
-                                        ? {}
-                                        : { [AdguardCliExecutorName]: options.adguardCliModule },
+                                executorDependencies: { ...options.executorDependencies },
                             },
                         },
                         {

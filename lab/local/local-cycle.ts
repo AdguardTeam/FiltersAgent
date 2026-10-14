@@ -3,11 +3,13 @@ import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node
 import { join } from 'node:path';
 import * as v from 'valibot';
 import type { CoreConfig } from '../../src/config/config';
-import type { BlockerContract } from '../../src/blocker-contract/blocker-contract';
-import { createLogger } from '../../src/logger/logger';
+import type { ExecutorName } from '../../src/environment/executor-name';
 import type { BlockerModuleRunDependencies } from '../../src/proxy-blocker/blocker-module-executor';
+import {
+    blockerModuleRunDependencies,
+    type EnabledBlockerModule,
+} from '../../src/proxy-blocker/blocker-module-run-issue';
 import { reservePrivateWorkspace } from '../../src/proxy-blocker/private-workspace';
-import { startAdguardCliBlocker } from '../../src/adguard-cli/adguard-cli-module';
 import { sanitizeFailureMessage } from '../../src/tracer/redactor';
 import {
     FixRunResultSchema,
@@ -30,12 +32,7 @@ import {
 } from '../../src/local/issue-revision';
 import { clearLocalRunOutputDir } from '../../src/local/output-directory';
 import { runLocalFixFromRevision } from './local-fix-runner';
-// Side-effectful registration: every cycle through this module joins the process registry. This
-// cycle threads its own module into the run through
-// FixCoreOptions.agentRuntime.executorDependencies, not module state, so the run's own
-// wiring below never leaks into another concurrent caller (the lab's backlog engine included; see
-// src/proxy-blocker/blocker-module-run-issue.ts).
-import '../cli/executor-set';
+import { labFilterCacheDir } from './blocker-modules';
 import {
     installPreflightDiagnosticLog,
     openPreflightDiagnosticLog,
@@ -240,9 +237,14 @@ export interface ExportedSnapshotCycleOptions {
 
     /**
      * Validated executor set this run locks, already checked against the registered names; absent
-     * locks the lab's own declared set.
+     * locks the browser extension and every module in `blockerModules`.
      */
     executors?: readonly string[];
+
+    /**
+     * The blocker modules this run's locked selections start; absent starts none.
+     */
+    blockerModules?: readonly EnabledBlockerModule[];
 
     /**
      * The repository's own lint command line, run over each candidate in the local filters source
@@ -312,14 +314,19 @@ export interface CycleRevisionHandlerOptions {
     signal?: AbortSignal;
 
     /**
-     * The AdGuard CLI module for locked CLI selections; the cycle builds one from the environment
-     * when absent.
+     * The blocker modules this run's locked selections start; absent starts none.
      */
-    adguardCliModule?: BlockerModuleRunDependencies;
+    blockerModules?: readonly EnabledBlockerModule[];
+
+    /**
+     * The started modules' dependencies, keyed by executor name; the cycle builds them from
+     * `blockerModules` inside its private workspace.
+     */
+    executorDependencies?: Readonly<Record<ExecutorName, BlockerModuleRunDependencies>>;
 
     /**
      * Validated executor set this run locks, already checked against the registered names; absent
-     * locks the lab's own declared set.
+     * locks the browser extension and every module in `blockerModules`.
      */
     executors?: readonly string[];
 
@@ -398,14 +405,6 @@ export interface LocalCycleDependencies {
      * Return the current ISO timestamp.
      */
     now?: () => string;
-
-    /**
-     * Start the AdGuard CLI blocker for one cycle; production starts it from the environment.
-     *
-     * @param workspaceDir - Private directory the blocker keeps its own files in.
-     * @returns The blocker.
-     */
-    startAdguardCliBlocker?: (workspaceDir: string) => BlockerContract;
 }
 
 /**
@@ -575,15 +574,11 @@ export async function executeVerifiedLocalCycle(
     let privateCliCycleRoot: string | null = null;
     try {
         privateCliCycleRoot = reservePrivateWorkspace(forbiddenCliRoots);
-        const adguardCliModule: BlockerModuleRunDependencies = options.handlerOptions
-            .adguardCliModule ?? {
-            startBlocker:
-                dependencies.startAdguardCliBlocker ??
-                ((workspaceDir) =>
-                    startAdguardCliBlocker(process.env, workspaceDir, createLogger())),
-            workspaceDir: privateCliCycleRoot,
-            filterCacheDir: join(process.cwd(), 'tmp', 'filter-cache'),
-        };
+        const executorDependencies = blockerModuleRunDependencies(
+            options.handlerOptions.blockerModules ?? [],
+            privateCliCycleRoot,
+            labFilterCacheDir(process.cwd()),
+        );
         const loadConfig = dependencies.loadLocalCoreConfig;
         if (!loadConfig) {
             throw new Error('An explicit local provider configuration loader is required.');
@@ -594,7 +589,7 @@ export async function executeVerifiedLocalCycle(
             ...options.handlerOptions,
             issueNumber: options.revision.issueNumber,
             outputDir: investigationDir,
-            adguardCliModule,
+            executorDependencies,
         });
         let outcome: v.InferOutput<typeof LocalCycleOutcomeSchema>;
         try {
@@ -732,6 +727,7 @@ export async function runExportedSnapshotCycle(
                 pricingSnapshot: options.pricingSnapshot,
                 signal: options.signal,
                 executors: options.executors,
+                blockerModules: options.blockerModules,
                 lintCommand: options.lintCommand,
             },
         },

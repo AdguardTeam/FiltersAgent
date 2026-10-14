@@ -8,6 +8,7 @@ environment variables it reads, and the files a run writes. Setup is in
 - [Invocation](#invocation)
 - [Commands](#commands)
 - [Environment variables](#environment-variables)
+- [Blocker modules](#blocker-modules)
 - [Repository identity](#repository-identity)
 - [Run output](#run-output)
 
@@ -40,6 +41,8 @@ variables already exported in the shell take precedence.
 
 `backlog` posts its reports as issue comments whenever `GITHUB_TOKEN` is set;
 pass `--no-comment` to keep them in the output directory only.
+`backlog` takes `--executors` and `--blocker-module` with the same meaning as
+`fix issue`.
 
 ### `fix issue` options
 
@@ -47,7 +50,8 @@ pass `--no-comment` to keep them in the output directory only.
 | --- | --- |
 | `--repository <owner/repo>` | Repository the issue belongs to; see [Repository identity](#repository-identity) |
 | `--browser <mode>` | `auto` (default) or `on`; `off` is accepted only by `show` |
-| `--executors <names>` | Comma-separated executors the run may select: `browser_extension`, `adguard_cli` |
+| `--executors <names>` | Comma-separated executors the run may select: `browser_extension` and the executors of the plugged-in modules; defaults to all of them |
+| `--blocker-module <manifest>` | Plug in the blocker module this manifest describes; repeatable. See [Blocker modules](#blocker-modules) |
 | `--issue-file <path>` | Read the issue from an `export issue` bundle instead of GitHub |
 | `--environment <mode>` | `current` (default) runs against the filters' current state; `historical` against the commit `--run-config` names |
 | `--run-config <path>` | JSON case file with the issue identity and the historical filters commit |
@@ -96,16 +100,39 @@ marked required have no default: a missing one fails the run with a
 | `GITHUB_TOKEN` | For GitHub reads and comments | — | GitHub token scoped to the repository operation |
 | `GITHUB_REPO_OWNER`, `GITHUB_REPO_NAME` | No | — | Repository identity, set together |
 | `REPOSITORY_PATH` | For `repo` commands | — | Path of a local filters repository checkout |
-| `ADGUARD_CLI_PATH` | For `adguard_cli` runs | — | Path of the official `adguard-cli` executable |
-| `ADGUARD_LICENSE_KEY` | For `adguard_cli` runs | — | AdGuard licence the CLI is activated with for each run |
-| `ADGUARD_CLI_HOME_ARCHIVE` | No | — | Seeded CLI home archive the run restores instead of activating |
+| `ADGUARD_LICENSE_KEY` | With the AdGuard CLI module | — | AdGuard licence the CLI is activated with for each run |
+| `ADGUARD_CLI_PATH` | No | `adguard-cli/bin/adguard-cli` | Path of the official `adguard-cli` executable the AdGuard CLI module runs |
+| `ADGUARD_CLI_HOME_ARCHIVE` | No | — | Seeded CLI home archive the AdGuard CLI module restores instead of activating |
 | `HEADLESS` | No | `true` | Run the browser headless |
 | `NO_SANDBOX` | No | `false` | Pass `--no-sandbox` to Chromium |
 
-Without `ADGUARD_CLI_PATH` and `ADGUARD_LICENSE_KEY`, a run that selects the
-AdGuard CLI ends capability-limited with the `module_failed` limitation;
-extension runs are unaffected. Running the CLI locally is described in
+The `ADGUARD_*` variables reach the AdGuard CLI module only: see
+[Blocker modules](#blocker-modules). Running the CLI locally is described in
 [DEVELOPMENT.md](../../DEVELOPMENT.md#run-the-adguard-cli-executor).
+
+## Blocker modules
+
+A blocker module adds an executor beside the built-in browser extension. It is
+a process that speaks the blocker protocol on stdio, described by a JSON
+manifest. `fix issue` and `backlog` take `--blocker-module <manifest>`, the
+benchmark takes the same option; the action takes the same manifests in its
+`blockerModules` input.
+
+- A relative manifest path resolves against the working directory, which is
+  the repository root under `pnpm start`.
+- The run registers the module's executor before it resolves `--executors`.
+  Without `--executors` the run locks `browser_extension` and every plugged-in
+  module.
+- The module process receives `PATH`, `HOME`, `LANG`, `TMPDIR`, the variables
+  the manifest lists in `env` and `optionalEnv`, and nothing else from the
+  environment.
+- A manifest that cannot be read, is not valid JSON or is not a manifest stops
+  the run before any model or browser work, naming the file. So does a
+  variable from the manifest's `env` that neither the environment nor `.env`
+  sets.
+
+The AdGuard CLI module is committed in `adguard-cli/`; plug it in with
+`--blocker-module adguard-cli/blocker-module.json`.
 
 ## Repository identity
 

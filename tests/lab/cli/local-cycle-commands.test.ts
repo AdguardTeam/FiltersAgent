@@ -108,6 +108,7 @@ function fixCommand(issueFile: string, outputDir: string): ParsedCommand {
             issueFile,
             outputDir,
             keepTemporaryFiles: false,
+            blockerModules: [],
             noComment: false,
         },
     };

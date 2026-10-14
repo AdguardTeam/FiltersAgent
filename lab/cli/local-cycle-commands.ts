@@ -11,6 +11,7 @@ import {
     type LocalCycleResult,
 } from '../local/local-cycle';
 import { resolveLocalRunOutputDir } from '../../src/local/output-directory';
+import type { EnabledBlockerModule } from '../../src/proxy-blocker/blocker-module-run-issue';
 import { runTargetedLiveIssueCycle, type LiveCycleDependencies } from '../local/live-cycle';
 import type { ExportedLocalIssueSnapshot } from '../../src/local/issue-snapshot';
 import { CommandName } from './commands';
@@ -46,9 +47,15 @@ export interface LocalCycleCommandContext {
 
     /**
      * Resolved executor set a `fix` command locks, already validated against the registered names;
-     * absent locks the lab's own declared set. Not read by faces without an `--executors` flag.
+     * absent locks the browser extension and every module in `blockerModules`. Not read by faces
+     * without an `--executors` flag.
      */
     executors?: readonly string[];
+
+    /**
+     * The blocker modules a `fix` command's locked selections start; absent starts none.
+     */
+    blockerModules?: readonly EnabledBlockerModule[];
 
     /**
      * The repository's own lint command line a `fix` command runs over each candidate; absent runs
@@ -247,6 +254,7 @@ export async function runExportedSnapshotFixCommand(
             pricingSnapshot: loadUsagePricing(context.env, context.workspaceRoot) ?? undefined,
             signal: context.signal,
             executors: context.executors,
+            blockerModules: context.blockerModules,
             lintCommand: context.lintCommand,
         },
         {
@@ -305,6 +313,7 @@ export async function runTargetedLiveIssueFixCommand(
             pricingSnapshot: loadUsagePricing(context.env, context.workspaceRoot) ?? undefined,
             signal: context.signal,
             executors: context.executors,
+            blockerModules: context.blockerModules,
             lintCommand: context.lintCommand,
         },
         {

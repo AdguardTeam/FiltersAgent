@@ -22,5 +22,8 @@ The format is based on [Keep a Changelog], and this project adheres to
       exports snapshots, runs the backlog and searches the repository's rules.
     - Benchmark — replays fixed historical issues and compares the agent's
       rules with the maintainers' fixes.
+- `--blocker-module <manifest>` of the local CLI's `fix issue` and `backlog`
+  and of the benchmark: plugs in a blocker module by its manifest, the same way
+  as the action's `blockerModules` input.
 
 [Unreleased]: https://github.com/AdguardTeam/FiltersAgent/commits/master

@@ -77,6 +77,19 @@ describe('spawnBlockerProcess', () => {
         await expect(blocker.state()).rejects.toThrow(/no longer running/u);
     }, 30_000);
 
+    it('fails a module whose command cannot start and stops it at once', async () => {
+        const blocker = spawnBlockerProcess({
+            command: join(import.meta.dirname, 'fixtures', 'no-such-module'),
+            args: [],
+            env: {},
+            logger: logger(),
+        });
+
+        await expect(blocker.describe()).rejects.toThrow(/could not run/u);
+        expect(await blocker.stop()).toEqual({ licenceReleased: false });
+        await expect(blocker.state()).rejects.toThrow(/no longer running/u);
+    });
+
     it('fails a request whose module died before answering', async () => {
         const blocker = fakeModule('exit-on-describe', logger());
 

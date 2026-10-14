@@ -62,6 +62,11 @@ import type {
 import { LocalExecutionInfrastructureError } from '../../../lab/local/cycle-outcome';
 import { createTestPiRuntime } from '../../pi/test-runtime';
 import { testCoreConfig } from '../../config/test-core-config';
+import { filteringExecutors } from '../../../src/orchestrator/filtering-executors';
+import {
+    createBlockerModuleExecutor,
+    type BlockerModuleRunDependencies,
+} from '../../../src/proxy-blocker/blocker-module-executor';
 
 const { describe, expect, it, vi, afterEach } = vitest;
 
@@ -364,17 +369,66 @@ function persistedFiles(root: string): string[] {
 }
 
 /**
+ * The executor of the desktop blocker module the desktop-route cases plug in.
+ */
+const DEMO_MODULE_EXECUTOR = 'demo_proxy' as const;
+
+if (!filteringExecutors.has(DEMO_MODULE_EXECUTOR)) {
+    filteringExecutors.register(
+        createBlockerModuleExecutor({
+            executor: DEMO_MODULE_EXECUTOR,
+            selectionGuidance: 'Desktop website-filtering reports belong to demo_proxy.',
+        }),
+    );
+}
+
+/**
+ * Refuse a blocker operation, exactly as an unconfigured module does.
+ *
+ * @returns Never resolves.
+ */
+async function refuseUnconfigured(): Promise<never> {
+    throw new Error('The demo module is not configured.');
+}
+
+/**
+ * The plugged-in desktop module, which fails to describe itself exactly as an unconfigured module
+ * does, so a locked module selection stays capability-limited.
+ *
+ * @param workspaceDir - Directory standing in for the module's private workspace.
+ * @returns The executor dependencies a run passes the module.
+ */
+function failingDemoModule(
+    workspaceDir: string,
+): Record<typeof DEMO_MODULE_EXECUTOR, BlockerModuleRunDependencies> {
+    return {
+        [DEMO_MODULE_EXECUTOR]: {
+            startBlocker: () => ({
+                describe: refuseUnconfigured,
+                start: refuseUnconfigured,
+                apply: refuseUnconfigured,
+                state: refuseUnconfigured,
+                log: refuseUnconfigured,
+                stop: async () => ({ licenceReleased: false }),
+            }),
+            workspaceDir,
+            filterCacheDir: workspaceDir,
+        },
+    };
+}
+
+/**
  * Selection arguments for the strict select_environment advertisement.
  *
  * @param kind - The environment kind the run locks.
  * @returns The parsed selection call arguments.
  */
-function selectionArguments(kind: 'adguard_cli' | 'unsupported_product_case') {
+function selectionArguments(kind: typeof DEMO_MODULE_EXECUTOR | 'unsupported_product_case') {
     return {
         kind,
         requiredCapabilities: [],
         intent: {
-            issueType: kind === 'adguard_cli' ? 'ads' : 'product_specific',
+            issueType: kind === DEMO_MODULE_EXECUTOR ? 'ads' : 'product_specific',
             rationale: 'The issue evidence determines this environment choice.',
             confidence: 0.9,
             evidence: [
@@ -462,11 +516,20 @@ function preparedCheckoutStub(checkoutPath: string) {
         });
 }
 
+/**
+ * Timeout of a test whose run publishes for real. The publication is durable: it fsyncs every file
+ * it writes and every directory it changes, 19 calls for one run. That takes about 50 ms on a
+ * developer machine, but an fsync on a loaded CI disk waits for the filesystem to flush what every
+ * parallel test worker wrote, and one such run took more than 5 s. The publication is the path
+ * under test, so it cannot be stubbed out.
+ */
+const DURABLE_PUBLICATION_TIMEOUT_MS = 30_000;
+
 describe('runLocalFix', () => {
     it.each([
         {
-            name: 'AdGuard CLI capability limitation',
-            kind: 'adguard_cli' as const,
+            name: 'desktop module capability limitation',
+            kind: DEMO_MODULE_EXECUTOR,
             status: 'capability_limited' as const,
             state: 'capability_limited' as const,
             issue: {
@@ -483,7 +546,7 @@ describe('runLocalFix', () => {
                 ].join('\n'),
                 labels: ['T: Ads', 'N: AdGuard for Windows'],
             },
-            reportEvidence: '`module_not_provided`',
+            reportEvidence: '`module_failed`',
         },
         {
             name: 'unsupported product capability',
@@ -523,8 +586,8 @@ describe('runLocalFix', () => {
                 toolCall('finish_fix', {
                     outcome: 'analysis_only',
                     reasoning:
-                        kind === 'adguard_cli'
-                            ? 'The selected CLI route could not be prepared.'
+                        kind === DEMO_MODULE_EXECUTOR
+                            ? 'The selected desktop route could not be prepared.'
                             : 'The report concerns an unsupported product capability.',
                 }),
             ]);
@@ -541,6 +604,9 @@ describe('runLocalFix', () => {
                     keepTemporaryFiles: false,
                     browserMode: 'auto',
                     verbose: false,
+                    // The plugged-in module joins the browser extension in the locked set, so the
+                    // run selects its environment.
+                    executorDependencies: failingDemoModule(caseDir),
                 },
                 {
                     ...extractionSeam,
@@ -600,277 +666,293 @@ describe('runLocalFix', () => {
         },
     );
 
-    it('uses captured prompt data and owned attachment copies after source mutation', async () => {
-        const caseDir = mkdtempSync(join(tmpdir(), 'verified-local-fix-case-'));
-        const outputDir = mkdtempSync(join(tmpdir(), 'verified-local-fix-output-'));
-        const issueFile = join(caseDir, 'issue.json');
-        const attachmentPath = join(caseDir, 'report.png');
-        const originalBytes = Buffer.from(
-            'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
-            'base64',
-        );
-        writeFileSync(attachmentPath, originalBytes);
-        const snapshot = buildLocalIssueSnapshot(
-            rawIssue,
-            [
+    it(
+        'uses captured prompt data and owned attachment copies after source mutation',
+        async () => {
+            const caseDir = mkdtempSync(join(tmpdir(), 'verified-local-fix-case-'));
+            const outputDir = mkdtempSync(join(tmpdir(), 'verified-local-fix-output-'));
+            const issueFile = join(caseDir, 'issue.json');
+            const attachmentPath = join(caseDir, 'report.png');
+            const originalBytes = Buffer.from(
+                'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+                'base64',
+            );
+            writeFileSync(attachmentPath, originalBytes);
+            const snapshot = buildLocalIssueSnapshot(
+                rawIssue,
+                [
+                    {
+                        kind: 'issue_screenshot',
+                        sourceUrl: 'https://github.com/user-attachments/assets/report',
+                        localPath: 'report.png',
+                        sha256: createHash('sha256').update(originalBytes).digest('hex'),
+                        promptVisible: true,
+                        source: 'body',
+                    },
+                ],
+                { reporterAuthorOnly: 'reporter' },
+            );
+            const envelope = buildExportedIssueRevision({
+                repository: 'example/lab',
+                issueNumber: 4,
+                sourceUpdatedAt: '2026-07-23T10:02:00.000Z',
+                capturedAt: '2026-07-23T10:03:00.000Z',
+                snapshot,
+            });
+            writeFileSync(issueFile, JSON.stringify(envelope));
+            const revision = loadVerifiedExportedIssueRevision(issueFile);
+            writeFileSync(issueFile, JSON.stringify({ tampered: true }));
+            writeFileSync(attachmentPath, 'replacement bytes');
+            let receivedIssue: FixCoreIssueInput | null = null;
+            let receivedAttachmentBytes: Buffer | null = null;
+
+            const paths = await runLocalFixFromRevision(
+                coreConfig,
+                revision,
+                {
+                    issueNumber: 4,
+                    environment: 'current',
+                    outputDir,
+                    keepTemporaryFiles: false,
+                    browserMode: 'auto',
+                    verbose: false,
+                },
+                {
+                    ...extractionSeam,
+                    runFixCore: async (_config, issue) => {
+                        receivedIssue = issue;
+                        receivedAttachmentBytes = readFileSync(
+                            issue.attachments?.[0]?.localPath ?? '',
+                        );
+                        return coreResult();
+                    },
+                    withPreparedKnowledgeBase: prepareKnowledgeBase,
+                    withPreparedFiltersCheckout: async (_config, callback) =>
+                        await callback({
+                            filtersPath: '/tmp/filters',
+                            checkoutPath: '/tmp/filters',
+                            provenance: {
+                                environment: 'current',
+                                source: 'local-shared-clone',
+                                sourceLocation: '/tmp/AdguardFilters',
+                                requestedRevision: 'master',
+                                commit: 'a'.repeat(40),
+                            },
+                        }),
+                },
+            );
+
+            const capturedIssue = receivedIssue as FixCoreIssueInput | null;
+            if (!capturedIssue) {
+                throw new Error('Core did not receive the verified issue.');
+            }
+            expect(capturedIssue).toMatchObject({ title: rawIssue.title });
+            const ownedPath = capturedIssue.attachments?.[0]?.localPath;
+            expect(ownedPath).toContain(join(outputDir, 'collections'));
+            expect(ownedPath).toContain(join('raw', 'artifacts', 'input'));
+            expect(ownedPath).not.toBe(attachmentPath);
+            expect(receivedAttachmentBytes).toEqual(originalBytes);
+            expect(existsSync(ownedPath!)).toBe(false);
+            expect(JSON.parse(readFileSync(paths.manifestPath, 'utf8')).candidate).toEqual({
+                kind: 'not_applicable',
+                disposition: 'not_verified',
+            });
+        },
+        DURABLE_PUBLICATION_TIMEOUT_MS,
+    );
+
+    it(
+        'passes a magic-verified PNG through the production core without leaking its API key',
+        async () => {
+            const caseDir = mkdtempSync(join(tmpdir(), 'verified-png-production-core-'));
+            const outputDir = mkdtempSync(join(tmpdir(), 'verified-png-production-output-'));
+            const issueFile = join(caseDir, 'issue.json');
+            const attachmentPath = join(caseDir, 'report.bin');
+            const png = Buffer.from(
+                'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+                'base64',
+            );
+            writeFileSync(attachmentPath, png);
+            const snapshot = buildLocalIssueSnapshot(rawIssue, [
                 {
                     kind: 'issue_screenshot',
-                    sourceUrl: 'https://github.com/user-attachments/assets/report',
-                    localPath: 'report.png',
-                    sha256: createHash('sha256').update(originalBytes).digest('hex'),
+                    sourceUrl: 'https://github.com/user-attachments/assets/real-png',
+                    localPath: 'report.bin',
+                    sha256: createHash('sha256').update(png).digest('hex'),
                     promptVisible: true,
                     source: 'body',
                 },
-            ],
-            { reporterAuthorOnly: 'reporter' },
-        );
-        const envelope = buildExportedIssueRevision({
-            repository: 'example/lab',
-            issueNumber: 4,
-            sourceUpdatedAt: '2026-07-23T10:02:00.000Z',
-            capturedAt: '2026-07-23T10:03:00.000Z',
-            snapshot,
-        });
-        writeFileSync(issueFile, JSON.stringify(envelope));
-        const revision = loadVerifiedExportedIssueRevision(issueFile);
-        writeFileSync(issueFile, JSON.stringify({ tampered: true }));
-        writeFileSync(attachmentPath, 'replacement bytes');
-        let receivedIssue: FixCoreIssueInput | null = null;
-        let receivedAttachmentBytes: Buffer | null = null;
-
-        const paths = await runLocalFixFromRevision(
-            coreConfig,
-            revision,
-            {
+            ]);
+            const envelope = buildExportedIssueRevision({
+                repository: 'example/lab',
                 issueNumber: 4,
-                environment: 'current',
-                outputDir,
-                keepTemporaryFiles: false,
-                browserMode: 'auto',
-                verbose: false,
-            },
-            {
-                ...extractionSeam,
-                runFixCore: async (_config, issue) => {
-                    receivedIssue = issue;
-                    receivedAttachmentBytes = readFileSync(issue.attachments?.[0]?.localPath ?? '');
-                    return coreResult();
-                },
-                withPreparedKnowledgeBase: prepareKnowledgeBase,
-                withPreparedFiltersCheckout: async (_config, callback) =>
-                    await callback({
-                        filtersPath: '/tmp/filters',
-                        checkoutPath: '/tmp/filters',
-                        provenance: {
-                            environment: 'current',
-                            source: 'local-shared-clone',
-                            sourceLocation: '/tmp/AdguardFilters',
-                            requestedRevision: 'master',
-                            commit: 'a'.repeat(40),
-                        },
-                    }),
-            },
-        );
-
-        const capturedIssue = receivedIssue as FixCoreIssueInput | null;
-        if (!capturedIssue) {
-            throw new Error('Core did not receive the verified issue.');
-        }
-        expect(capturedIssue).toMatchObject({ title: rawIssue.title });
-        const ownedPath = capturedIssue.attachments?.[0]?.localPath;
-        expect(ownedPath).toContain(join(outputDir, 'collections'));
-        expect(ownedPath).toContain(join('raw', 'artifacts', 'input'));
-        expect(ownedPath).not.toBe(attachmentPath);
-        expect(receivedAttachmentBytes).toEqual(originalBytes);
-        expect(existsSync(ownedPath!)).toBe(false);
-        expect(JSON.parse(readFileSync(paths.manifestPath, 'utf8')).candidate).toEqual({
-            kind: 'not_applicable',
-            disposition: 'not_verified',
-        });
-    });
-
-    it('passes a magic-verified PNG through the production core without leaking its API key', async () => {
-        const caseDir = mkdtempSync(join(tmpdir(), 'verified-png-production-core-'));
-        const outputDir = mkdtempSync(join(tmpdir(), 'verified-png-production-output-'));
-        const issueFile = join(caseDir, 'issue.json');
-        const attachmentPath = join(caseDir, 'report.bin');
-        const png = Buffer.from(
-            'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
-            'base64',
-        );
-        writeFileSync(attachmentPath, png);
-        const snapshot = buildLocalIssueSnapshot(rawIssue, [
-            {
-                kind: 'issue_screenshot',
-                sourceUrl: 'https://github.com/user-attachments/assets/real-png',
-                localPath: 'report.bin',
-                sha256: createHash('sha256').update(png).digest('hex'),
-                promptVisible: true,
-                source: 'body',
-            },
-        ]);
-        const envelope = buildExportedIssueRevision({
-            repository: 'example/lab',
-            issueNumber: 4,
-            sourceUpdatedAt: '2026-07-23T10:02:00.000Z',
-            capturedAt: '2026-07-23T10:03:00.000Z',
-            snapshot,
-        });
-        writeFileSync(issueFile, JSON.stringify(envelope));
-        const revision = loadVerifiedExportedIssueRevision(issueFile);
-        const { vision, requests: visionRequests } = sealedVisionClient();
-        const unpackedExtension = writeUnpackedExtensionFixture(caseDir);
-        const piRuntime = await scriptedPiRuntime([
-            toolCall('fetch_issue', { issueNumber: 4 }),
-            toolCall('select_environment', selectionArguments('adguard_cli')),
-            toolCall('finish_fix', {
-                outcome: 'analysis_only',
-                reasoning: 'The selected AdGuard CLI adapter is not available yet.',
-            }),
-        ]);
-
-        const paths = await runLocalFixFromRevision(
-            coreConfig,
-            revision,
-            {
-                issueNumber: 4,
-                environment: 'current',
-                outputDir,
-                keepTemporaryFiles: false,
-                browserMode: 'auto',
-                verbose: false,
-            },
-            {
-                ...extractionSeam,
-                runFixCore: async (config, issue, options, dependencies) =>
-                    await runFixCore(config, issue, options, {
-                        ...dependencies,
-                        vision,
-                        piRuntime,
-                        // The run's pre-run extension preparation is stubbed: this suite
-                        // exercises the production core's plumbing, never the release network.
-                        downloadPinnedExtensionRelease: async () => ({
-                            extensionDir: unpackedExtension,
-                            manifestVersion: ExtensionManifestVersion.Mv3,
-                            sha256: PINNED_RELEASE_FIXTURE_SHA256,
-                            tag: PINNED_RELEASE_FIXTURE_TAG,
-                            fromCache: false,
-                        }),
-                        agentRuntime: {
-                            createBaseRegistry: async () => new ToolRegistry(),
-                        },
-                    }),
-                withPreparedKnowledgeBase: prepareKnowledgeBase,
-                observeUpstreamDrift: observeNoUpstream,
-                withPreparedFiltersCheckout: async (_config, callback) =>
-                    await callback({
-                        filtersPath: '/tmp/filters',
-                        checkoutPath: '/tmp/filters',
-                        provenance: {
-                            environment: 'current',
-                            source: 'local-shared-clone',
-                            sourceLocation: '/tmp/AdguardFilters',
-                            requestedRevision: 'master',
-                            commit: 'a'.repeat(40),
-                        },
-                    }),
-            },
-        );
-
-        // The pi loop consumed the scripted session; the vision client itself was never called.
-        expect(visionRequests).toHaveLength(0);
-        expect(hermetic!.requests.length).toBeGreaterThan(0);
-        // The run-scoped collector is real-wired through the production core: the persisted
-        // summary must be FILLED from the scripted pi session. An unfed collector — the exact
-        // failure this slice exists to eliminate — turns this assertion red.
-        const persistedUsageSummary = JSON.parse(readFileSync(paths.llmUsageSummaryPath!, 'utf8'));
-        expect(persistedUsageSummary).toMatchObject({
-            usageCompleteness: 'complete',
-        });
-        expect(persistedUsageSummary.requests).toBeGreaterThanOrEqual(1);
-        expect(persistedUsageSummary.completions).toBeGreaterThanOrEqual(1);
-        expect(persistedUsageSummary.bySource.loop.completions).toBeGreaterThanOrEqual(1);
-        expect(readdirSync(join(outputDir, 'collections'))).toEqual([]);
-        const manifest = JSON.parse(readFileSync(paths.manifestPath, 'utf8'));
-        expect(manifest.images).toEqual(
-            expect.arrayContaining([
-                expect.objectContaining({
-                    kind: 'omitted',
-                    reason: 'untrusted_image_without_pixel_redaction_proof',
+                sourceUpdatedAt: '2026-07-23T10:02:00.000Z',
+                capturedAt: '2026-07-23T10:03:00.000Z',
+                snapshot,
+            });
+            writeFileSync(issueFile, JSON.stringify(envelope));
+            const revision = loadVerifiedExportedIssueRevision(issueFile);
+            const { vision, requests: visionRequests } = sealedVisionClient();
+            const unpackedExtension = writeUnpackedExtensionFixture(caseDir);
+            const piRuntime = await scriptedPiRuntime([
+                toolCall('fetch_issue', { issueNumber: 4 }),
+                toolCall('select_environment', selectionArguments(DEMO_MODULE_EXECUTOR)),
+                toolCall('finish_fix', {
+                    outcome: 'analysis_only',
+                    reasoning: 'The selected desktop module is not available yet.',
                 }),
-            ]),
-        );
-        expect(readFileSync(paths.agentReportPath, 'utf8')).not.toContain(
-            'Unsupported issue screenshot extension',
-        );
-        for (const path of persistedFiles(outputDir)) {
-            expect(readFileSync(path).includes(Buffer.from(coreConfig.llm.apiKey)), path).toBe(
-                false,
-            );
-        }
-    });
+            ]);
 
-    it('redacts credentials from every persisted interrupted-run artifact', async () => {
-        const caseDir = mkdtempSync(join(tmpdir(), 'verified-secret-failure-case-'));
-        const outputDir = mkdtempSync(join(tmpdir(), 'verified-secret-failure-output-'));
-        const issueFile = join(caseDir, 'issue.json');
-        const snapshot = buildLocalIssueSnapshot(rawIssue, []);
-        const envelope = buildExportedIssueRevision({
-            repository: 'example/lab',
-            issueNumber: 4,
-            sourceUpdatedAt: '2026-07-23T10:02:00.000Z',
-            capturedAt: '2026-07-23T10:03:00.000Z',
-            snapshot,
-        });
-        writeFileSync(issueFile, JSON.stringify(envelope));
-
-        const paths = await runLocalFixFromRevision(
-            coreConfig,
-            loadVerifiedExportedIssueRevision(issueFile),
-            {
-                issueNumber: 4,
-                environment: 'current',
-                outputDir,
-                keepTemporaryFiles: false,
-                browserMode: 'auto',
-                verbose: false,
-            },
-            {
-                ...extractionSeam,
-                runFixCore: async () => {
-                    throw new LocalExecutionInfrastructureError(
-                        'interrupted',
-                        `Lease lost after provider used ${coreConfig.llm.apiKey}`,
-                    );
+            const paths = await runLocalFixFromRevision(
+                coreConfig,
+                revision,
+                {
+                    issueNumber: 4,
+                    environment: 'current',
+                    outputDir,
+                    keepTemporaryFiles: false,
+                    browserMode: 'auto',
+                    verbose: false,
                 },
-                withPreparedKnowledgeBase: prepareKnowledgeBase,
-                withPreparedFiltersCheckout: async (_config, callback) =>
-                    await callback({
-                        filtersPath: '/tmp/filters',
-                        checkoutPath: '/tmp/filters',
-                        provenance: {
-                            environment: 'current',
-                            source: 'local-shared-clone',
-                            sourceLocation: '/tmp/AdguardFilters',
-                            requestedRevision: 'master',
-                            commit: 'a'.repeat(40),
-                        },
-                    }),
-            },
-        );
-
-        expect(readFileSync(paths.runResultPath, 'utf8')).toContain('[redacted]');
-        expect(readFileSync(paths.agentReportPath, 'utf8')).toContain('[redacted]');
-        expect(JSON.parse(readFileSync(paths.manifestPath, 'utf8')).candidate).toEqual({
-            kind: 'not_applicable',
-            disposition: 'inconclusive',
-        });
-        for (const path of persistedFiles(outputDir)) {
-            expect(readFileSync(path).includes(Buffer.from(coreConfig.llm.apiKey)), path).toBe(
-                false,
+                {
+                    ...extractionSeam,
+                    runFixCore: async (config, issue, options, dependencies) =>
+                        await runFixCore(config, issue, options, {
+                            ...dependencies,
+                            vision,
+                            piRuntime,
+                            // The run's pre-run extension preparation is stubbed: this suite
+                            // exercises the production core's plumbing, never the release network.
+                            downloadPinnedExtensionRelease: async () => ({
+                                extensionDir: unpackedExtension,
+                                manifestVersion: ExtensionManifestVersion.Mv3,
+                                sha256: PINNED_RELEASE_FIXTURE_SHA256,
+                                tag: PINNED_RELEASE_FIXTURE_TAG,
+                                fromCache: false,
+                            }),
+                            agentRuntime: {
+                                createBaseRegistry: async () => new ToolRegistry(),
+                            },
+                        }),
+                    withPreparedKnowledgeBase: prepareKnowledgeBase,
+                    observeUpstreamDrift: observeNoUpstream,
+                    withPreparedFiltersCheckout: async (_config, callback) =>
+                        await callback({
+                            filtersPath: '/tmp/filters',
+                            checkoutPath: '/tmp/filters',
+                            provenance: {
+                                environment: 'current',
+                                source: 'local-shared-clone',
+                                sourceLocation: '/tmp/AdguardFilters',
+                                requestedRevision: 'master',
+                                commit: 'a'.repeat(40),
+                            },
+                        }),
+                },
             );
-        }
-    });
+
+            // The pi loop consumed the scripted session; the vision client itself was never called.
+            expect(visionRequests).toHaveLength(0);
+            expect(hermetic!.requests.length).toBeGreaterThan(0);
+            // The run-scoped collector is real-wired through the production core: the persisted
+            // summary must be FILLED from the scripted pi session. An unfed collector — the exact
+            // failure this slice exists to eliminate — turns this assertion red.
+            const persistedUsageSummary = JSON.parse(
+                readFileSync(paths.llmUsageSummaryPath!, 'utf8'),
+            );
+            expect(persistedUsageSummary).toMatchObject({
+                usageCompleteness: 'complete',
+            });
+            expect(persistedUsageSummary.requests).toBeGreaterThanOrEqual(1);
+            expect(persistedUsageSummary.completions).toBeGreaterThanOrEqual(1);
+            expect(persistedUsageSummary.bySource.loop.completions).toBeGreaterThanOrEqual(1);
+            expect(readdirSync(join(outputDir, 'collections'))).toEqual([]);
+            const manifest = JSON.parse(readFileSync(paths.manifestPath, 'utf8'));
+            expect(manifest.images).toEqual(
+                expect.arrayContaining([
+                    expect.objectContaining({
+                        kind: 'omitted',
+                        reason: 'untrusted_image_without_pixel_redaction_proof',
+                    }),
+                ]),
+            );
+            expect(readFileSync(paths.agentReportPath, 'utf8')).not.toContain(
+                'Unsupported issue screenshot extension',
+            );
+            for (const path of persistedFiles(outputDir)) {
+                expect(readFileSync(path).includes(Buffer.from(coreConfig.llm.apiKey)), path).toBe(
+                    false,
+                );
+            }
+        },
+        DURABLE_PUBLICATION_TIMEOUT_MS,
+    );
+
+    it(
+        'redacts credentials from every persisted interrupted-run artifact',
+        async () => {
+            const caseDir = mkdtempSync(join(tmpdir(), 'verified-secret-failure-case-'));
+            const outputDir = mkdtempSync(join(tmpdir(), 'verified-secret-failure-output-'));
+            const issueFile = join(caseDir, 'issue.json');
+            const snapshot = buildLocalIssueSnapshot(rawIssue, []);
+            const envelope = buildExportedIssueRevision({
+                repository: 'example/lab',
+                issueNumber: 4,
+                sourceUpdatedAt: '2026-07-23T10:02:00.000Z',
+                capturedAt: '2026-07-23T10:03:00.000Z',
+                snapshot,
+            });
+            writeFileSync(issueFile, JSON.stringify(envelope));
+
+            const paths = await runLocalFixFromRevision(
+                coreConfig,
+                loadVerifiedExportedIssueRevision(issueFile),
+                {
+                    issueNumber: 4,
+                    environment: 'current',
+                    outputDir,
+                    keepTemporaryFiles: false,
+                    browserMode: 'auto',
+                    verbose: false,
+                },
+                {
+                    ...extractionSeam,
+                    runFixCore: async () => {
+                        throw new LocalExecutionInfrastructureError(
+                            'interrupted',
+                            `Lease lost after provider used ${coreConfig.llm.apiKey}`,
+                        );
+                    },
+                    withPreparedKnowledgeBase: prepareKnowledgeBase,
+                    withPreparedFiltersCheckout: async (_config, callback) =>
+                        await callback({
+                            filtersPath: '/tmp/filters',
+                            checkoutPath: '/tmp/filters',
+                            provenance: {
+                                environment: 'current',
+                                source: 'local-shared-clone',
+                                sourceLocation: '/tmp/AdguardFilters',
+                                requestedRevision: 'master',
+                                commit: 'a'.repeat(40),
+                            },
+                        }),
+                },
+            );
+
+            expect(readFileSync(paths.runResultPath, 'utf8')).toContain('[redacted]');
+            expect(readFileSync(paths.agentReportPath, 'utf8')).toContain('[redacted]');
+            expect(JSON.parse(readFileSync(paths.manifestPath, 'utf8')).candidate).toEqual({
+                kind: 'not_applicable',
+                disposition: 'inconclusive',
+            });
+            for (const path of persistedFiles(outputDir)) {
+                expect(readFileSync(path).includes(Buffer.from(coreConfig.llm.apiKey)), path).toBe(
+                    false,
+                );
+            }
+        },
+        DURABLE_PUBLICATION_TIMEOUT_MS,
+    );
 
     it('rejects a nonowned nonempty output directory before clearing it', async () => {
         const outputDir = mkdtempSync(join(tmpdir(), 'local-fix-unowned-output-'));
@@ -1196,7 +1278,7 @@ describe('runLocalFix', () => {
                 // AdGuard CLI proxy dependencies are an incidental wiring detail, not part
                 // of this contract, so they stay unasserted here.
                 agentRuntime: expect.objectContaining({
-                    executors: ['browser_extension', 'adguard_cli'],
+                    executors: ['browser_extension'],
                 }),
             }),
             expect.objectContaining({
@@ -1597,7 +1679,7 @@ describe('runLocalFix', () => {
                 // territory. The AdGuard CLI proxy dependencies are an incidental wiring
                 // detail, not part of this contract, so they stay unasserted here.
                 agentRuntime: expect.objectContaining({
-                    executors: ['browser_extension', 'adguard_cli'],
+                    executors: ['browser_extension'],
                 }),
             }),
             expect.objectContaining({
@@ -1704,7 +1786,7 @@ describe('runLocalFix', () => {
                 // territory. The AdGuard CLI proxy dependencies are an incidental wiring
                 // detail, not part of this contract, so they stay unasserted here.
                 agentRuntime: expect.objectContaining({
-                    executors: ['browser_extension', 'adguard_cli'],
+                    executors: ['browser_extension'],
                 }),
             }),
             expect.objectContaining({
@@ -1886,7 +1968,7 @@ describe('runLocalFix', () => {
         // Only the executor set crosses; the core prepares the pinned prebuilt release host-side.
         expect(runCore.mock.calls[0]?.[2]).toMatchObject({
             agentRuntime: {
-                executors: ['browser_extension', 'adguard_cli'],
+                executors: ['browser_extension'],
             },
         });
         // The core-owned pinned-release provenance boards the run record and the report verbatim.

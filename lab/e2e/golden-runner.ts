@@ -5,6 +5,12 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:pat
 import type { CoreConfig } from '../../src/config/config';
 import type { UsageRatesTable } from '../../src/types/usage-summary';
 import { runLocalFix } from '../local/local-fix-runner';
+import { labFilterCacheDir } from '../local/blocker-modules';
+import {
+    blockerModuleRunDependencies,
+    type EnabledBlockerModule,
+} from '../../src/proxy-blocker/blocker-module-run-issue';
+import { reservePrivateWorkspace } from '../../src/proxy-blocker/private-workspace';
 import {
     clearLocalRunOutputDir,
     materializeLocalRunOutputDir,
@@ -72,6 +78,11 @@ export interface RunGoldenE2ECaseOptions {
      * The user's price table the run is priced from; absent, the run computes no cost.
      */
     pricingSnapshot?: UsageRatesTable;
+
+    /**
+     * The blocker modules the case plugs in; absent plugs in none.
+     */
+    blockerModules?: readonly EnabledBlockerModule[];
 }
 
 /**
@@ -282,17 +293,39 @@ export async function runGoldenE2ECase(
     try {
         const loaded = loadGoldenRunCase(caseDirectory);
         const execute = dependencies.runLocalFix ?? runLocalFix;
-        await execute(coreConfig, {
-            issueNumber: loaded.config.issueNumber,
-            issueFile: loaded.issueFile,
-            environment: 'historical',
-            outputDir: outputDirectory,
-            runConfig: loaded.runConfigPath,
-            keepTemporaryFiles: false,
-            browserMode: BrowserMode.On,
-            verbose: options.verbose ?? false,
-            pricingSnapshot: options.pricingSnapshot,
-        });
+        const blockerModules = options.blockerModules ?? [];
+        // The modules keep their files outside every repository and output root, and only for
+        // this case's run.
+        const modulesWorkspace =
+            blockerModules.length > 0
+                ? reservePrivateWorkspace([process.cwd(), outputDirectory, evaluationDirectory])
+                : null;
+        try {
+            await execute(coreConfig, {
+                issueNumber: loaded.config.issueNumber,
+                issueFile: loaded.issueFile,
+                environment: 'historical',
+                outputDir: outputDirectory,
+                runConfig: loaded.runConfigPath,
+                keepTemporaryFiles: false,
+                browserMode: BrowserMode.On,
+                verbose: options.verbose ?? false,
+                pricingSnapshot: options.pricingSnapshot,
+                ...(modulesWorkspace === null
+                    ? {}
+                    : {
+                          executorDependencies: blockerModuleRunDependencies(
+                              blockerModules,
+                              modulesWorkspace,
+                              labFilterCacheDir(process.cwd()),
+                          ),
+                      }),
+            });
+        } finally {
+            if (modulesWorkspace !== null) {
+                rmSync(modulesWorkspace, { recursive: true, force: true });
+            }
+        }
         const initialManifest = verifyLocalRunManifest(outputDirectory);
         const record = readLocalRunOutput(join(outputDirectory, 'run-result.json'));
         if (record.result.issueNumber !== loaded.config.issueNumber) {
