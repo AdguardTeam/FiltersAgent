@@ -65,6 +65,20 @@ jobs:
               if: ${{ !cancelled() }}
               run: pnpm run fmt:check
 
+            # `uses: AdguardTeam/FiltersAgent/adguard-cli@<ref>` reads `adguard-cli/` as committed at
+            # that ref, so the generated module lives in the repository. The build is reproducible:
+            # a rebuild that differs from the committed copy means a source changed without one.
+            - name: Check the committed AdGuard CLI module
+              if: ${{ !cancelled() }}
+              run: |
+                  pnpm build:adguard-cli
+                  if [ -n "$(git status --porcelain -- adguard-cli/)" ]; then
+                      git status --short -- adguard-cli/
+                      git --no-pager diff --stat -- adguard-cli/
+                      echo "::error::adguard-cli/ is out of date with its sources: run pnpm build:adguard-cli and commit the result."
+                      exit 1
+                  fi
+
             # One suite needs a developer machine and cannot pass on a hosted runner as it
             # stands: tests/browser/strict-route-proxy-contract.test.ts launches a real browser
             # through the strict route, and the launch dies on this runner. Excluding it here is

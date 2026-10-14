@@ -9,6 +9,7 @@
         "commentLineStrategy": "multiline"
     },
     "ignorePatterns": [
+        "/adguard-cli/",
         "dist/",
         "node_modules/",
         "src/**/fixtures/",

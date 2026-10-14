@@ -1,0 +1,14 @@
+{
+    "executor": "adguard_cli",
+    "selectionGuidance": "An ordinary AdGuard for Windows/Mac (or CLI) website-filtering report belongs to adguard_cli — desktop apps filter network traffic themselves, not through a browser extension. Website-filtering reports from AdGuard mobile apps (iOS/Android) also belong to adguard_cli: the fix ships in shared filter lists, so validate at network level and record the mobile execution-model gap (for example Safari content-blocker syntax limits) as a conflict. An activated adguard_cli selection browses through the filtering proxy for live evidence and applies exactly one candidate rule beside the locked baseline through apply_rule verification phases. Launch every evidence-browser session with extension:\"none\": the proxy already filters network traffic and there is no extension to prepare. Never claim that the reported desktop app, its platform, or the reporter browser actually ran.",
+    "command": [
+        "node",
+        "./module.mjs"
+    ],
+    "env": [
+        "ADGUARD_LICENSE_KEY"
+    ],
+    "optionalEnv": [
+        "ADGUARD_CLI_HOME_ARCHIVE"
+    ]
+}

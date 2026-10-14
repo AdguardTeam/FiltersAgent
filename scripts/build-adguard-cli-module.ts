@@ -3,14 +3,16 @@
  * file, its manifest generated from the module definition, and the setup action with the scripts it
  * runs: the fetch that installs a verified CLI release and the seed that activates it once.
  *
- * Its output is the repository's `adguard-cli/` directory, so a workflow plugs the CLI in with
- * `uses: AdguardTeam/FiltersAgent/adguard-cli@<ref>`.
+ * Its output is the repository's committed `adguard-cli/` directory, so a workflow plugs the CLI in
+ * with `uses: AdguardTeam/FiltersAgent/adguard-cli@<ref>`. The output depends only on the sources
+ * and the locked dependencies, so CI rebuilds it and fails when the committed copy differs.
  *
- * Usage: node --import tsx scripts/build-adguard-cli-module.ts <out-dir>
+ * Usage: node --import tsx scripts/build-adguard-cli-module.ts <out-dir>; the build empties
+ * `<out-dir>` first.
  *
  * `pnpm run build:adguard-cli` runs it with `adguard-cli` as the output directory.
  */
-import { copyFileSync, mkdirSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
@@ -26,15 +28,24 @@ import type { BlockerModuleManifest } from '../src/proxy-blocker/blocker-module-
  */
 const NODE_TARGET = 'node24';
 
-const outDir = process.argv[2];
-if (!outDir) {
+const outDirArg = process.argv[2];
+if (!outDirArg) {
     console.error('Usage: build-adguard-cli-module.ts <out-dir>');
     process.exit(2);
 }
+// Resolved against the caller's directory here, because esbuild resolves a relative `outfile`
+// against `absWorkingDir` below.
+const outDir = resolve(outDirArg);
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+// The directory holds nothing but this build's output: starting it empty keeps a file the build no
+// longer writes out of the committed module.
+rmSync(outDir, { recursive: true, force: true });
 mkdirSync(outDir, { recursive: true });
 
 await build({
+    // The bundle names each source in a path comment relative to this directory; pinning it to the
+    // repository root keeps the output byte-identical whatever directory the build runs from.
+    absWorkingDir: repoRoot,
     entryPoints: [join(repoRoot, 'src/adguard-cli/adguard-cli-module-main.ts')],
     bundle: true,
     platform: 'node',
@@ -67,4 +78,4 @@ for (const script of [
 ]) {
     copyFileSync(join(repoRoot, 'scripts', script), join(outDir, script));
 }
-console.log(`Built the AdGuard CLI module into ${outDir}`);
+console.log(`Built the AdGuard CLI module into ${outDirArg}`);

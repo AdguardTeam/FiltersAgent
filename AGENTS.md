@@ -36,7 +36,7 @@ historical issues as a benchmark.
 - **Target Platform**: a Linux container on GitHub Actions runners (`action.Dockerfile`) and
   developer machines (macOS, Linux) for the local CLI and the benchmark.
 - **Project Type**: GitHub Action (container) plus a local CLI tool and a benchmark harness. A
-  pluggable blocker module (`adguard-cli/`) is generated from the sources.
+  pluggable blocker module (`adguard-cli/`) is generated from the sources and committed.
 - **Performance Goals**: N/A — a run is bounded by `AGENT_INVESTIGATION_BUDGET_MS`.
 - **Constraints**: an OpenAI-compatible LLM endpoint configured in full; the CloakBrowser binary
   must not be redistributed; the repository is mirrored publicly (see [Other](#other)).
@@ -68,6 +68,7 @@ filters-agent/
 │   ├── e2e/                   # Golden end-to-end runner and case tooling (the benchmark)
 │   ├── benchmark/             # Golden case data, run verification, diagnostics redaction
 │   └── ...                    # pricing, repo
+├── adguard-cli/               # Built AdGuard CLI module, committed (`pnpm build:adguard-cli`)
 ├── modules/adguard-cli/       # Setup action of the AdGuard CLI module
 ├── scripts/                   # Module build, AdGuard CLI fetch and seed, issue copy helper
 ├── lint/                      # Local oxlint rules and the prompt-document scan
@@ -81,7 +82,8 @@ filters-agent/
 - **Type-check**: `pnpm typecheck` — `tsc` over `src/`, `lab/` and `tests/` without emitting.
 - **Build**: `pnpm build` — `tsc` with emit to `dist/` (nothing consumes it; the CLI and the action
   run sources through `tsx`).
-- **Build the AdGuard CLI module**: `pnpm build:adguard-cli` — writes `adguard-cli/`.
+- **Build the AdGuard CLI module**: `pnpm build:adguard-cli` — rewrites the committed
+  `adguard-cli/`.
 - **Build the action image**: `docker build -f action.Dockerfile .`
 - **Test**: `pnpm test` (Vitest). CI runs `pnpm vitest run` without
   `tests/browser/strict-route-proxy-contract.test.ts`, whose real browser launch fails on the CI
@@ -112,6 +114,13 @@ filters-agent/
 
 - You MUST update `README.md`, `DEVELOPMENT.md`, `REQUIREMENTS.md` and the affected pages under
   `docs/` when a change affects what they describe.
+
+- When you change `src/adguard-cli/` or a source module it imports, `modules/adguard-cli/`, a
+  script the module copies (`scripts/fetch-adguard-cli.mjs`, `scripts/seed-adguard-cli-home.sh`,
+  `scripts/pack-adguard-cli-home.sh`), `scripts/build-adguard-cli-module.ts` or a dependency the
+  bundle includes, you MUST run `pnpm build:adguard-cli` and commit `adguard-cli/` in the same
+  change. Never edit `adguard-cli/` by hand. CI fails when the committed copy differs from a
+  rebuild.
 
 - When the project structure changes, you MUST update the Project Structure section of this file.
 

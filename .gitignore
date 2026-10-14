@@ -8,8 +8,5 @@ coverage/
 /tmp/
 .sdd
 
-# The AdGuard CLI module `pnpm build:adguard-cli` generates
-/adguard-cli/
-
 # One-off operator helpers: throwaway scripts and scratch data for a single manual run.
 /scratch/

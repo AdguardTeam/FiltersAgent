@@ -224,7 +224,7 @@ every pull request.
 | `pnpm fmt:check` | The formatter checks without writing |
 | `pnpm typecheck` | `tsc` over `src/`, `lab/` and `tests/` without emitting |
 | `pnpm build` | `tsc` with emit to `dist/` |
-| `pnpm build:adguard-cli` | Builds the AdGuard CLI module into `adguard-cli/` |
+| `pnpm build:adguard-cli` | Rebuilds the committed AdGuard CLI module in `adguard-cli/` |
 
 The [benchmark guide](docs/guides/benchmark.md) covers the `test:e2e` and
 `benchmark:*` scripts.
@@ -329,12 +329,23 @@ from `src/adguard-cli/` and copies the setup action from
 `scripts/fetch-adguard-cli.mjs`, which installs a pinned release and verifies
 its checksum and signature, and the seed scripts.
 
+GitHub reads `adguard-cli/` from the repository at the referenced ref, so the
+built module is committed. Rebuild it and commit the result whenever you change
+`src/adguard-cli/`, a source module it imports, `modules/adguard-cli/`, one of
+the copied scripts, or a dependency the bundle includes:
+
 ```bash
 pnpm run build:adguard-cli
+git add adguard-cli/
 ```
 
-The command writes the module to `adguard-cli/`. The action image leaves
-`src/adguard-cli/` out, so the action itself never carries the CLI code.
+The build empties `adguard-cli/` and writes it again. Its output depends only on
+the sources and the lockfile, so two builds give byte-identical files. The
+`Checks` workflow rebuilds the module and fails when the result differs from the
+committed copy.
+
+The action image leaves `src/adguard-cli/` out, so the action itself never
+carries the CLI code.
 
 ### Try a change on a fork of AdguardFilters
 
