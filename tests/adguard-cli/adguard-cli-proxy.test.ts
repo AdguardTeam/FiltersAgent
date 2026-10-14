@@ -14,7 +14,7 @@ import { ProxyFailureCode, ProxyHostState } from '../../src/adguard-cli/proxy-ho
 import { startAdguardCliBlocker } from '../../src/adguard-cli/adguard-cli-module';
 import { PERSISTENT_CA_TEST_CERTIFICATE_PEM } from './fixtures/persistent-ca-test-authority';
 
-const LICENSE_KEY = 'TEST-LICENCE-1234567890';
+const LICENSE_KEY = 'TEST-LICENCE-FAKE';
 
 /**
  * A stand-in for the release: it records every argv next to itself, announces its data directory on

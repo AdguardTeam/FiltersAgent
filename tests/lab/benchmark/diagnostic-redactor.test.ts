@@ -18,10 +18,10 @@ describe('redactDiagnosticText', () => {
         const output = redactDiagnosticText(
             [
                 'Authorization: Bearer abcdefghijklmnopqrstuvwxyz.123456789',
-                'key=sk-proj-abcdefghijklmno',
-                'github=ghs_abcdefghijklmnopqrstuvwxyz',
-                'gitlab=glpat-abcdefghijklmnop',
-                'slack=xoxb-1234567890-abcdefghijklmno',
+                'key=sk-proj-fake-llm-key',
+                'github=ghs_fake_github_token',
+                'gitlab=glpat-fake-gitlab-token',
+                'slack=xoxb-fake-slack-token',
             ].join('\n'),
             [],
         );

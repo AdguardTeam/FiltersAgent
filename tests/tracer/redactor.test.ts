@@ -138,7 +138,7 @@ describe('redactPayload', () => {
 
     it('redacts Bearer token string values', () => {
         const result = redactPayload({
-            auth: 'Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgN2HG3zz3g',
+            auth: 'Bearer eyJfakeheader.eyJfakepayload.fakesignature',
         }) as Record<string, unknown>;
 
         expect(result.auth).toBe(REDACTED);
@@ -146,7 +146,7 @@ describe('redactPayload', () => {
 
     it('redacts JWT-looking string values', () => {
         const result = redactPayload({
-            data: 'eyJhbGciOiJIUzI1NiJ9.eyJ1c2VyIjoiYWxpY2UifQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c',
+            data: 'eyJfakeheader.eyJfakepayload.fakesignature',
         }) as Record<string, unknown>;
 
         expect(result.data).toBe(REDACTED);
@@ -154,11 +154,11 @@ describe('redactPayload', () => {
 
     it('redacts API key prefix patterns', () => {
         const result = redactPayload({
-            key1: 'sk-proj-abc123def456',
-            key2: 'ghp_abc123def4567890',
-            key3: 'github_pat_11ABCDEFGHIJKLMNOPQRSTUVWXYZ',
-            key4: 'glpat-abcdefghijklmnop',
-            key5: 'xoxb-123456789012-123456789012-abcdefghijklmnopqrstuv',
+            key1: 'sk-fake-llm-key',
+            key2: 'ghp_fake_github_token',
+            key3: 'github_pat_fake_token',
+            key4: 'glpat-fake-gitlab-token',
+            key5: 'xoxb-fake-slack-token',
         }) as Record<string, unknown>;
 
         expect(result.key1).toBe(REDACTED);
@@ -214,14 +214,14 @@ describe('redactPayload', () => {
             transcript:
                 'Authorization: Bearer live-key\n' +
                 'GET https://user:pass@example.test/cb?ToKeN=live-key&page=2\n' +
-                'cookie eyJhbGciOiJIUzI1NiJ9.eyJ1c2VyIjoiYWxpY2UifQ.SflKxwRJSMeKKF2QT4fw seen',
+                'cookie eyJfakeheader.eyJfakepayload.fakesignature seen',
         }) as { transcript: string };
 
         expect(result.transcript).toContain('Authorization: [redacted]');
         expect(result.transcript).not.toContain('user:pass');
         expect(result.transcript).toContain('ToKeN=[redacted]');
         expect(result.transcript).toContain('page=2');
-        expect(result.transcript).not.toContain('eyJhbGciOiJIUzI1NiJ9');
+        expect(result.transcript).not.toContain('eyJfakeheader');
     });
 
     it('keeps page-authored evidence the model needs, while the persisted copy scrubs it', () => {
@@ -236,7 +236,7 @@ describe('redactPayload', () => {
             dom: 'Cookie: settings\nSee https://shop.example/checkout?sid=abc&step=2',
             url: 'https://shop.example/checkout?sid=abc&step=2',
             credential: 'Bearer live-key',
-            log: 'stored eyJhbGciOiJIUzI1NiJ9.eyJ1c2VyIjoiYWxpY2UifQ.SflKxwRJSMeKKF2QT4fw now',
+            log: 'stored eyJfakeheader.eyJfakepayload.fakesignature now',
         };
 
         const modelFacing = redactPayload(evidence, [], {
@@ -248,14 +248,14 @@ describe('redactPayload', () => {
         expect(modelFacing.dom).toContain(modelFacing.url);
         // Credentials are scrubbed in both scopes: what differs is page-authored text, not secrets.
         expect(modelFacing.credential).toBe(REDACTED);
-        expect(modelFacing.log).not.toContain('eyJhbGciOiJIUzI1NiJ9');
+        expect(modelFacing.log).not.toContain('eyJfakeheader');
 
         const persisted = redactPayload(evidence) as typeof evidence;
         expect(persisted.dom).toContain('Cookie: [redacted]');
         expect(persisted.dom).toContain('sid=[redacted]');
         expect(persisted.url).toBe('https://shop.example/checkout?sid=[redacted]&step=2');
         expect(persisted.credential).toBe(REDACTED);
-        expect(persisted.log).not.toContain('eyJhbGciOiJIUzI1NiJ9');
+        expect(persisted.log).not.toContain('eyJfakeheader');
     });
 
     it('still scrubs an exact host secret carried inside a model-facing URL', () => {

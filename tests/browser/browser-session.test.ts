@@ -510,7 +510,7 @@ describe('BrowserSession', () => {
                 userDataDir: expect.any(String),
             }),
         );
-        // Decision 1 of 11-HITL: the host reads the prepared extension's state back over the
+        // The host reads the prepared extension's state back over the
         // session's own persistent context; there is no launch-time settings application.
         expect(session.extensionContext).toBe(context);
         await session.close();

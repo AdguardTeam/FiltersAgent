@@ -408,7 +408,7 @@ async function validatePreparedHumanCandidate(
                 artifactsDir,
                 headless: true,
                 noSandbox: coreConfig.noSandbox,
-                // Decision 2 of 11-HITL: plain unpacked-extension launch. The oracle's sessions
+                // A plain unpacked-extension launch. The oracle's sessions
                 // boot the extension's own defaults; no settings profile is applied host-side.
                 adguardExtensionPath: extensionPath,
                 adguardExtensionManifestVersion: manifestVersion,

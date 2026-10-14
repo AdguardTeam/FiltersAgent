@@ -2284,7 +2284,7 @@ describe('AgentRuntime', () => {
             },
         });
 
-        // Decision 2 of 11-HITL: the launch is the plain unpacked-extension route — the exact
+        // The launch is the plain unpacked-extension route — the exact
         // prepared build with no host-applied settings profile.
         expect(createBrowserSession).toHaveBeenCalledWith(
             expect.objectContaining({

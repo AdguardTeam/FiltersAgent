@@ -121,7 +121,7 @@ describe('redactStorageValues', () => {
     it('redacts localStorage values with sensitive keys', () => {
         const values: Record<string, string> = {
             theme: 'dark',
-            access_token: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0',
+            access_token: 'eyJfakeheader.eyJfakepayload',
             user_email: 'user@example.com',
             userId: '12345',
             ab_test_group: 'B',
@@ -150,7 +150,7 @@ describe('redactStorageValues', () => {
 
     it('detects base64-encoded JWT values', () => {
         const values: Record<string, string> = {
-            app_data: 'eyJhbGciOiJSUzI1NiJ9.eyJ1c2VyIjoiYWxpY2UifQ.signature',
+            app_data: 'eyJfakeheader.eyJfakepayload.fakesignature',
             config: 'not-a-jwt',
         };
         const redacted = redactStorageValues(values);

@@ -1,0 +1,34 @@
+name: Mirror
+
+# Mirrors master and the release tags to the public AdguardTeam/FiltersAgent repository on every
+# push to master and every pushed release tag, so a moved major tag (vN) reaches the mirror without
+# waiting for the next merge. Only master and tags travel: work-in-progress branches stay in this
+# repository.
+on:
+    push:
+        branches:
+            - master
+        tags:
+            - 'v*'
+
+# One mirror run at a time, never cancelled: a run that fetched before a tag moved would otherwise
+# push the old tag over the new one.
+concurrency:
+    group: mirror
+    cancel-in-progress: false
+
+# `contents: read` checks out this repository, `actions: write` disables workflows in the public
+# mirror, `id-token: write` obtains the Octopass token that pushes to it.
+permissions:
+    contents: read
+    actions: write
+    id-token: write
+
+jobs:
+    mirror:
+        uses: AdGuardSoftwareLimited/actions/.github/workflows/mirror.yml@master
+        with:
+            team: filters
+            target_repo: git@github.com:AdguardTeam/FiltersAgent.git
+            refspecs: '+refs/heads/master:refs/heads/master +refs/tags/*:refs/tags/*'
+        secrets: inherit

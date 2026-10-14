@@ -2570,7 +2570,7 @@ describe('runFixCore', () => {
                 reproProfile: { ...browserProfile, userAgentProfile: 'Chromium' },
             });
             expect(browserConfigs[0]).not.toHaveProperty('adguardExtensionPath');
-            // Decision 2 of 11-HITL: the prepared launch is plain — the exact build with no
+            // The prepared launch is plain — the exact build with no
             // host-applied settings profile.
             expect(browserConfigs[1]).toMatchObject({
                 headless: true,
