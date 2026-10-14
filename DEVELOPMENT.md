@@ -459,6 +459,7 @@ Regenerate the token with at least public repository read access.
 - [AGENTS.md](AGENTS.md) — code style, toolchain, and architecture conventions
 - [README.md](README.md) — what the project is and how to start
 - [CHANGELOG.md](CHANGELOG.md) — version history
+- [DEPLOYMENT.md](DEPLOYMENT.md) — what a release contains and how to cut one
 - [CLI reference](docs/reference/cli.md) — commands, environment variables and
   run output
 - [Action inputs](docs/reference/action-inputs.md) — every input of the action

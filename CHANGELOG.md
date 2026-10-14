@@ -26,4 +26,5 @@ The format is based on [Keep a Changelog], and this project adheres to
   and of the benchmark: plugs in a blocker module by its manifest, the same way
   as the action's `blockerModules` input.
 
-[Unreleased]: https://github.com/AdguardTeam/FiltersAgent/commits/master
+[Unreleased]: https://github.com/AdguardTeam/FiltersAgent/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/AdguardTeam/FiltersAgent/releases/tag/v1.0.0

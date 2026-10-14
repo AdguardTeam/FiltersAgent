@@ -363,7 +363,8 @@ Write few, durable, high-value tests — not tests for everything.
   [Conventional Branch](https://conventionalbranch.org/) specification:
     - `feature` — new behavior; `fix` — a bug fix; `chore` — a change that does not alter the
       action's behavior: CI, lint, configuration, dependencies, documentation, agent rules;
-      `release` — a release; `hotfix` — an urgent fix to a released version.
+      `release` — a long-lived release line, protected like `master`; the pull request that
+      releases a version goes on `chore/`; `hotfix` — an urgent fix to a released version.
     - No other type exists: not `feat`, `enhance`, `ci` or `docs`.
     - The ticket is the key as the tracker writes it, upper case (`AG-12345`). This departs from
       the specification's lower case on purpose, so Jira links the branch to the ticket.
@@ -374,6 +375,8 @@ Write few, durable, high-value tests — not tests for everything.
 - **Commit and PR titles**: `AG-<number> <imperative sentence>` — the same ticket as the branch,
   then what the change does, no type prefix, no trailing period. PRs are squash-merged, so the PR
   title is the commit that lands on `master`.
+- **Releases**: cut by hand as [DEPLOYMENT.md](DEPLOYMENT.md) describes. Create and move tags only
+  in this repository, never in the public mirror.
 
 #### Public repository hygiene
 

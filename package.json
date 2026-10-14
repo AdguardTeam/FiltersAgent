@@ -1,6 +1,5 @@
 {
     "name": "filters-agent",
-    "version": "0.1.0",
     "private": true,
     "description": "AI agent and GitHub Action that investigates filter-list issues in a real browser and verifies candidate rules",
     "homepage": "https://github.com/AdguardTeam/FiltersAgent#readme",

@@ -113,6 +113,7 @@ nothing to GitHub.
   register and layout of the issue comment
 - [Development](DEVELOPMENT.md) — set up the repository, run checks, build the
   AdGuard CLI module
+- [Deployment](DEPLOYMENT.md) — what a release contains and how to cut one
 - [Requirements](REQUIREMENTS.md) — product requirements and design notes
 - [Changelog](CHANGELOG.md) — version history
 - [Agent rules](AGENTS.md) — code style and conventions for contributors and
