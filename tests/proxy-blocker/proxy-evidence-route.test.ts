@@ -114,6 +114,7 @@ interface RouteFixture {
     readConfig(): Promise<string>;
     readUserRules(): Promise<string>;
     readFilter(filterId: number): Promise<string>;
+    failNextApply(): void;
 }
 
 /**
@@ -148,7 +149,8 @@ async function routeFixture(
             fromCache: false,
         },
     ];
-    const blocker = createAdguardCliBlocker({
+    let failNextApply = false;
+    const adguardCli = createAdguardCliBlocker({
         binaryPath,
         workspaceDir,
         createProxy: (proxyInput) =>
@@ -166,6 +168,16 @@ async function routeFixture(
                 })(),
             }),
     });
+    const blocker: typeof adguardCli = {
+        ...adguardCli,
+        apply: async (request) => {
+            if (failNextApply) {
+                failNextApply = false;
+                throw new Error('The proxy did not restart.');
+            }
+            return await adguardCli.apply(request);
+        },
+    };
     const route = createProxyBlockerEvidenceRoute({
         cycleId: 'cycle-fixture',
         blocker,
@@ -196,6 +208,9 @@ async function routeFixture(
         readConfig: () => readFile(join(workspaceDir, 'proxy.yaml'), 'utf8'),
         readUserRules: () => readFile(join(workspaceDir, 'user.txt'), 'utf8'),
         readFilter: (filterId) => readFile(join(workspaceDir, `filter-${filterId}.txt`), 'utf8'),
+        failNextApply: () => {
+            failNextApply = true;
+        },
     };
 }
 
@@ -327,20 +342,26 @@ describe('createProxyBlockerEvidenceRoute', () => {
         await launchSession(fixture);
         const published = await fixture.readFilter(2);
 
-        const receipt = await ports.applyBaselineEdit(
+        const outcome = await ports.applyBaselineEdit(
             '||ads.coucounews.com^',
             '||ads.coucounews.com^$third-party',
         );
 
         // The receipt's preimage must be the bytes the baseline locked: that is what lets the
         // adapter prove the candidate phase differs from the baseline by this one line.
-        expect(receipt).toMatchObject({
-            filterId: 2,
-            beforeSha256: locked.sha256,
-            replacedLineCount: 1,
-            extraSourceCount: 0,
+        expect(outcome).toMatchObject({
+            applied: true,
+            receipt: {
+                filterId: 2,
+                beforeSha256: locked.sha256,
+                replacedLineCount: 1,
+                extraSourceCount: 0,
+            },
         });
-        expect(receipt.afterSha256).not.toBe(receipt.beforeSha256);
+        if (!outcome.applied) {
+            return;
+        }
+        expect(outcome.receipt.afterSha256).not.toBe(outcome.receipt.beforeSha256);
         expect(await fixture.readFilter(2)).toBe(
             published.replace('||ads.coucounews.com^\n', '||ads.coucounews.com^$third-party\n'),
         );
@@ -356,6 +377,33 @@ describe('createProxyBlockerEvidenceRoute', () => {
         await fixture.route.stop?.();
     });
 
+    it('restores the locked bytes on a retry after the first restore failed', async () => {
+        const fixture = await routeFixture();
+        await fixture.route.prepareConfiguration();
+        const ports = fixture.route.environmentPorts();
+        const prepared = await prepareProxyBlockerPublishedBaseline(
+            { environment: 'adguard_cli', requestedFilterIds: [2, 14], acquiredAt: ACQUIRED_AT },
+            ports.baselineHost,
+        );
+        if (!prepared.ready) {
+            throw new Error('The baseline fixture did not prepare.');
+        }
+        const locked = prepared.baseline.resources.find(
+            (resource) => resource.listKey === 'adguard:2',
+        )!;
+        await launchSession(fixture);
+        const published = await fixture.readFilter(2);
+        await ports.applyBaselineEdit('||ads.coucounews.com^', '||ads.coucounews.com^$third-party');
+
+        fixture.failNextApply();
+        await expect(ports.revokeBaselineEdit()).rejects.toThrow('The proxy did not restart.');
+
+        // The cleanup retry must still restore the list, not report that nothing was in effect.
+        expect(await ports.revokeBaselineEdit()).toBe(locked.sha256);
+        expect(await fixture.readFilter(2)).toBe(published);
+        await fixture.route.stop?.();
+    });
+
     it('deletes one published line from the executed list', async () => {
         const fixture = await routeFixture();
         await fixture.route.prepareConfiguration();
@@ -367,9 +415,12 @@ describe('createProxyBlockerEvidenceRoute', () => {
         await launchSession(fixture);
         const published = await fixture.readFilter(14);
 
-        const receipt = await ports.applyBaselineRemoval('example.org##.cookie');
+        const outcome = await ports.applyBaselineRemoval('example.org##.cookie');
 
-        expect(receipt).toMatchObject({ filterId: 14, replacedLineCount: 1 });
+        expect(outcome).toMatchObject({
+            applied: true,
+            receipt: { filterId: 14, replacedLineCount: 1 },
+        });
         expect(await fixture.readFilter(14)).toBe(published.replace('example.org##.cookie\n', ''));
         await ports.revokeBaselineEdit();
         expect(await fixture.readFilter(14)).toBe(published);
@@ -386,18 +437,22 @@ describe('createProxyBlockerEvidenceRoute', () => {
         );
         await launchSession(fixture);
 
-        await expect(ports.applyBaselineRemoval('example.org##.absent')).rejects.toThrow(
-            'baseline_line_not_found',
-        );
-        await expect(ports.applyBaselineRemoval('example.org##.shared')).rejects.toThrow(
-            'baseline_line_not_unique',
-        );
+        await expect(ports.applyBaselineRemoval('example.org##.absent')).resolves.toEqual({
+            applied: false,
+            refusal: 'baseline_line_not_found',
+        });
+        await expect(
+            ports.applyBaselineEdit('example.org##.shared', 'example.org##.shared-widget'),
+        ).resolves.toEqual({ applied: false, refusal: 'baseline_line_not_unique' });
         // A list the phase does not execute is not part of the baseline being corrected.
         await ports.baselineHost.runBaselineAction('disable_filter', 14);
-        await expect(ports.applyBaselineRemoval('example.org##.cookie')).rejects.toThrow(
-            'baseline_line_not_found',
-        );
+        await expect(ports.applyBaselineRemoval('example.org##.cookie')).resolves.toEqual({
+            applied: false,
+            refusal: 'baseline_line_not_found',
+        });
+        // A refusal changed nothing: the blocker never restarted and there is nothing to restore.
         expect(fixture.spawnedConfigs).toHaveLength(1);
+        expect(await ports.revokeBaselineEdit()).toBeNull();
         await fixture.route.stop?.();
     });
 

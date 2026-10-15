@@ -108,6 +108,32 @@ export type EnvironmentLimitationStage =
     (typeof EnvironmentLimitationStage)[keyof typeof EnvironmentLimitationStage];
 
 /**
+ * Why an environment refused to edit or delete one published baseline line: the line the candidate
+ * names is not exactly one line of the lists the environment executes.
+ *
+ * The candidate takes the line from the repository checkout while the environment executes the
+ * published lists, and the two drift apart in both directions, so an absent line is an ordinary
+ * outcome of one candidate rather than a fault of the environment. A refusal leaves the baseline
+ * untouched.
+ */
+export const BaselineLineRefusal = {
+    /**
+     * No executed list carries the line.
+     */
+    NotFound: 'baseline_line_not_found',
+
+    /**
+     * The line occurs more than once, so the mutation could not be attributed to one source line.
+     */
+    NotUnique: 'baseline_line_not_unique',
+} as const;
+
+/**
+ * BaselineLineRefusal value.
+ */
+export type BaselineLineRefusal = (typeof BaselineLineRefusal)[keyof typeof BaselineLineRefusal];
+
+/**
  * Stable public capability limitation code raised by a filtering environment adapter.
  */
 export const EnvironmentAdapterLimitationCode = {
@@ -156,6 +182,16 @@ export const EnvironmentAdapterLimitationCode = {
      * The candidate mutation was attempted but did not apply.
      */
     CandidateApplicationFailed: 'candidate_application_failed',
+
+    /**
+     * The published line a baseline edit or removal names is in no executed list.
+     */
+    BaselineLineNotFound: BaselineLineRefusal.NotFound,
+
+    /**
+     * The published line a baseline edit or removal names occurs more than once.
+     */
+    BaselineLineNotUnique: BaselineLineRefusal.NotUnique,
 
     /**
      * The adapter could not open the requested phase.

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import * as nodePath from 'node:path';
 import * as v from 'valibot';
-import { type BaselineHostPort, type BaselineHostAction } from '../local/evidence-route-contract';
+import { type BaselineHostPort, BaselineHostAction } from '../local/evidence-route-contract';
 import {
     hashStream,
     nodeBaselineFileSystem,
@@ -339,7 +339,7 @@ async function listCatalogRows(
 ): Promise<readonly ProxyBlockerCatalogRow[]> {
     let stdout: string;
     try {
-        stdout = await host.runBaselineAction('list_all_filters', null);
+        stdout = await host.runBaselineAction(BaselineHostAction.ListAllFilters, null);
     } catch (error) {
         recordNativeFailure('list_command_failed', error);
         reject(CliBaselineRejection.FilterListUnreadable);
@@ -510,7 +510,7 @@ async function applyRequestedBaseline(
             continue;
         }
         try {
-            await host.runBaselineAction('disable_filter', row.id);
+            await host.runBaselineAction(BaselineHostAction.DisableFilter, row.id);
         } catch (error) {
             recordNativeFailure('disable_command_failed', error);
             reject(CliBaselineRejection.DisableCommandFailed);
@@ -522,7 +522,7 @@ async function applyRequestedBaseline(
     const createdByFilter = new Map<number, readonly string[]>();
     for (const filterId of request.requestedFilterIds) {
         try {
-            await host.runBaselineAction('add_filter', filterId);
+            await host.runBaselineAction(BaselineHostAction.AddFilter, filterId);
         } catch (error) {
             recordNativeFailure('add_command_failed', error);
             reject(CliBaselineRejection.AddCommandFailed);
@@ -546,7 +546,7 @@ async function applyRequestedBaseline(
             continue;
         }
         try {
-            await host.runBaselineAction('enable_filter', row.id);
+            await host.runBaselineAction(BaselineHostAction.EnableFilter, row.id);
             enabledAny = true;
         } catch (error) {
             recordNativeFailure('enable_command_failed', error);
@@ -562,7 +562,7 @@ async function applyRequestedBaseline(
             continue;
         }
         try {
-            await host.runBaselineAction('disable_filter', row.id);
+            await host.runBaselineAction(BaselineHostAction.DisableFilter, row.id);
         } catch (error) {
             recordNativeFailure('disable_command_failed', error);
             reject(CliBaselineRejection.DisableCommandFailed);

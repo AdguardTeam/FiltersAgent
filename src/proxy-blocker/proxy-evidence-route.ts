@@ -15,10 +15,11 @@ import {
 } from '../blocker-contract/blocked-requests';
 import { watchPageEvidence } from '../blocker-contract/page-evidence';
 import type { AppliedRulesLog } from '../environment/applied-rules';
+import { BaselineLineRefusal } from '../environment/filtering-environment';
 import type { Logger } from '../logger/logger';
 import { createPreparedStrictBrowserRoute } from '../browser/strict-browser-route';
 import type {
-    BaselineEditReceipt,
+    BaselineEditOutcome,
     EvidenceRouteHost,
     EvidenceRoutePorts,
     EvidenceRouteSnapshot,
@@ -238,17 +239,18 @@ export function createProxyBlockerEvidenceRoute(
      * Rewrite one exact published line in the list the blocker executes, and run the blocker on it.
      *
      * The line is looked up across the lists the current phase executes. A line that occurs nowhere
-     * or more than once is refused: the mutation must be attributable to one source line. The
-     * receipt's after-digest is the blocker's own read-back, not the text the route asked for.
+     * or more than once is refused before anything changes: the mutation must be attributable to
+     * one source line. The receipt's after-digest is the blocker's own read-back, not the text the
+     * route asked for.
      *
      * @param originalRule - Exact published line to replace or delete.
      * @param replacementRule - Complete replacement line, or null to delete the line.
-     * @returns Receipt naming the list and its bytes before and after.
+     * @returns Receipt naming the list and its bytes before and after, or the refusal.
      */
     const mutateBaselineLine = async (
         originalRule: string,
         replacementRule: string | null,
-    ): Promise<BaselineEditReceipt> => {
+    ): Promise<BaselineEditOutcome> => {
         const executed = executedFilterIds();
         const occurrences = filters
             .filter((filter) => executed === null || executed.includes(filter.filterId))
@@ -261,9 +263,13 @@ export function createProxyBlockerEvidenceRoute(
                 );
             });
         if (occurrences.length !== 1) {
-            throw new Error(
-                occurrences.length === 0 ? 'baseline_line_not_found' : 'baseline_line_not_unique',
-            );
+            return {
+                applied: false,
+                refusal:
+                    occurrences.length === 0
+                        ? BaselineLineRefusal.NotFound
+                        : BaselineLineRefusal.NotUnique,
+            };
         }
         const { filterId, lines, index } = occurrences[0]!;
         const before = lines.join('\n');
@@ -284,11 +290,14 @@ export function createProxyBlockerEvidenceRoute(
             throw new Error('The blocker does not execute the list the candidate changed.');
         }
         return {
-            filterId,
-            beforeSha256: lockedReplacedSha256,
-            afterSha256,
-            replacedLineCount: 1,
-            extraSourceCount: (await input.blocker.state()).userRules.length === 0 ? 0 : 1,
+            applied: true,
+            receipt: {
+                filterId,
+                beforeSha256: lockedReplacedSha256,
+                afterSha256,
+                replacedLineCount: 1,
+                extraSourceCount: (await input.blocker.state()).userRules.length === 0 ? 0 : 1,
+            },
         };
     };
 
@@ -484,10 +493,18 @@ export function createProxyBlockerEvidenceRoute(
                     if (lockedReplacedSha256 === null || listReplacement === null) {
                         return null;
                     }
+                    const replaced = { listReplacement, lockedReplacedSha256 };
                     const filterId = listReplacement.id;
                     listReplacement = null;
                     lockedReplacedSha256 = null;
-                    await reconcile();
+                    try {
+                        await reconcile();
+                    } catch (error) {
+                        // The blocker may still run the edited list: keep the edit in effect so
+                        // the adapter's cleanup retry restores it instead of finding nothing to do.
+                        ({ listReplacement, lockedReplacedSha256 } = replaced);
+                        throw error;
+                    }
                     // The restored digest is the blocker's own read-back; the adapter compares it
                     // with the digest locked at preparation.
                     return await executedListSha256(filterId);

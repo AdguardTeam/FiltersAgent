@@ -1,16 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ToolRegistry } from '../../src/agent/tool-registry';
 import type { AgentRuntimeDependencies } from '../../src/orchestrator/agent-runtime';
 import type { BrowserSession } from '../../src/browser/browser-session';
 import {
     fakePreparedExtensionSurface,
     readBackStateFixture,
 } from '../environment/test-filtering-environment-fixtures';
-import type {
-    EvidenceRouteHost,
-    EvidenceRoutePorts,
-    EvidenceRouteSnapshot,
-} from '../../src/local/evidence-route-contract';
+import type { EvidenceRouteHost } from '../../src/local/evidence-route-contract';
 import { officialAdguardListRef } from '../../src/environment/filter-list-ref';
 import { classifyMissingCatalogFilterId } from '../../src/environment/third-party-filter-catalog';
 import type {
@@ -18,11 +13,7 @@ import type {
     FilteringEnvironmentAdapter,
     FilteringEnvironmentAdapterState,
 } from '../../src/environment/filtering-environment';
-import type { PreparedExtension } from '../../src/local/prepared-extension';
-import {
-    ExtensionManifestVersion,
-    PreparedExtensionSource,
-} from '../../src/environment/extension-preparation';
+import { ExtensionManifestVersion } from '../../src/environment/extension-preparation';
 import { extensionFilteringExecutor } from '../../src/orchestrator/extension-filtering-executor';
 import type {
     ExecutorAdapterContext,
@@ -30,11 +21,20 @@ import type {
 } from '../../src/orchestrator/filtering-executors';
 import { FilteringExecutorRegistry } from '../../src/orchestrator/filtering-executors';
 import { AgentRuntime } from '../../src/orchestrator/agent-runtime';
-import type { SingleShotClient } from '../../src/pi/single-shot-types';
-import type { PiRuntime } from '../../src/pi/runtime';
 import type { IssueFacts } from '../../src/types/issue-facts';
-import { TraceRecorder } from '../../src/tracer/trace-recorder';
-import { testCoreConfig } from '../config/test-core-config';
+import {
+    baseFacts,
+    baseRegistryWithGuidance,
+    browserProfile,
+    browserRegistryWithApplyRuleAndOpenPage,
+    PROBE_EXECUTOR,
+    PROBE_PRODUCT,
+    PROBE_VERSION,
+    probeEvidenceRoute,
+    rawIssue,
+    routeAdoptingExecutor as probeRouteAdoptingExecutor,
+    runtimeOptions as fixtureRuntimeOptions,
+} from './route-runtime-fixtures';
 
 /**
  * A filter id no pinned official AdGuard list carries, so `officialAdguardListRef` cannot resolve
@@ -57,33 +57,6 @@ const THIRD_PARTY_FILTER_ID = 207;
  */
 const BUILD_SHIPPED_THIRD_PARTY_FILTER_ID = 216;
 
-const rawIssue = {
-    number: 235988,
-    url: 'https://github.com/AdguardTeam/AdguardFilters/issues/235988',
-    title: 'Ad leftover',
-    body: [
-        'AdGuard Browser Extension v5.4.3.99 MV3',
-        '',
-        '### System configuration',
-        'Filters: | AdGuard Base filter',
-    ].join('\n'),
-    state: 'open' as const,
-    labels: ['T: Ads'],
-    assignee: null,
-    comments: [],
-};
-
-const baseFacts: IssueFacts = {
-    issueNumber: 235988,
-    issueUrl: 'https://github.com/AdguardTeam/AdguardFilters/issues/235988',
-    reportedSiteUrls: [],
-    labels: ['T: Ads'],
-    problemType: 'unknown',
-    product: 'AdGuard Browser Extension v5.4.3.99 MV3',
-    enabledFilters: [{ name: 'AdGuard Base filter', officialFilterId: 2 }],
-    screenshots: [],
-};
-
 /**
  * Facts whose reporter import URL carries the catalog-absent filter id, exactly as a desktop report
  * would: the reporter-side id channel is what an executor activation hands the run, and no upstream
@@ -96,69 +69,8 @@ const cliFacts: IssueFacts = {
         `product_version=5.4.3.99&regular_filters=${CATALOG_ABSENT_FILTER_ID}&stealth.enabled=0`,
 };
 
-const browserProfile = {
-    viewport: 'desktop' as const,
-    locale: 'en-US',
-    timezone: 'UTC',
-    consentStrategy: 'untouched' as const,
-};
-
-/**
- * A SingleShotClient stub; this suite never reaches a vision call.
- */
-const visionStub: SingleShotClient = {
-    modelId: 'vision-model',
-    structured: async () => {
-        throw new Error('not used by this suite');
-    },
-    text: async () => {
-        throw new Error('not used by this suite');
-    },
-};
-
-/**
- * A PiRuntime stub. Every test in this suite that reaches the application flow injects its own
- * `createPhaseApplicationModelRunner`, so the runtime carried on `AgentRuntimeOptions` is never
- * dereferenced; it exists only to satisfy the required option.
- */
-const piRuntimeStub = {} as unknown as PiRuntime;
-
-/**
- * Validated LLM configuration `AgentRuntimeOptions` now requires. This suite never sends a real
- * completion through it (see `piRuntimeStub`), so the shared test fixture values stand in.
- */
-const llmConfigStub = testCoreConfig().llm;
-
 function runtimeOptions(issueFacts: IssueFacts) {
-    return {
-        issue: rawIssue,
-        issueFacts,
-        issueAttachmentArtifactIds: [],
-        allowedTargetUrls: ['https://nettg.pl/', 'https://nettg.pl/article/123'],
-        artifactsDir: '/tmp/artifacts',
-        filtersPath: '/tmp/filters',
-        headless: true,
-        noSandbox: false,
-        vision: visionStub,
-        recorder: new TraceRecorder({
-            runId: 'agent-runtime-preparation-test',
-            issueNumber: rawIssue.number,
-            mode: 'fix',
-        }),
-        preparedExtension: preparedExtension(),
-        llm: llmConfigStub,
-        piRuntime: piRuntimeStub,
-    };
-}
-
-function preparedExtension(): PreparedExtension {
-    return {
-        extensionPath: '/tmp/cache/extension',
-        manifestVersion: ExtensionManifestVersion.Mv3,
-        source: PreparedExtensionSource.PinnedRelease,
-        extensionSourceSha256: 'e'.repeat(64),
-        extensionSourceTag: 'v5.5.2.3',
-    };
+    return fixtureRuntimeOptions(issueFacts, 'agent-runtime-preparation-test');
 }
 
 /**
@@ -248,9 +160,9 @@ const EXTENSION_ADAPTER_IDENTITY: CapturingAdapterIdentity = {
  * The identity `routeAdoptingExecutor` binds through its preparation provenance.
  */
 const PROBE_ADAPTER_IDENTITY: CapturingAdapterIdentity = {
-    kind: 'probe_proxy',
-    product: 'Probe CLI',
-    productVersion: '1.4.13',
+    kind: PROBE_EXECUTOR,
+    product: PROBE_PRODUCT,
+    productVersion: PROBE_VERSION,
 };
 
 /**
@@ -331,53 +243,9 @@ function extensionShapedExecutor(
     return { ...rest, createAdapter };
 }
 
-function baseRegistryWithGuidance(): ToolRegistry {
-    const registry = new ToolRegistry();
-    registry.register({
-        definition: {
-            type: 'function',
-            function: {
-                name: 'lookup_rule_guidance',
-                description: 'Provide rule guidance.',
-                parameters: { type: 'object', properties: {} },
-            },
-        },
-        handler: async () => ({ topic: 'element_hiding' }),
-    });
-    return registry;
-}
-
-function browserRegistryWithApplyRuleAndOpenPage(): ToolRegistry {
-    const registry = new ToolRegistry();
-    registry.register({
-        definition: {
-            type: 'function',
-            function: {
-                name: 'apply_rule',
-                description: 'Validate the candidate with the common environment.',
-                parameters: { type: 'object', properties: {} },
-            },
-        },
-        handler: async () => ({ legacy: true }),
-    });
-    registry.register({
-        definition: {
-            type: 'function',
-            function: {
-                name: 'open_page',
-                description: 'Open the target page.',
-                parameters: { type: 'object', properties: {} },
-            },
-        },
-        handler: async (args) => ({ url: (args as { url: string }).url, statusCode: 200 }),
-    });
-    return registry;
-}
-
 /**
- * A route-adopting executor registration for the route-executed flows: a preparable probe that
- * binds a ready preparation and adopts a fake evidence route with the activation's reporter filter
- * ids, exactly as a proxy executor activation prepares and binds its route.
+ * The probe registration whose adapter records the run-provided context it was created with and
+ * refuses to go ready.
  *
  * @param route - The evidence route the activation adopts.
  * @param recorded - Recorder for the run-provided adapter context at creation time.
@@ -389,80 +257,14 @@ function routeAdoptingExecutor(
     recorded: { createAdapterContexts: ExecutorAdapterContext[] },
     reporterFilterIds: readonly number[] = [CATALOG_ABSENT_FILTER_ID],
 ): FilteringExecutor {
-    return {
-        name: 'probe_proxy',
-        descriptor: {
-            kind: 'probe_proxy',
-            availability: 'available',
-            preparationState: 'preparable',
-            limitationCode: null,
-            capabilities: ['cli_installation', 'cli_activation'],
-        },
-        selectionGuidance: 'Probe proxy guidance.',
-        createAdapter: (context) => {
+    return probeRouteAdoptingExecutor(
+        route,
+        (context) => {
             recorded.createAdapterContexts.push(context);
             return capturingNotReadyAdapter(PROBE_ADAPTER_IDENTITY);
         },
-        activate: async (context) => {
-            context.environmentHost.attachExecutorPreparation({
-                ready: true,
-                provenance: {
-                    source: 'official_release',
-                    product: 'Probe CLI',
-                    version: '1.4.13',
-                    digestB32: 'digestb32examplevalue0123456789abcdefghijklmnopqrstuvwxyz',
-                },
-            });
-            context.runtime.activateEvidenceRoute(route, [...reporterFilterIds]);
-        },
-    };
-}
-
-/**
- * A fake evidence route for the route-executed flows, with the spies a test asserts on to prove
- * what did and did not run behind a preparation request.
- *
- * @returns The route and the spies of its ports.
- */
-function probeEvidenceRoute() {
-    const runBaselineAction = vi.fn(
-        async (action: string, filterId: number | null) => `action=${action}:${filterId ?? ''}`,
+        reporterFilterIds,
     );
-    const applyCandidate = vi.fn();
-    const revokeCandidate = vi.fn();
-    const launchEvidenceSession = vi.fn(
-        async () => ({ close: vi.fn() }) as unknown as BrowserSession,
-    );
-    const ports: EvidenceRoutePorts = {
-        cliVersion: '1.4.13',
-        product: 'Probe CLI',
-        installationDigest: 'a'.repeat(64),
-        baselineHost: {
-            cliDataRoot: '/synthetic/data',
-            runBaselineAction,
-            listStorageFiles: vi.fn(async () => []),
-        },
-        applyCandidate,
-        revokeCandidate,
-        applyBaselineEdit: vi.fn(),
-        applyBaselineRemoval: vi.fn(),
-        revokeBaselineEdit: vi.fn(),
-    };
-    const route: EvidenceRouteHost = {
-        prepareConfiguration: vi.fn(async () => undefined),
-        launchEvidenceSession,
-        environmentPorts: vi.fn(() => ports),
-        openAppliedRulesLog: async () => ({ read: vi.fn() }),
-        snapshot: (): EvidenceRouteSnapshot => ({
-            state: 'configured',
-            port: null,
-            baseFilterEnabled: false,
-            reproducedFilterIds: [],
-            unavailableFilterIds: [],
-            failureCode: null,
-        }),
-    };
-    return { route, runBaselineAction, applyCandidate, revokeCandidate, launchEvidenceSession };
 }
 
 describe('AgentRuntime filtering-environment preparation', () => {

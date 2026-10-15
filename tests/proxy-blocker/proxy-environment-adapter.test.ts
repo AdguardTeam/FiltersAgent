@@ -22,6 +22,7 @@ import type { EnvironmentPhase } from '../../src/environment/environment-proofs'
 import type { IssueFacts } from '../../src/types/issue-facts';
 import {
     ProxyBlockerEnvironmentAdapter,
+    type ProxyBlockerBaselineEditOutcome,
     type ProxyBlockerBaselineEditReceipt,
     type ProxyBlockerCandidateReceipt,
 } from '../../src/proxy-blocker/proxy-environment-adapter';
@@ -149,8 +150,8 @@ interface Sandbox {
     applyBaselineEdit(
         originalRule: string,
         replacementRule: string,
-    ): Promise<ProxyBlockerBaselineEditReceipt>;
-    applyBaselineRemoval(originalRule: string): Promise<ProxyBlockerBaselineEditReceipt>;
+    ): Promise<ProxyBlockerBaselineEditOutcome>;
+    applyBaselineRemoval(originalRule: string): Promise<ProxyBlockerBaselineEditOutcome>;
     revokeBaselineEdit(): Promise<string>;
     filterLines(filterId: number): string[];
 }
@@ -338,40 +339,54 @@ function createSandbox(behaviour: SandboxBehaviour = {}): Sandbox {
             }
             const path = `${CLI_DATA_ROOT}/filters/${CULPRIT_FILTER_ID}.txt`;
             const before = storage.get(path)!;
-            lockedBytes = before;
             const lines = before.toString('utf8').split('\n');
+            const refusal = lineRefusal(lines, originalRule);
+            if (refusal) {
+                return refusal;
+            }
+            lockedBytes = before;
             const after = Buffer.from(
                 lines.map((line) => (line === originalRule ? replacementRule : line)).join('\n'),
                 'utf8',
             );
             storage.set(path, after);
             return {
-                filterId: CULPRIT_FILTER_ID,
-                beforeSha256: digestOf(before),
-                afterSha256: digestOf(after),
-                replacedLineCount: lines.filter((line) => line === originalRule).length,
-                extraSourceCount: 0,
-                ...behaviour.baselineEditReceipt,
+                applied: true,
+                receipt: {
+                    filterId: CULPRIT_FILTER_ID,
+                    beforeSha256: digestOf(before),
+                    afterSha256: digestOf(after),
+                    replacedLineCount: lines.filter((line) => line === originalRule).length,
+                    extraSourceCount: 0,
+                    ...behaviour.baselineEditReceipt,
+                },
             };
         },
         async applyBaselineRemoval(originalRule) {
             commands.push('apply_baseline_removal');
             const path = `${CLI_DATA_ROOT}/filters/${CULPRIT_FILTER_ID}.txt`;
             const before = storage.get(path)!;
-            lockedBytes = before;
             const lines = before.toString('utf8').split('\n');
+            const refusal = lineRefusal(lines, originalRule);
+            if (refusal) {
+                return refusal;
+            }
+            lockedBytes = before;
             const after = Buffer.from(
                 lines.filter((line) => line !== originalRule).join('\n'),
                 'utf8',
             );
             storage.set(path, after);
             return {
-                filterId: CULPRIT_FILTER_ID,
-                beforeSha256: digestOf(before),
-                afterSha256: digestOf(after),
-                replacedLineCount: lines.filter((line) => line === originalRule).length,
-                extraSourceCount: 0,
-                ...behaviour.baselineEditReceipt,
+                applied: true,
+                receipt: {
+                    filterId: CULPRIT_FILTER_ID,
+                    beforeSha256: digestOf(before),
+                    afterSha256: digestOf(after),
+                    replacedLineCount: lines.filter((line) => line === originalRule).length,
+                    extraSourceCount: 0,
+                    ...behaviour.baselineEditReceipt,
+                },
             };
         },
         async revokeBaselineEdit() {
@@ -388,6 +403,28 @@ function createSandbox(behaviour: SandboxBehaviour = {}): Sandbox {
                 .toString('utf8')
                 .split('\n');
         },
+    };
+}
+
+/**
+ * Refuse a baseline mutation the way the route does when the named line is not one exact published
+ * line: the sandbox's published content is the culprit filter alone.
+ *
+ * @param lines - Lines of the published culprit filter.
+ * @param originalRule - Exact line the mutation names.
+ * @returns The refusal, or null when the line occurs exactly once.
+ */
+function lineRefusal(
+    lines: readonly string[],
+    originalRule: string,
+): ProxyBlockerBaselineEditOutcome | null {
+    const occurrences = lines.filter((line) => line === originalRule).length;
+    if (occurrences === 1) {
+        return null;
+    }
+    return {
+        applied: false,
+        refusal: occurrences === 0 ? 'baseline_line_not_found' : 'baseline_line_not_unique',
     };
 }
 
@@ -1158,6 +1195,45 @@ describe('ProxyBlockerEnvironmentAdapter', () => {
         });
         expect(opened.limitation.detail).not.toContain(CULPRIT);
         expect(commands).toContain('revoke_baseline_edit');
+    });
+
+    it('refuses an edit of a line the published list does not carry and still runs an added rule', async () => {
+        const sandbox = createSandbox();
+        const { adapter } = await prepared(sandbox);
+        await openBaselinePhases(sandbox, adapter);
+        const unpublished = 'culprit-one.example##.culprit-widget';
+
+        const refused = await openPhase(sandbox, adapter, 'C', {
+            operation: 'edit',
+            rule: `jbpress.example,${unpublished}`,
+            originalRule: unpublished,
+        });
+
+        expect(refused.opened).toMatchObject({
+            ready: false,
+            limitation: { code: 'baseline_line_not_found', stage: 'candidate' },
+        });
+        // The route refused before it touched the list, so there is nothing to restore.
+        expect(refused.commands).toEqual(['apply_baseline_edit']);
+        expect(sandbox.filterLines(CULPRIT_FILTER_ID)).toEqual(
+            publishedFilterContent(CULPRIT_FILTER_ID).toString('utf8').split('\n'),
+        );
+
+        await openBaselinePhases(sandbox, adapter);
+        const { opened } = await openPhase(sandbox, adapter, 'C', {
+            operation: 'add',
+            rule: RULE,
+        });
+
+        expect(opened.ready).toBe(true);
+        if (!opened.ready) {
+            return;
+        }
+        expect(opened.handle.adapterProof).toMatchObject({
+            phase: 'C',
+            filteringState: 'published_baseline_plus_candidate',
+            candidateDigest: RULE_DIGEST,
+        });
     });
 
     it.each([

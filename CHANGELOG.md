@@ -10,6 +10,17 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed the AdGuard CLI environment stopping rule verification for the rest of
+  the run after one edit or removal named a line the published filter lists do
+  not carry; that call is now refused with a hint to validate an added rule,
+  and later candidates still run.
+- Fixed `apply_rule` accepting a candidate rule or an edited line that spans
+  several lines; such a call is now refused before any browser phase runs.
+- Fixed the AdGuard CLI route leaving an edited filter list in effect when its
+  first restore failed and cleanup retried it.
+
 ## [1.0.0] - 2026-10-14
 
 ### Added

@@ -2,27 +2,41 @@ import type { Logger } from 'pino';
 import type { ReproProfile } from '../types/repro-profile';
 import type { BrowserSession } from '../browser/browser-session';
 import type { AppliedRulesLog } from '../environment/applied-rules';
-
-/**
- * The command and storage contract of one isolated filtering installation, pinned to the product
- * CLI version this baseline contract was written against. The producing route reads the native
- * catalog itself and binds these argv forms; src owns the contract and an implementation outside
- * this tree provides it.
- */
-export const BASELINE_ACTION_CONTRACT = Object.freeze({
-    cliVersion: '1.4.13',
-    actions: Object.freeze([
-        'add_filter',
-        'enable_filter',
-        'disable_filter',
-        'list_all_filters',
-    ] as const),
-});
+import type { BaselineLineRefusal } from '../environment/filtering-environment';
 
 /**
  * Exact native action the route's baseline port may ask the isolated installation to perform.
+ *
+ * The command contract of one isolated filtering installation, pinned to AdGuard CLI 1.4.13, the
+ * version it was written against. The producing route reads the native catalog itself and binds
+ * these argv forms; src owns the contract and an implementation outside this tree provides it.
  */
-export type BaselineHostAction = (typeof BASELINE_ACTION_CONTRACT.actions)[number];
+export const BaselineHostAction = {
+    /**
+     * Install one official filter into the catalog.
+     */
+    AddFilter: 'add_filter',
+
+    /**
+     * Enable one installed filter.
+     */
+    EnableFilter: 'enable_filter',
+
+    /**
+     * Disable one installed filter.
+     */
+    DisableFilter: 'disable_filter',
+
+    /**
+     * List every filter of the catalog with its state.
+     */
+    ListAllFilters: 'list_all_filters',
+} as const;
+
+/**
+ * BaselineHostAction value.
+ */
+export type BaselineHostAction = (typeof BaselineHostAction)[keyof typeof BaselineHostAction];
 
 /**
  * Storage and command boundary the executing adapter drives on one isolated installation.
@@ -101,6 +115,41 @@ export interface BaselineEditReceipt {
      */
     extraSourceCount: number;
 }
+
+/**
+ * A baseline line mutation the installation now executes.
+ */
+export interface BaselineEditApplied {
+    /**
+     * The mutation ran.
+     */
+    applied: true;
+
+    /**
+     * What the installation executes after it.
+     */
+    receipt: BaselineEditReceipt;
+}
+
+/**
+ * A baseline line mutation the route refused before it changed anything.
+ */
+export interface BaselineEditRefused {
+    /**
+     * The mutation did not run and the baseline is untouched.
+     */
+    applied: false;
+
+    /**
+     * Why the named line could not be mutated.
+     */
+    refusal: BaselineLineRefusal;
+}
+
+/**
+ * Outcome of one baseline line mutation.
+ */
+export type BaselineEditOutcome = BaselineEditApplied | BaselineEditRefused;
 
 /**
  * Stable path-free failure classifications for the CLI evidence route.
@@ -309,17 +358,17 @@ export interface EvidenceRoutePorts {
      *
      * @param originalRule - Exact published line to replace.
      * @param replacementRule - Complete replacement line.
-     * @returns Receipt describing what the isolated installation now executes.
+     * @returns Receipt describing what the isolated installation now executes, or the refusal.
      */
-    applyBaselineEdit(originalRule: string, replacementRule: string): Promise<BaselineEditReceipt>;
+    applyBaselineEdit(originalRule: string, replacementRule: string): Promise<BaselineEditOutcome>;
 
     /**
      * Delete one exact line from the locked published baseline, under the same uniqueness rule.
      *
      * @param originalRule - Exact published line to delete.
-     * @returns Receipt describing what the isolated installation now executes.
+     * @returns Receipt describing what the isolated installation now executes, or the refusal.
      */
-    applyBaselineRemoval(originalRule: string): Promise<BaselineEditReceipt>;
+    applyBaselineRemoval(originalRule: string): Promise<BaselineEditOutcome>;
 
     /**
      * Restore the locked published baseline bytes.

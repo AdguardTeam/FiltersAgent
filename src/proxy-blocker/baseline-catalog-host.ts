@@ -6,6 +6,7 @@ import type {
     ProxyBlockerBaselineAction,
     ProxyBlockerBaselineHostPort,
 } from './published-baseline';
+import { BaselineHostAction } from '../local/evidence-route-contract';
 import type { DownloadedOfficialFilter } from '../local/official-filter-downloader';
 
 /**
@@ -118,7 +119,7 @@ export function createProxyBlockerBaselineHost(
         cliDataRoot: input.dataRoot,
 
         async runBaselineAction(action: ProxyBlockerBaselineAction, filterId: number | null) {
-            if (action === 'list_all_filters') {
+            if (action === BaselineHostAction.ListAllFilters) {
                 const rows = [...titles.entries()]
                     .sort(([left], [right]) => left - right)
                     .map(([id, title]) => {
@@ -140,7 +141,7 @@ export function createProxyBlockerBaselineHost(
             if (filterId === null) {
                 throw new Error('baseline_filter_identity_unpinned');
             }
-            if (action === 'add_filter') {
+            if (action === BaselineHostAction.AddFilter) {
                 const filter = byId.get(filterId);
                 if (!filter) {
                     throw new Error('baseline_filter_content_unavailable');
@@ -156,7 +157,7 @@ export function createProxyBlockerBaselineHost(
                 enabled.add(filterId);
                 return '';
             }
-            if (action === 'enable_filter') {
+            if (action === BaselineHostAction.EnableFilter) {
                 if (!installed.has(filterId)) {
                     throw new Error('baseline_filter_not_installed');
                 }

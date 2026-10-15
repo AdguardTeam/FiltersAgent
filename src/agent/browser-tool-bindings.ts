@@ -22,6 +22,7 @@ import type { SingleShotClient } from '../pi/single-shot-types';
 import type { ReproProfile } from '../types/repro-profile';
 import type { SymptomKind } from '../validator/symptom-rubric';
 import type { AppliedRulesLog } from '../environment/applied-rules';
+import { EnvironmentAdapterLimitationCode } from '../environment/filtering-environment';
 import { TraceArtifactStore } from '../tracer/artifact-store';
 
 /**
@@ -268,7 +269,7 @@ export async function registerBrowserTools(
             error:
                 'Candidate validation runs only through the environment-adapter path; ' +
                 'no legacy in-page validator exists in this session.',
-            errorKind: 'candidate_operation_unsupported',
+            errorKind: EnvironmentAdapterLimitationCode.CandidateOperationUnsupported,
             retryable: false,
         }),
     });

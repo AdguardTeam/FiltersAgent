@@ -34,7 +34,12 @@ import {
     requestedListsToRegistryIds,
     resolveAdguardListKey,
 } from '../environment/filter-list-ref';
-import { type BaselineEditReceipt, type CandidateReceipt } from '../local/evidence-route-contract';
+import {
+    BaselineHostAction,
+    type BaselineEditOutcome,
+    type BaselineEditReceipt,
+    type CandidateReceipt,
+} from '../local/evidence-route-contract';
 import type { ExecutorName } from '../environment/executor-name';
 import { readProxyBlockerFilterList, type ProxyBlockerCatalogRow } from './catalog-table';
 import {
@@ -44,207 +49,15 @@ import {
 import {
     prepareProxyBlockerPublishedBaseline,
     type ProxyBlockerBaselineHostPort,
-    type ProxyBlockerBaselineAction,
 } from './published-baseline';
 import { BrowserDisplayName } from '../types/browser-display-name';
 import { PhaseLabel } from '../types/validation';
-
-/**
- * Finite local reason one phase was refused.
- *
- * These never cross the public boundary: each maps to one already-defined public limitation code,
- * while the observed catalog facts behind it stay in the local diagnostic log. Four distinct
- * invariants collapse into `phase_proof_unavailable`, so without the log a refusal could not say
- * which of them it stands for.
- */
-const CliPhaseRejection = {
-    /**
-     * The adapter is not in a ready lifecycle state when a phase is opened.
-     */
-    EnvironmentNotReady: 'environment_not_ready',
-
-    /**
-     * A control or published baseline phase request carried a candidate.
-     */
-    CandidateNotApplicable: 'candidate_not_applicable',
-
-    /**
-     * The candidate phase's requested shape is not one this adapter can execute.
-     */
-    CandidateUnsupported: 'candidate_unsupported',
-
-    /**
-     * The published baseline phase was opened before the control phase.
-     */
-    ControlPhaseAbsent: 'control_phase_absent',
-
-    /**
-     * The candidate phase was opened before the published baseline phase.
-     */
-    BaselinePhaseAbsent: 'baseline_phase_absent',
-
-    /**
-     * An enable or disable command for a pinned official filter failed.
-     */
-    FilterCommandFailed: 'filter_command_failed',
-
-    /**
-     * The native catalog listing could not be read or parsed.
-     */
-    CatalogUnreadable: 'catalog_unreadable',
-
-    /**
-     * The control phase did not prove every requested official filter disabled.
-     */
-    ControlStateUnproven: 'control_state_unproven',
-
-    /**
-     * The published baseline phase did not prove every requested official filter enabled.
-     */
-    BaselineStateUnproven: 'baseline_state_unproven',
-
-    /**
-     * The catalog IDs enabled beyond the requested set changed between phases.
-     */
-    CoenabledSetChanged: 'coenabled_set_changed',
-
-    /**
-     * The requested official filter subset is not part of the locked baseline.
-     */
-    IsolationSubsetInvalid: 'isolation_subset_invalid',
-
-    /**
-     * Applying the proposed candidate rule or baseline mutation through the native port failed.
-     */
-    CandidateApplyFailed: 'candidate_apply_failed',
-
-    /**
-     * The native receipt for the applied candidate or baseline mutation did not match expectations.
-     */
-    CandidateReceiptInvalid: 'candidate_receipt_invalid',
-
-    /**
-     * The official filtering state diverged from the published baseline by more than the candidate.
-     */
-    CandidateStateDiverged: 'candidate_state_diverged',
-
-    /**
-     * The controlled browser session for the phase could not be established.
-     */
-    SessionUnavailable: 'session_unavailable',
-} as const;
-
-/**
- * CliPhaseRejection value.
- */
-type CliPhaseRejection = (typeof CliPhaseRejection)[keyof typeof CliPhaseRejection];
-
-/**
- * Public limitation each finite local reason collapses to.
- */
-const PHASE_LIMITATIONS: Readonly<Record<CliPhaseRejection, EnvironmentAdapterLimitation>> =
-    Object.freeze({
-        [CliPhaseRejection.EnvironmentNotReady]: {
-            code: EnvironmentAdapterLimitationCode.PhaseOpenFailed,
-            stage: EnvironmentLimitationStage.Phase,
-            detail: 'The AdGuard CLI environment is not ready for phase execution.',
-        },
-        [CliPhaseRejection.CandidateNotApplicable]: {
-            code: EnvironmentAdapterLimitationCode.PhaseOpenFailed,
-            stage: EnvironmentLimitationStage.Phase,
-            detail: 'A control or published baseline phase cannot carry a candidate.',
-        },
-        [CliPhaseRejection.CandidateUnsupported]: {
-            code: EnvironmentAdapterLimitationCode.CandidateOperationUnsupported,
-            stage: EnvironmentLimitationStage.Candidate,
-            detail: 'The selected environment cannot apply this candidate operation.',
-        },
-        [CliPhaseRejection.ControlPhaseAbsent]: {
-            code: EnvironmentAdapterLimitationCode.PhaseProofUnavailable,
-            stage: EnvironmentLimitationStage.Phase,
-            detail: 'The published baseline phase requires an established control phase.',
-        },
-        [CliPhaseRejection.BaselinePhaseAbsent]: {
-            code: EnvironmentAdapterLimitationCode.PhaseProofUnavailable,
-            stage: EnvironmentLimitationStage.Phase,
-            detail: 'The candidate phase requires an established published baseline phase.',
-        },
-        [CliPhaseRejection.FilterCommandFailed]: {
-            code: EnvironmentAdapterLimitationCode.PhaseOpenFailed,
-            stage: EnvironmentLimitationStage.Phase,
-            detail: 'The requested filtering state could not be applied.',
-        },
-        [CliPhaseRejection.CatalogUnreadable]: {
-            code: EnvironmentAdapterLimitationCode.PhaseProofUnavailable,
-            stage: EnvironmentLimitationStage.Phase,
-            detail: 'The filtering state of the isolated installation could not be read.',
-        },
-        [CliPhaseRejection.ControlStateUnproven]: {
-            code: EnvironmentAdapterLimitationCode.PhaseProofUnavailable,
-            stage: EnvironmentLimitationStage.Phase,
-            detail: 'The requested official filters were not proven disabled for the control.',
-        },
-        [CliPhaseRejection.BaselineStateUnproven]: {
-            code: EnvironmentAdapterLimitationCode.PhaseProofUnavailable,
-            stage: EnvironmentLimitationStage.Phase,
-            detail: 'The requested official filters were not proven enabled for the baseline.',
-        },
-        [CliPhaseRejection.CoenabledSetChanged]: {
-            code: EnvironmentAdapterLimitationCode.PhaseProofUnavailable,
-            stage: EnvironmentLimitationStage.Phase,
-            detail: 'The filters enabled beyond the requested set differ between the two phases.',
-        },
-        [CliPhaseRejection.IsolationSubsetInvalid]: {
-            code: EnvironmentAdapterLimitationCode.SettingsMismatch,
-            stage: EnvironmentLimitationStage.Phase,
-            detail: 'The requested official filter subset is not part of the locked baseline.',
-        },
-        [CliPhaseRejection.CandidateApplyFailed]: {
-            code: EnvironmentAdapterLimitationCode.CandidateApplicationFailed,
-            stage: EnvironmentLimitationStage.Candidate,
-            detail: 'The proposed rule could not be applied beside the published baseline.',
-        },
-        [CliPhaseRejection.CandidateReceiptInvalid]: {
-            code: EnvironmentAdapterLimitationCode.CandidateApplicationFailed,
-            stage: EnvironmentLimitationStage.Candidate,
-            detail: 'The isolated installation does not execute exactly the one proposed rule.',
-        },
-        [CliPhaseRejection.CandidateStateDiverged]: {
-            code: EnvironmentAdapterLimitationCode.PhaseProofUnavailable,
-            stage: EnvironmentLimitationStage.Phase,
-            detail: 'The official filtering state differs between the baseline and candidate phases.',
-        },
-        [CliPhaseRejection.SessionUnavailable]: {
-            code: EnvironmentAdapterLimitationCode.PhaseOpenFailed,
-            stage: EnvironmentLimitationStage.Phase,
-            detail: 'The controlled browser session could not be established.',
-        },
-    });
-
-/**
- * Refusal carrying one finite local reason across the internal call stack.
- */
-class PhaseRejectionError extends Error {
-    /**
-     * Finite local reason behind the refusal.
-     */
-    readonly reason: CliPhaseRejection;
-
-    constructor(reason: CliPhaseRejection) {
-        super(reason);
-        this.reason = reason;
-    }
-}
-
-/**
- * Stop the phase with one finite local reason.
- *
- * @param reason - Finite local reason behind the refusal.
- * @returns Never; always throws.
- */
-function reject(reason: CliPhaseRejection): never {
-    throw new PhaseRejectionError(reason);
-}
+import {
+    CliPhaseRejection,
+    PHASE_LIMITATIONS,
+    PhaseRejectionError,
+    reject,
+} from './cli-phase-rejection';
 
 /**
  * Compare two ascending catalog identity sets.
@@ -390,6 +203,12 @@ export type ProxyBlockerCandidateReceipt = CandidateReceipt;
 export type ProxyBlockerBaselineEditReceipt = BaselineEditReceipt;
 
 /**
+ * Receipt of a mutated published line, or the refusal to mutate it; the shape lives in the
+ * src-owned evidence-route contract.
+ */
+export type ProxyBlockerBaselineEditOutcome = BaselineEditOutcome;
+
+/**
  * Official filtering state one established phase proved, retained for the next phase to match.
  */
 interface CliPhaseFilteringState {
@@ -471,12 +290,12 @@ export interface ProxyBlockerEnvironmentOptions {
      *
      * @param originalRule - Exact published line to replace.
      * @param replacementRule - Complete replacement line.
-     * @returns Receipt describing what the isolated installation now executes.
+     * @returns Receipt describing what the isolated installation now executes, or the refusal.
      */
     applyBaselineEdit?(
         originalRule: string,
         replacementRule: string,
-    ): Promise<ProxyBlockerBaselineEditReceipt>;
+    ): Promise<ProxyBlockerBaselineEditOutcome>;
 
     /**
      * Delete one exact published line from the locked baseline and reload.
@@ -485,9 +304,9 @@ export interface ProxyBlockerEnvironmentOptions {
      * rather than guess when it does not occur exactly once, and leave every other byte untouched.
      *
      * @param originalRule - Exact published line to delete.
-     * @returns Receipt describing what the isolated installation now executes.
+     * @returns Receipt describing what the isolated installation now executes, or the refusal.
      */
-    applyBaselineRemoval?(originalRule: string): Promise<ProxyBlockerBaselineEditReceipt>;
+    applyBaselineRemoval?(originalRule: string): Promise<ProxyBlockerBaselineEditOutcome>;
 
     /**
      * Restore the locked published baseline bytes and reload.
@@ -970,7 +789,9 @@ export class ProxyBlockerEnvironmentAdapter implements FilteringEnvironmentAdapt
         // every filter outside the subset is proven disabled rather than merely left alone.
         for (const filterId of this.requestedFilterIds) {
             await this.runFilterAction(
-                targets.has(filterId) ? 'enable_filter' : 'disable_filter',
+                targets.has(filterId)
+                    ? BaselineHostAction.EnableFilter
+                    : BaselineHostAction.DisableFilter,
                 filterId,
             );
         }
@@ -1062,7 +883,6 @@ export class ProxyBlockerEnvironmentAdapter implements FilteringEnvironmentAdapt
         request: EnvironmentPhaseRequest,
         observed: CliPhaseObservation,
     ): Promise<AdapterPhaseLease> {
-        const baseline = this.baselinePhaseState!;
         this.candidateApplied = true;
         try {
             let receipt: ProxyBlockerCandidateReceipt;
@@ -1081,53 +901,9 @@ export class ProxyBlockerEnvironmentAdapter implements FilteringEnvironmentAdapt
             ) {
                 reject(CliPhaseRejection.CandidateReceiptInvalid);
             }
-            const catalog = await this.readCatalog();
-            observed.rows = catalog.rows;
-            observed.enabledCatalogIds = catalog.enabledCatalogIds;
-            const requested = new Set(this.requestedFilterIds);
-            const enabledFilterIds = catalog.enabledCatalogIds.filter((id) => requested.has(id));
-            const coenabledFilterIds = catalog.enabledCatalogIds.filter((id) => !requested.has(id));
-            observed.coenabledFilterIds = coenabledFilterIds;
-            // The candidate phase must differ from the published baseline by the candidate and
-            // nothing else, so a removed advertisement can only be attributed to the proposed rule.
-            if (
-                !sameIds(baseline.enabledFilterIds, enabledFilterIds) ||
-                !sameIds(baseline.coenabledFilterIds, coenabledFilterIds) ||
-                baseline.userFilterEnabled !== catalog.userFilterEnabled
-            ) {
-                reject(CliPhaseRejection.CandidateStateDiverged);
-            }
-            const created = await this.createPhaseSession(request);
-            const leaseId = this.createLeaseId(request.phase);
-            this.openLeases.set(leaseId, { leaseId, session: created.session });
-            return {
-                session: created.session,
-                adapterProof: {
-                    leaseId,
-                    adapterStateDigest: this.stateDigest,
-                    phase: request.phase,
-                    filteringState: EnvironmentFilteringState.PublishedBaselinePlusCandidate,
-                    sessionId: created.sessionId,
-                    actualContext: this.actualContext,
-                    baselineDigest: this.baseline!.aggregateDigest,
-                    candidateDigest,
-                    extension: null,
-                    cli: {
-                        cliVersion: this.options.cliVersion,
-                        enabledListKeys: baseline.enabledFilterIds.map(adguardListKey),
-                        coenabledListKeys: baseline.coenabledFilterIds.map(adguardListKey),
-                        userFilterEnabled: baseline.userFilterEnabled,
-                    },
-                },
-                close: async (): Promise<void> => {
-                    const resource = this.openLeases.get(leaseId);
-                    if (resource) {
-                        await resource.session.close();
-                        this.openLeases.delete(leaseId);
-                    }
-                    await this.revokeCandidate();
-                },
-            };
+            return await this.openCandidateLease(request, observed, candidateDigest, () =>
+                this.revokeCandidate(),
+            );
         } catch (error) {
             await this.revokeCandidateQuietly();
             throw error;
@@ -1156,12 +932,11 @@ export class ProxyBlockerEnvironmentAdapter implements FilteringEnvironmentAdapt
         request: EnvironmentPhaseRequest,
         observed: CliPhaseObservation,
     ): Promise<AdapterPhaseLease> {
-        const baseline = this.baselinePhaseState!;
         this.baselineEditApplied = true;
         try {
-            let receipt: ProxyBlockerBaselineEditReceipt;
+            let outcome: ProxyBlockerBaselineEditOutcome;
             try {
-                receipt =
+                outcome =
                     candidate.operation === CandidateOperation.Remove
                         ? await this.options.applyBaselineRemoval!(candidate.rule)
                         : await this.options.applyBaselineEdit!(
@@ -1172,6 +947,12 @@ export class ProxyBlockerEnvironmentAdapter implements FilteringEnvironmentAdapt
                 this.recordNativeFailure('baseline_edit_apply_failed', error);
                 reject(CliPhaseRejection.CandidateApplyFailed);
             }
+            if (!outcome.applied) {
+                // The route refused before it changed anything, so there is nothing to restore.
+                this.baselineEditApplied = false;
+                reject(outcome.refusal);
+            }
+            const receipt = outcome.receipt;
             observed.baselineEditReceipt = receipt;
             const locked = this.baseline!.resources.find(
                 (resource) => resource.listKey === adguardListKey(receipt.filterId),
@@ -1187,58 +968,82 @@ export class ProxyBlockerEnvironmentAdapter implements FilteringEnvironmentAdapt
                 reject(CliPhaseRejection.CandidateReceiptInvalid);
             }
             this.baselineEditBeforeSha256 = receipt.beforeSha256;
-            const catalog = await this.readCatalog();
-            observed.rows = catalog.rows;
-            observed.enabledCatalogIds = catalog.enabledCatalogIds;
-            const requested = new Set(this.requestedFilterIds);
-            const enabledFilterIds = catalog.enabledCatalogIds.filter((id) => requested.has(id));
-            const coenabledFilterIds = catalog.enabledCatalogIds.filter((id) => !requested.has(id));
-            observed.coenabledFilterIds = coenabledFilterIds;
-            // The candidate phase must differ from the published baseline by the replaced line and
-            // nothing else, so a restored page can only be attributed to that one correction.
-            if (
-                !sameIds(baseline.enabledFilterIds, enabledFilterIds) ||
-                !sameIds(baseline.coenabledFilterIds, coenabledFilterIds) ||
-                baseline.userFilterEnabled !== catalog.userFilterEnabled
-            ) {
-                reject(CliPhaseRejection.CandidateStateDiverged);
-            }
             const candidateDigest = createHash('sha256').update(candidate.rule).digest('hex');
-            const created = await this.createPhaseSession(request);
-            const leaseId = this.createLeaseId(request.phase);
-            this.openLeases.set(leaseId, { leaseId, session: created.session });
-            return {
-                session: created.session,
-                adapterProof: {
-                    leaseId,
-                    adapterStateDigest: this.stateDigest,
-                    phase: request.phase,
-                    filteringState: EnvironmentFilteringState.PublishedBaselinePlusCandidate,
-                    sessionId: created.sessionId,
-                    actualContext: this.actualContext,
-                    baselineDigest: this.baseline!.aggregateDigest,
-                    candidateDigest,
-                    extension: null,
-                    cli: {
-                        cliVersion: this.options.cliVersion,
-                        enabledListKeys: baseline.enabledFilterIds.map(adguardListKey),
-                        coenabledListKeys: baseline.coenabledFilterIds.map(adguardListKey),
-                        userFilterEnabled: baseline.userFilterEnabled,
-                    },
-                },
-                close: async (): Promise<void> => {
-                    const resource = this.openLeases.get(leaseId);
-                    if (resource) {
-                        await resource.session.close();
-                        this.openLeases.delete(leaseId);
-                    }
-                    await this.revokeBaselineEdit();
-                },
-            };
+            return await this.openCandidateLease(request, observed, candidateDigest, () =>
+                this.revokeBaselineEdit(),
+            );
         } catch (error) {
             await this.revokeBaselineEditQuietly();
             throw error;
         }
+    }
+
+    /**
+     * Prove the candidate phase differs from the published baseline by the candidate alone, and
+     * open its lease.
+     *
+     * Shared by the added rule and the baseline mutation: once the port has applied either, the
+     * official filtering state must match the baseline phase exactly, so a changed page can only be
+     * attributed to that one rule or line.
+     *
+     * @param request - Phase and canonical target already accepted for execution.
+     * @param observed - Mutable record collecting the facts a refusal would need.
+     * @param candidateDigest - SHA-256 of the candidate rule the proof binds.
+     * @param revoke - Undoes the applied candidate when the lease closes.
+     * @returns Ready adapter lease carrying the exact candidate phase proof.
+     */
+    private async openCandidateLease(
+        request: EnvironmentPhaseRequest,
+        observed: CliPhaseObservation,
+        candidateDigest: string,
+        revoke: () => Promise<void>,
+    ): Promise<AdapterPhaseLease> {
+        const baseline = this.baselinePhaseState!;
+        const catalog = await this.readCatalog();
+        observed.rows = catalog.rows;
+        observed.enabledCatalogIds = catalog.enabledCatalogIds;
+        const requested = new Set(this.requestedFilterIds);
+        const enabledFilterIds = catalog.enabledCatalogIds.filter((id) => requested.has(id));
+        const coenabledFilterIds = catalog.enabledCatalogIds.filter((id) => !requested.has(id));
+        observed.coenabledFilterIds = coenabledFilterIds;
+        if (
+            !sameIds(baseline.enabledFilterIds, enabledFilterIds) ||
+            !sameIds(baseline.coenabledFilterIds, coenabledFilterIds) ||
+            baseline.userFilterEnabled !== catalog.userFilterEnabled
+        ) {
+            reject(CliPhaseRejection.CandidateStateDiverged);
+        }
+        const created = await this.createPhaseSession(request);
+        const leaseId = this.createLeaseId(request.phase);
+        this.openLeases.set(leaseId, { leaseId, session: created.session });
+        return {
+            session: created.session,
+            adapterProof: {
+                leaseId,
+                adapterStateDigest: this.stateDigest,
+                phase: request.phase,
+                filteringState: EnvironmentFilteringState.PublishedBaselinePlusCandidate,
+                sessionId: created.sessionId,
+                actualContext: this.actualContext,
+                baselineDigest: this.baseline!.aggregateDigest,
+                candidateDigest,
+                extension: null,
+                cli: {
+                    cliVersion: this.options.cliVersion,
+                    enabledListKeys: baseline.enabledFilterIds.map(adguardListKey),
+                    coenabledListKeys: baseline.coenabledFilterIds.map(adguardListKey),
+                    userFilterEnabled: baseline.userFilterEnabled,
+                },
+            },
+            close: async (): Promise<void> => {
+                const resource = this.openLeases.get(leaseId);
+                if (resource) {
+                    await resource.session.close();
+                    this.openLeases.delete(leaseId);
+                }
+                await revoke();
+            },
+        };
     }
 
     /**
@@ -1383,7 +1188,7 @@ export class ProxyBlockerEnvironmentAdapter implements FilteringEnvironmentAdapt
      * @param filterId - Pinned official catalog ID.
      */
     private async runFilterAction(
-        action: Extract<ProxyBlockerBaselineAction, 'enable_filter' | 'disable_filter'>,
+        action: typeof BaselineHostAction.EnableFilter | typeof BaselineHostAction.DisableFilter,
         filterId: number,
     ): Promise<void> {
         try {
@@ -1402,7 +1207,10 @@ export class ProxyBlockerEnvironmentAdapter implements FilteringEnvironmentAdapt
     private async readCatalog(): Promise<CliCatalogState> {
         let stdout: string;
         try {
-            stdout = await this.options.baselineHost.runBaselineAction('list_all_filters', null);
+            stdout = await this.options.baselineHost.runBaselineAction(
+                BaselineHostAction.ListAllFilters,
+                null,
+            );
         } catch (error) {
             this.recordNativeFailure('list_command_failed', error);
             reject(CliPhaseRejection.CatalogUnreadable);

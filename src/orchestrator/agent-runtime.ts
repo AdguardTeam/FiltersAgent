@@ -1,7 +1,10 @@
+import { applyRuleResultForModel } from './apply-rule-model-result';
 import {
-    applyRuleResultForModel,
+    CandidateRefusalMemo,
+    candidateRefusal,
+    isCandidateRefusal,
     unsupportedCandidateOperationRefusal,
-} from './apply-rule-model-result';
+} from './candidate-refusals';
 import { createHash, randomUUID } from 'node:crypto';
 import * as v from 'valibot';
 import { withToolDeadline } from '../pi/session-tools';
@@ -82,6 +85,7 @@ import {
     CANDIDATE_OPERATION_VALUES,
     EnvironmentAdapterLimitation,
     EnvironmentAdapterLimitationCode,
+    EnvironmentCandidate,
     EnvironmentLimitationStage,
     FilteringEnvironmentAdapter,
     ProvisionalEnvironmentDisposition,
@@ -114,7 +118,12 @@ import type { ToolDefinition } from '../agent/tool-registry';
 import type { FixOutcome } from '../types/fix-outcome';
 import type { PreparedExtension } from '../local/prepared-extension';
 import { createLogger } from '../logger/logger';
-import { normalizeRule, type NormalizedRule } from '../repo/rule-normalizer';
+import {
+    SINGLE_LINE_RULE_MESSAGE,
+    isSingleLineRule,
+    normalizeRule,
+    type NormalizedRule,
+} from '../repo/rule-normalizer';
 import type { TraceRecorder } from '../tracer/trace-recorder';
 import { TraceEventType } from '../types/trace';
 import { Viewport, ConsentStrategy, type ReproProfile } from '../types/repro-profile';
@@ -1050,6 +1059,11 @@ export class AgentRuntime {
      * cannot be judged in a controlled experiment at all.
      */
     private readonly baselineSymptomAbsentCounts = new Map<string, number>();
+
+    /**
+     * Candidates the environment already refused for their operation or their published line.
+     */
+    private readonly candidateRefusals = new CandidateRefusalMemo();
 
     /**
      * Browser-bound candidate outcomes indexed by canonical rule.
@@ -3865,6 +3879,25 @@ export class AgentRuntime {
                 'in the browser-extension environment',
             );
         }
+        // originalRule travels verbatim: baseline mutation receipts compare the exact published line
+        // bytes, which normalization would corrupt.
+        const environmentCandidate: EnvironmentCandidate =
+            candidate.operation === CandidateOperation.Add
+                ? { operation: CandidateOperation.Add, rule: candidate.rule }
+                : candidate.operation === CandidateOperation.Remove
+                  ? {
+                        operation: CandidateOperation.Remove,
+                        rule: candidate.originalRule ?? candidate.rule,
+                    }
+                  : {
+                        operation: CandidateOperation.Edit,
+                        rule: candidate.rule,
+                        originalRule: candidate.originalRule!,
+                    };
+        const knownRefusal = this.candidateRefusals.recall(environmentCandidate);
+        if (knownRefusal) {
+            return knownRefusal;
+        }
         const candidateRule = candidate.rule;
         // The baseline is recomputed at the verdict, after the host has written the candidate into
         // the declared blocker-state file; that file lives in the run's host-state root, so both
@@ -3921,21 +3954,7 @@ export class AgentRuntime {
             adapter,
             recorder,
             targetUrl: state.targetUrl,
-            // originalRule travels verbatim: baseline mutation receipts compare the exact
-            // published line bytes, which normalization would corrupt.
-            candidate:
-                candidate.operation === CandidateOperation.Add
-                    ? { operation: CandidateOperation.Add, rule: candidateRule }
-                    : candidate.operation === CandidateOperation.Remove
-                      ? {
-                            operation: CandidateOperation.Remove,
-                            rule: candidate.originalRule ?? candidateRule,
-                        }
-                      : {
-                            operation: CandidateOperation.Edit,
-                            rule: candidateRule,
-                            originalRule: candidate.originalRule!,
-                        },
+            candidate: environmentCandidate,
             observe:
                 this.dependencies.observeEnvironmentPhase ??
                 (async (input) => await observer!.observe(input)),
@@ -4017,26 +4036,18 @@ export class AgentRuntime {
                         'quotes this bootstrap failure as the reason verification was skipped.',
                 };
             }
-            if (
-                experiment.limitation.code ===
-                    EnvironmentAdapterLimitationCode.CandidateOperationUnsupported &&
-                candidate.operation !== CandidateOperation.Add
-            ) {
-                // The environment refused the baseline-mutation SHAPE, not the issue: the lock
-                // stays ready so the model can still validate an added exception or replacement
-                // rule for the same report.
+            const refusal = candidateRefusal(experiment.limitation, candidate.operation);
+            if (refusal) {
+                // The environment refused this candidate, not itself: the lock stays ready and
+                // the disposition stays clear, so the next candidate — an added rule for the same
+                // report — still runs its own experiment.
                 this.filteringEnvironmentDisposition = {
                     status: 'inconclusive',
                     candidateDigest: null,
                     failure: null,
                 };
-                return {
-                    ...unsupportedCandidateOperationRefusal(
-                        candidate.operation,
-                        'by this environment',
-                    ),
-                    limitation: experiment.limitation,
-                };
+                this.candidateRefusals.remember(environmentCandidate, refusal);
+                return refusal;
             }
             this.recordFilteringEnvironmentLimitation(experiment.limitation);
             return {
@@ -4303,6 +4314,21 @@ export class AgentRuntime {
                                 retryable: true,
                             };
                         }
+                        // A line break would reach the environment as one rule and land in the
+                        // list as two, while the receipts still count one changed line.
+                        if (
+                            !isSingleLineRule(candidateRule) ||
+                            (originalRule !== undefined && !isSingleLineRule(originalRule))
+                        ) {
+                            return {
+                                error:
+                                    originalRule !== undefined && !isSingleLineRule(originalRule)
+                                        ? 'originalRule must be one published line.'
+                                        : SINGLE_LINE_RULE_MESSAGE,
+                                errorKind: 'candidate_shape_invalid',
+                                retryable: true,
+                            };
+                        }
                         const normalized = normalizeRule(
                             operation === CandidateOperation.Remove
                                 ? (originalRule ?? candidateRule)
@@ -4438,13 +4464,11 @@ export class AgentRuntime {
                         }
                     }
                     if (name === 'apply_rule' && pendingCandidate) {
-                        if (
-                            freshLedgerKey !== undefined &&
-                            result.errorKind === 'candidate_operation_unsupported'
-                        ) {
-                            // An operation-capability refusal judged the request shape, not the
-                            // candidate's merit: release the slot registered by this call so the
-                            // three semantic attempts stay spendable on supported operations.
+                        if (freshLedgerKey !== undefined && isCandidateRefusal(result.errorKind)) {
+                            // A candidate refusal judged the request — its operation or the line it
+                            // names — not the candidate's merit: release the slot registered by
+                            // this call so the three semantic attempts stay spendable on rules the
+                            // environment can run.
                             this.candidateAttempts.delete(freshLedgerKey);
                             this.candidateAttemptSessionIds.delete(freshLedgerKey);
                         }
