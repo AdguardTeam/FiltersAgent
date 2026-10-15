@@ -241,7 +241,7 @@ function toPiTool(
     markExecuted: (toolCallId: string) => void,
     logger: Logger,
 ): ToolDefinition {
-    const parameters = toAdvertisedSchema(spec.parameters);
+    const parameters = toAdvertisedSchema(spec.parameters, spec.name);
     return defineTool({
         name: spec.name,
         label: spec.name,

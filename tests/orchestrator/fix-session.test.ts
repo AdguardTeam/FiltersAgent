@@ -438,6 +438,32 @@ describe('fix session wiring', () => {
         ).toBe(true);
     });
 
+    it('advertises every tool as one plain object and names the field finish_fix misses', async () => {
+        // Contract: Anthropic refuses a request whose tool input_schema has anyOf, oneOf or allOf
+        // at the top level, so one such tool fails the run on its first request. The terminal's
+        // per-outcome rules then rest on the execute-time Valibot check, and its refusal must
+        // still name the missing field.
+        const { ruleProposal: _missing, ...branchIncomplete } = PROPOSE_RULE_PAYLOAD;
+        const { result, requests } = await runSession(
+            [finishCall(branchIncomplete), finishCall(ANALYSIS_ONLY_PAYLOAD)],
+            sessionOptions(stubRuntime({})),
+        );
+
+        const tools = requests[0]!.tools as {
+            function: { name: string; parameters: Record<string, unknown> };
+        }[];
+        expect(tools.map((tool) => tool.function.name)).toContain(ToolName.FinishFix);
+        for (const { function: advertised } of tools) {
+            expect(advertised.parameters['type'], advertised.name).toBe('object');
+            expect(
+                ['anyOf', 'oneOf', 'allOf'].filter((keyword) => keyword in advertised.parameters),
+                advertised.name,
+            ).toEqual([]);
+        }
+        expect(JSON.stringify(requests[1]!.messages)).toMatch(/invalid payload \(ruleProposal:/);
+        expect(result.terminal.outcome).toBe('analysis_only');
+    });
+
     it('exhausting the rejection cap seals rejected-terminal with preserved reasoning', async () => {
         const runtime = stubRuntime({}, [
             ENVIRONMENT_REQUIRED_REJECTION,
@@ -710,7 +736,7 @@ describe('fix session wiring', () => {
             createObservationSink(),
             () => {},
         ).find((tool) => tool.name === ToolName.AnalyzeScreenshot);
-        const fixShape = toAdvertisedSchema(fixTool!.parameters) as {
+        const fixShape = toAdvertisedSchema(fixTool!.parameters, fixTool!.name) as {
             properties?: Record<string, unknown>;
             required?: string[];
         };
@@ -750,7 +776,7 @@ describe('fix session wiring', () => {
             }),
             {},
         ).find((tool) => tool.name === ToolName.AnalyzeScreenshot);
-        const sharedShape = toAdvertisedSchema(sharedTool!.parameters) as {
+        const sharedShape = toAdvertisedSchema(sharedTool!.parameters, sharedTool!.name) as {
             properties?: Record<string, unknown>;
             required?: string[];
         };

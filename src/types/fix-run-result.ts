@@ -1166,10 +1166,10 @@ const FixRunResultInvariantsSchema = v.pipe(
  * Run statuses that conclude the reported defect needs no patch.
  */
 export const NO_PATCH_RUN_STATUSES = [
-    'not_reproduced',
-    'already_fixed_current',
-    'fixed_upstream_pending_extension',
-    'configuration_specific',
+    FixRunStatus.NotReproduced,
+    FixRunStatus.AlreadyFixedCurrent,
+    FixRunStatus.FixedUpstreamPendingExtension,
+    FixRunStatus.ConfigurationSpecific,
 ] as const;
 
 /**

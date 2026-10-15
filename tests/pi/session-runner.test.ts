@@ -968,20 +968,31 @@ describe('runAgentSession', () => {
 });
 
 /**
- * A terminal payload shaped like a fix verdict: a union keyed by `outcome` whose rule branch nests
- * an object holding another object and a list.
+ * The rule a proposal carries: an object holding another object and a list.
+ */
+const RuleProposalSchema = v.object({
+    rule: v.string(),
+    risk: v.object({ level: v.picklist(['low', 'high']), reasons: v.array(v.string()) }),
+});
+
+/**
+ * A terminal payload shaped like a fix verdict: a variant keyed by `outcome` whose rule branch
+ * nests {@link RuleProposalSchema}.
  */
 const ProposalSchema = v.variant('outcome', [
-    v.object({
-        outcome: v.literal('propose_rule'),
-        ruleProposal: v.object({
-            rule: v.string(),
-            risk: v.object({ level: v.picklist(['low', 'high']), reasons: v.array(v.string()) }),
-        }),
-    }),
+    v.object({ outcome: v.literal('propose_rule'), ruleProposal: RuleProposalSchema }),
     v.object({ outcome: v.literal('analysis_only'), summary: v.string() }),
 ]);
 type Proposal = v.InferOutput<typeof ProposalSchema>;
+
+/**
+ * {@link ProposalSchema} as the flat object the terminal advertises, as `finish_fix` does.
+ */
+const ProposalParameters = v.object({
+    outcome: v.picklist(['propose_rule', 'analysis_only']),
+    ruleProposal: v.optional(RuleProposalSchema),
+    summary: v.optional(v.string()),
+});
 
 const RULE_PROPOSAL = {
     rule: 'example.com##.ad',
@@ -1013,6 +1024,7 @@ async function runProposal(payloads: Record<string, unknown>[]) {
             name: TERMINAL_TOOL_NAME,
             description: 'Submit the final verdict.',
             schema: ProposalSchema,
+            parameters: ProposalParameters,
         }),
         budgets: TEST_RUN_BUDGETS,
         retries: TEST_RUN_RETRIES,

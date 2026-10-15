@@ -20,6 +20,8 @@ The format is based on [Keep a Changelog], and this project adheres to
   several lines; such a call is now refused before any browser phase runs.
 - Fixed the AdGuard CLI route leaving an edited filter list in effect when its
   first restore failed and cleanup retried it.
+- Fixed fix runs on Claude models, which failed on the first request because
+  the `finish_fix` tool schema had `anyOf` at the top level.
 
 ## [1.0.0] - 2026-10-14
 

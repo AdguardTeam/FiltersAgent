@@ -1,6 +1,7 @@
 import * as v from 'valibot';
 import { RuleProposalSchema } from './rule-proposal';
-import { PolicyDecisionSchema } from './policy';
+import { PolicyDecisionKind, PolicyDecisionSchema } from './policy';
+import { NO_PATCH_RUN_STATUSES } from './fix-run-result';
 import { CANDIDATE_VALIDATION_ARTIFACT_ID_PATTERN } from './candidate-artifact-identity';
 import { CandidateForReviewSchema } from './candidate-for-review';
 
@@ -95,7 +96,7 @@ const ProposeRuleOutcomeSchema = v.object({
  * Policy decision required when a usable browser did not reproduce the defect.
  */
 const NotReproducedPolicyDecisionSchema = v.object({
-    decision: v.literal('allow_rule_generation'),
+    decision: v.literal(PolicyDecisionKind.AllowRuleGeneration),
     reasons: v.array(v.string()),
 });
 
@@ -103,8 +104,14 @@ const NotReproducedPolicyDecisionSchema = v.object({
  * Policy decisions that explicitly block automatic rule generation.
  */
 const PolicyBlockedDecisionSchema = v.variant('decision', [
-    v.object({ decision: v.literal('propose_close'), reasons: v.array(v.string()) }),
-    v.object({ decision: v.literal('needs_human_review'), reasons: v.array(v.string()) }),
+    v.object({
+        decision: v.literal(PolicyDecisionKind.ProposeClose),
+        reasons: v.array(v.string()),
+    }),
+    v.object({
+        decision: v.literal(PolicyDecisionKind.NeedsHumanReview),
+        reasons: v.array(v.string()),
+    }),
 ]);
 
 /**
@@ -132,6 +139,20 @@ const PolicyBlockedOutcomeSchema = v.object({
 });
 
 /**
+ * The validation artifact of the candidate `apply_rule` rejected, named on an analysis-only
+ * outcome.
+ */
+const RejectedCandidateValidationArtifactIdSchema = v.pipe(
+    v.string(),
+    v.regex(CANDIDATE_VALIDATION_ARTIFACT_ID_PATTERN),
+);
+
+/**
+ * How a resolve-without-patch run stands: why the issue needs no repository change.
+ */
+const ResolveWithoutPatchRunStatusSchema = v.picklist(NO_PATCH_RUN_STATUSES);
+
+/**
  * Schema variant for an analysis-only outcome — risk is too high, the site is unreachable, or the
  * structured output could not be parsed. No GitHub writes.
  *
@@ -145,9 +166,7 @@ const AnalysisOnlyOutcomeSchema = v.object({
     reasoning: v.string(),
     summary: SummarySchema,
     candidateForReview: v.optional(CandidateForReviewSchema),
-    rejectedCandidateValidationArtifactId: v.optional(
-        v.pipe(v.string(), v.regex(CANDIDATE_VALIDATION_ARTIFACT_ID_PATTERN)),
-    ),
+    rejectedCandidateValidationArtifactId: v.optional(RejectedCandidateValidationArtifactIdSchema),
 });
 
 /**
@@ -155,28 +174,90 @@ const AnalysisOnlyOutcomeSchema = v.object({
  */
 const ResolveWithoutPatchOutcomeSchema = v.object({
     outcome: v.literal(FixOutcomeKind.ResolveWithoutPatch),
-    runStatus: v.picklist([
-        'not_reproduced',
-        'already_fixed_current',
-        'fixed_upstream_pending_extension',
-        'configuration_specific',
-    ]),
+    runStatus: ResolveWithoutPatchRunStatusSchema,
     reasoning: v.string(),
     summary: SummarySchema,
     evidenceSummary: v.string(),
 });
 
 /**
+ * What `finish_fix` advertises: {@link FixOutcomeSchema} as one flat object.
+ *
+ * Providers refuse a tool whose parameters are a union at the root, so the model is shown every
+ * branch field side by side, with the outcome it belongs to in its description. pi checks a call
+ * against this object before execute, and {@link FixOutcomeSchema} runs the same object first, so
+ * both accept and refuse the same calls at this depth. The object relaxes every branch: each field
+ * keeps its branch's leaf schema (`policyDecision` takes the decision schema both branch-specific
+ * decisions narrow), and only the fields every branch requires are required here.
+ */
+export const FixOutcomeParametersSchema = v.object({
+    outcome: v.picklist(Object.values(FixOutcomeKind)),
+    reasoning: v.string(),
+    summary: SummarySchema,
+    evidenceSummary: v.optional(
+        v.pipe(v.string(), v.description('Required for every outcome except analysis_only.')),
+    ),
+    ruleProposal: v.optional(
+        v.pipe(
+            RuleProposalSchema,
+            v.description('Required for propose_rule; leave out otherwise.'),
+        ),
+    ),
+    policyDecision: v.optional(
+        v.pipe(
+            PolicyDecisionSchema,
+            v.description(
+                'Required for propose_rule and propose_close; leave out otherwise. ' +
+                    'propose_close with reproductionStatus ' +
+                    'not_reproduced takes allow_rule_generation; with policy_blocked, ' +
+                    'propose_close or needs_human_review.',
+            ),
+        ),
+    ),
+    reproductionStatus: v.optional(
+        v.pipe(
+            v.picklist(Object.values(ReproductionStatus)),
+            v.description('Required for propose_close; leave out otherwise.'),
+        ),
+    ),
+    runStatus: v.optional(
+        v.pipe(
+            ResolveWithoutPatchRunStatusSchema,
+            v.description('Required for resolve_without_patch; leave out otherwise.'),
+        ),
+    ),
+    candidateForReview: v.optional(
+        v.pipe(CandidateForReviewSchema, v.description('analysis_only only.')),
+    ),
+    rejectedCandidateValidationArtifactId: v.optional(
+        v.pipe(RejectedCandidateValidationArtifactIdSchema, v.description('analysis_only only.')),
+    ),
+});
+
+/**
  * Schema for the structured decision the agent outputs in fix mode. The variant discriminator is
  * `outcome`; this is the terminal tool's payload schema.
+ *
+ * A variant, not a union: Valibot's union reports a branch's own issues only when exactly one
+ * branch fits the type, and every branch here is an object, so a propose-rule payload without its
+ * `ruleProposal` came back as "Expected Object but received Object". The variant picks the branch
+ * by `outcome` — and the two propose-close branches by `reproductionStatus` — and names the field
+ * that fails.
+ *
+ * The flat {@link FixOutcomeParametersSchema} runs first: it is what pi checked before execute, so a
+ * malformed field of another outcome — `ruleProposal: null` on an analysis-only outcome — is
+ * refused here too, by name, instead of being dropped by the branch. A well-formed one passes both
+ * and the branch drops it.
  */
-export const FixOutcomeSchema = v.union([
-    ProposeRuleOutcomeSchema,
-    NotReproducedOutcomeSchema,
-    PolicyBlockedOutcomeSchema,
-    ResolveWithoutPatchOutcomeSchema,
-    AnalysisOnlyOutcomeSchema,
-]);
+export const FixOutcomeSchema = v.pipe(
+    FixOutcomeParametersSchema,
+    v.variant('outcome', [
+        ProposeRuleOutcomeSchema,
+        v.variant('reproductionStatus', [NotReproducedOutcomeSchema, PolicyBlockedOutcomeSchema]),
+        ResolveWithoutPatchOutcomeSchema,
+        AnalysisOnlyOutcomeSchema,
+    ]),
+);
 
 /**
  * The structured decision produced by the agent in fix mode, validated at terminal submission.

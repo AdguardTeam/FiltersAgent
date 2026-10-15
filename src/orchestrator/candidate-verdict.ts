@@ -37,6 +37,7 @@ import {
     calculateTrustedBaselineHash,
     type TrustedValidationContext,
 } from '../validator/trusted-validation-context';
+import { PolicyDecisionKind } from '../types/policy';
 
 /**
  * Convert the rich internal rule proposal to the minimal deterministic publisher payload.
@@ -209,7 +210,7 @@ export function deriveFixRunStatus(
     if (
         outcome.outcome === FixOutcomeKind.ProposeClose &&
         outcome.reproductionStatus === ReproductionStatus.NotReproduced &&
-        outcome.policyDecision.decision === 'allow_rule_generation' &&
+        outcome.policyDecision.decision === PolicyDecisionKind.AllowRuleGeneration &&
         browserUsable
     ) {
         return FixRunStatus.NotReproduced;

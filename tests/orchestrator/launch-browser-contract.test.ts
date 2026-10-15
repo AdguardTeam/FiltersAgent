@@ -82,7 +82,10 @@ const SLICE_SETTINGS = {
  * @returns The advertised property names.
  */
 function advertisedProperties(prepared: PreparedExtension): string[] {
-    const advertised = toAdvertisedSchema(launchBrowserAdvertisement(prepared).parameters);
+    const advertised = toAdvertisedSchema(
+        launchBrowserAdvertisement(prepared).parameters,
+        'launch_browser',
+    );
     return Object.keys((advertised['properties'] ?? {}) as Record<string, unknown>);
 }
 
@@ -93,7 +96,10 @@ function advertisedProperties(prepared: PreparedExtension): string[] {
  * @returns The property names the model is shown under `settings`.
  */
 function advertisedSettingsProperties(prepared: PreparedExtension): string[] {
-    const advertised = toAdvertisedSchema(launchBrowserAdvertisement(prepared).parameters) as {
+    const advertised = toAdvertisedSchema(
+        launchBrowserAdvertisement(prepared).parameters,
+        'launch_browser',
+    ) as {
         properties?: { settings?: { properties?: Record<string, unknown> } };
     };
     return Object.keys(advertised.properties?.settings?.properties ?? {});

@@ -92,7 +92,7 @@ export function assertParametersMatchRegistry(
         const advertised = Object.keys(
             (tool.parameters.properties ?? {}) as Record<string, unknown>,
         );
-        const declared = new Set(Object.keys(advertisedProperties(schema)));
+        const declared = new Set(Object.keys(advertisedProperties(schema, tool.name)));
         const missing = advertised.filter((property) => !declared.has(property));
         if (missing.length > 0) {
             throw new Error(
@@ -117,12 +117,14 @@ export function assertParametersMatchRegistry(
  * nothing and failed the check for every registered parameter.
  *
  * @param schema - The advertisement schema for one tool.
+ * @param toolName - The tool the schema belongs to.
  * @returns The advertised property names, empty when the schema advertises no object.
  */
 function advertisedProperties(
     schema: v.GenericSchema<Record<string, unknown>>,
+    toolName: string,
 ): Record<string, unknown> {
-    const properties = toAdvertisedSchema(schema)['properties'];
+    const properties = toAdvertisedSchema(schema, toolName)['properties'];
     return typeof properties === 'object' && properties !== null
         ? (properties as Record<string, unknown>)
         : {};

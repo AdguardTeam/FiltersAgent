@@ -297,7 +297,10 @@ export function registerLifecycleTools(
             function: {
                 name: 'launch_browser',
                 description: host.launchBrowserAdvertisement.description,
-                parameters: toAdvertisedSchema(host.launchBrowserAdvertisement.parameters),
+                parameters: toAdvertisedSchema(
+                    host.launchBrowserAdvertisement.parameters,
+                    'launch_browser',
+                ),
             },
         },
         handler: async (args) =>

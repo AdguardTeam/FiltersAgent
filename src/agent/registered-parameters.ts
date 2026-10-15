@@ -62,5 +62,5 @@ export function registeredParameters(name: ToolName): Record<string, unknown> {
     if (schema === undefined) {
         throw new Error(`No catalog parameter schema is declared for tool ${name}.`);
     }
-    return toAdvertisedSchema(schema);
+    return toAdvertisedSchema(schema, name);
 }

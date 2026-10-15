@@ -25,7 +25,10 @@ describe('registerReportMissingInformationTool', () => {
             .find((candidate) => candidate.function.name === ToolName.ReportMissingInformation);
         expect(definition).toBeDefined();
         expect(definition?.function.parameters).toEqual(
-            toAdvertisedSchema(FIX_TOOL_PARAMETER_SCHEMAS[ToolName.ReportMissingInformation]!),
+            toAdvertisedSchema(
+                FIX_TOOL_PARAMETER_SCHEMAS[ToolName.ReportMissingInformation]!,
+                ToolName.ReportMissingInformation,
+            ),
         );
     });
 

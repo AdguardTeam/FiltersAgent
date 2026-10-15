@@ -19,6 +19,7 @@ import type { DeclaredPlacementSet } from '../types/declared-placement';
 import { planRepositoryEdit } from '../repo/repository-edit';
 import { parseSafeCssInjectionRule } from '../rules/safe-css-injection';
 import type { Logger } from '../logger/logger';
+import { PolicyDecisionKind } from '../types/policy';
 
 /**
  * Repository and issue context needed for deterministic candidate validation.
@@ -268,7 +269,7 @@ export function enforceCandidateSafety(
 
     try {
         const proposal = outcome.ruleProposal;
-        if (outcome.policyDecision.decision !== 'allow_rule_generation') {
+        if (outcome.policyDecision.decision !== PolicyDecisionKind.AllowRuleGeneration) {
             throw new CandidateSafetyError('Policy does not allow rule generation.');
         }
         if (!proposal.productCompatibility.extension) {

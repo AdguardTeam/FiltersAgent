@@ -16,12 +16,12 @@ const TERMINAL_EXECUTION_MODE: ToolExecutionMode = 'sequential';
 /**
  * The terminal tool: the single finishing convention of a pi agent session. One mode, one tool.
  * Submissions face two depths of the same contract: pi pre-validates the raw arguments against the
- * advertised schema — the mode's Valibot schema converted verbatim — BEFORE execute runs and
- * bounces violations with its own error text; execute re-validates with Valibot, which is what
- * gives the handler typed input and what a caller invoking execute without pi in front of it relies
- * on, and then runs the optional host-side hook, throwing its rejection reason, which pi returns to
- * the model as a tool error. Either way the model sees the reason and retries in the same session
- * with full context.
+ * advertised schema — the mode's Valibot schema converted verbatim, or the flat `parameters` a
+ * branching mode advertises in its place — BEFORE execute runs and bounces violations with its own
+ * error text; execute re-validates with Valibot, which is what gives the handler typed input and
+ * what a caller invoking execute without pi in front of it relies on, and then runs the optional
+ * host-side hook, throwing its rejection reason, which pi returns to the model as a tool error.
+ * Either way the model sees the reason and retries in the same session with full context.
  *
  * Rejection counting lives at exactly ONE place — `observeRejection` below, fed by the runner from
  * the session's `tool_execution_end` error events, which both bounce paths surface through.
@@ -161,7 +161,16 @@ export interface TerminalToolOptions<T> {
     /**
      * The mode's result schema; every submission is validated against it.
      */
-    schema: v.GenericSchema<T>;
+    schema: v.GenericSchema<unknown, T>;
+
+    /**
+     * The parameters the model is shown, when the result schema branches: a union or variant of
+     * objects renders as a root `anyOf` or `oneOf`, which providers refuse, so such a mode
+     * advertises one flat object that relaxes every branch (see `toAdvertisedSchema`) and `schema`
+     * alone decides at execute time. Absent, `schema` is advertised as is, which works only for a
+     * non-branching schema: a branching one without `parameters` fails the session build.
+     */
+    parameters?: v.GenericSchema<Record<string, unknown>>;
 
     /**
      * Optional host-side check run after schema validation. Returns the rejection — the reason
@@ -302,7 +311,7 @@ export function buildTerminalTool<T>(options: TerminalToolOptions<T>): TerminalT
     const tool: SessionToolSpec = {
         name: options.name,
         description: options.description,
-        parameters: options.schema,
+        parameters: options.parameters ?? options.schema,
         executionMode: TERMINAL_EXECUTION_MODE,
         execute: async (args) => {
             if (acceptedPayload !== undefined) {

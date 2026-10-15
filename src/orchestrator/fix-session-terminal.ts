@@ -8,7 +8,11 @@
 import type { FinishFixValidationRejection } from '../types/terminal-rejection';
 import { TraceEventType } from '../types/trace';
 import type { TraceRecorder } from '../tracer/trace-recorder';
-import { FixOutcomeSchema, type FixOutcome } from '../types/fix-outcome';
+import {
+    FixOutcomeParametersSchema,
+    FixOutcomeSchema,
+    type FixOutcome,
+} from '../types/fix-outcome';
 import { TOOL_GUIDANCE } from '../agent/tool-catalog';
 import { ToolName } from '../agent/tool-names';
 import { buildTerminalTool, type TerminalToolController } from '../pi/terminal-tool';
@@ -93,6 +97,7 @@ export function buildFixTerminal(
         name: ToolName.FinishFix,
         description: TOOL_GUIDANCE[ToolName.FinishFix]!,
         schema: FixOutcomeSchema,
+        parameters: FixOutcomeParametersSchema,
         validateHost: (outcome) => {
             const rejection = host.validateTerminalOutcome(outcome);
             if (rejection === undefined) {

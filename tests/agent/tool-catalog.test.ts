@@ -151,16 +151,22 @@ describe('TOOL_PARAMETER_SCHEMAS', () => {
 
     it('converts every schema through the pi tool-schema mapper', () => {
         for (const [name, schema] of Object.entries(TOOL_PARAMETER_SCHEMAS)) {
-            expect(() => toAdvertisedSchema(schema), name).not.toThrow();
+            expect(() => toAdvertisedSchema(schema, name), name).not.toThrow();
         }
     });
 
     it('preserves the required/optional wire shape', () => {
-        const fetchIssue = toAdvertisedSchema(TOOL_PARAMETER_SCHEMAS['fetch_issue']) as {
+        const fetchIssue = toAdvertisedSchema(
+            TOOL_PARAMETER_SCHEMAS['fetch_issue'],
+            'fetch_issue',
+        ) as {
             required?: string[];
         };
         expect(fetchIssue.required).toEqual(['issueNumber']);
-        const searchRules = toAdvertisedSchema(TOOL_PARAMETER_SCHEMAS['search_rules']) as {
+        const searchRules = toAdvertisedSchema(
+            TOOL_PARAMETER_SCHEMAS['search_rules'],
+            'search_rules',
+        ) as {
             required?: string[];
         };
         expect(searchRules.required ?? []).toEqual([]);
@@ -175,10 +181,10 @@ describe('TOOL_PARAMETER_SCHEMAS', () => {
         ]) {
             const schema = TOOL_PARAMETER_SCHEMAS[name];
             expect(schema, name).toBeDefined();
-            expect(() => toAdvertisedSchema(schema!), name).not.toThrow();
+            expect(() => toAdvertisedSchema(schema!, name), name).not.toThrow();
             // Every stub property is optional (nothing executes; a plausible call must reach
             // the gate refusal, not pi's pre-execute validation).
-            const converted = toAdvertisedSchema(schema!) as { required?: string[] };
+            const converted = toAdvertisedSchema(schema!, name) as { required?: string[] };
             expect(converted.required ?? [], name).toEqual([]);
         }
     });
@@ -187,7 +193,7 @@ describe('TOOL_PARAMETER_SCHEMAS', () => {
         for (const name of FIX_SESSION_SURFACE) {
             const schema = FIX_TOOL_PARAMETER_SCHEMAS[name] ?? TOOL_PARAMETER_SCHEMAS[name];
             expect(schema, name).toBeDefined();
-            expect(() => toAdvertisedSchema(schema!), name).not.toThrow();
+            expect(() => toAdvertisedSchema(schema!, name), name).not.toThrow();
         }
         // The fix map carries ONLY the strict mirrors; the permissive shared entries stay in
         // TOOL_PARAMETER_SCHEMAS untouched, serving the widened sibling surfaces. The preparation
@@ -231,7 +237,7 @@ describe('TOOL_PARAMETER_SCHEMAS', () => {
         for (const [name, required] of Object.entries(expectedRequired)) {
             const schema = FIX_TOOL_PARAMETER_SCHEMAS[name]!;
             expect(schema, name).toBeDefined();
-            const converted = toAdvertisedSchema(schema) as { required?: string[] };
+            const converted = toAdvertisedSchema(schema, name) as { required?: string[] };
             expect(converted.required ?? [], name).toEqual(required);
         }
     });
@@ -239,6 +245,7 @@ describe('TOOL_PARAMETER_SCHEMAS', () => {
     it('keeps the missing-information bounds on the wire so the model reads them before calling', () => {
         const converted = toAdvertisedSchema(
             FIX_TOOL_PARAMETER_SCHEMAS['report_missing_information']!,
+            'report_missing_information',
         ) as {
             properties: Record<string, { type: string; maxLength?: number }>;
         };
@@ -255,7 +262,7 @@ describe('TOOL_PARAMETER_SCHEMAS', () => {
  * @returns The schema as the provider would receive it.
  */
 function wireShape(schema: v.GenericSchema): unknown {
-    return toAdvertisedSchema(schema);
+    return toAdvertisedSchema(schema, 'wire_shape');
 }
 
 describe('toAdvertisedSchema', () => {

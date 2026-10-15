@@ -699,7 +699,7 @@ describe('createToolRegistry', () => {
             // it from the advertisement, so the bound has to survive into the JSON Schema pi sends.
             const rehearsal = specs
                 .filter((spec) => spec.name === ToolName.InteractPage)
-                .map((spec) => toAdvertisedSchema(spec.parameters));
+                .map((spec) => toAdvertisedSchema(spec.parameters, spec.name));
             expect(rehearsal).toHaveLength(1);
             expect(rehearsal[0]).toMatchObject({
                 properties: {

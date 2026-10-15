@@ -21,6 +21,16 @@ import { toJsonSchema } from '@valibot/to-json-schema';
  * case: a plain `v.object` emits no `additionalProperties` and keeps stripping unknown keys on both
  * sides, while `v.strictObject` emits `false` and rejects them on both sides.
  *
+ * A tool whose arguments branch cannot be advertised as converted, because a root union is what
+ * providers refuse; it advertises a separate flat object instead. The flat object relaxes every
+ * branch: the discriminator as an enum of all branch values, each branch field with the same leaf
+ * schema and optional unless every branch requires it, and the same unknown-key handling. pi checks
+ * the discriminator, the types and bounds of every field present whatever the branch, and the
+ * fields every branch requires. The invariant holds because the authoritative schema pipes that
+ * same flat object first and the branches after it (`FixOutcomeSchema`): a field of another branch
+ * that pi refuses, the Valibot check refuses by name too. Which fields a branch requires is left to
+ * the branch stage at execute time.
+ *
  * Nor is pi's own bounce a lost failure path: `tool-bounce.ts` counts pi's pre-execute rejections
  * through `tool_execution_end` — which is how the terminal tool caps a model that keeps
  * resubmitting an invalid payload — and records each one, with the submitted arguments and pi's
@@ -34,55 +44,50 @@ import { toJsonSchema } from '@valibot/to-json-schema';
  * may route to, refuse a `parameters` object whose root lacks `type: "object"`: a fix run fails
  * mid-session with `Invalid schema for function 'finish_fix': schema must be a JSON Schema of
  * 'type: "object"', got 'type: null'` once the gateway's load balancer moves it onto such an
- * upstream. `@valibot/to-json-schema` renders a `v.union` of objects as a bare `anyOf` with no root
- * type, which is what those upstreams reject.
+ * upstream.
  */
 const OBJECT_ROOT_TYPE = 'object';
 
 /**
- * The composition keywords under which a union of object branches hides its root type.
- */
-const UNION_KEYWORDS = ['anyOf', 'oneOf'] as const;
-
-/**
- * Whether every branch of a rendered union declares the object type itself.
+ * The composition keywords a provider refuses at the root of a tool's parameters.
  *
- * @param branches - The rendered union branches.
- * @returns True when the union can only ever match an object.
+ * Anthropic (Claude Platform and Amazon Bedrock alike) fails the whole request with `input_schema
+ * does not support oneOf, allOf, or anyOf at the top level`, so one such tool keeps a run from
+ * starting at all. `@valibot/to-json-schema` renders a `v.union` of objects as a root `anyOf` and a
+ * `v.variant` as a root `oneOf`. Nested below a property the keywords are accepted.
  */
-function everyBranchIsObject(branches: unknown): boolean {
-    return (
-        Array.isArray(branches) &&
-        branches.length > 0 &&
-        branches.every(
-            (branch) =>
-                typeof branch === 'object' &&
-                branch !== null &&
-                (branch as Record<string, unknown>)['type'] === OBJECT_ROOT_TYPE,
-        )
-    );
-}
+const ROOT_COMPOSITION_KEYWORDS = ['anyOf', 'oneOf', 'allOf'] as const;
 
 /**
  * Convert a Valibot tool-parameters schema into the JSON Schema object pi advertises to the model.
  *
- * A union of object shapes gets its root `type: "object"` stated explicitly. That adds no
- * constraint — every branch already requires an object, so pi's pre-execute check accepts and
- * rejects exactly what it did before — but it is the root declaration strict upstreams insist on.
+ * The root must be one plain object: a tool whose arguments branch on a discriminator advertises a
+ * flat object with the discriminator as an enum and validates the branches at execute time (see
+ * `TerminalToolOptions.parameters`, and `launch_browser`'s separate advertisement). Refusing here
+ * rather than at the provider surfaces such a tool in every test that builds its surface.
  *
  * @param schema - The Valibot schema declared on a tool spec.
+ * @param toolName - The tool the schema belongs to, named in the refusal.
  * @returns The JSON Schema registered as the tool's parameters.
+ * @throws When the converted root is not a plain `type: "object"` schema.
  */
-export function toAdvertisedSchema(schema: v.GenericSchema): Record<string, unknown> {
+export function toAdvertisedSchema(
+    schema: v.GenericSchema,
+    toolName: string,
+): Record<string, unknown> {
     // `$schema` names the dialect of the DOCUMENT, not a constraint on the call, and pi forwards
     // `tool.parameters` verbatim into the provider request body (`api/openai-completions.js`).
     // Stripping it keeps the wire schema to keywords that describe the arguments.
     const { $schema: _dialect, ...advertised } = toJsonSchema(schema) as Record<string, unknown>;
-    if (
-        advertised['type'] === undefined &&
-        UNION_KEYWORDS.some((keyword) => everyBranchIsObject(advertised[keyword]))
-    ) {
-        return { type: OBJECT_ROOT_TYPE, ...advertised };
+    const composition = ROOT_COMPOSITION_KEYWORDS.filter((keyword) => keyword in advertised);
+    if (advertised['type'] !== OBJECT_ROOT_TYPE || composition.length > 0) {
+        const found =
+            composition.length > 0 ? composition.join(', ') : `type ${String(advertised['type'])}`;
+        throw new Error(
+            `Parameters of tool ${toolName} must be one plain JSON object, but the root has ` +
+                `${found}. ` +
+                'Advertise a flat object and validate the branches at execute time.',
+        );
     }
     return advertised;
 }
