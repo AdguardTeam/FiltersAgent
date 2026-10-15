@@ -10,18 +10,15 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-10-15
+
 ### Fixed
 
-- Fixed the AdGuard CLI environment stopping rule verification for the rest of
-  the run after one edit or removal named a line the published filter lists do
-  not carry; that call is now refused with a hint to validate an added rule,
-  and later candidates still run.
-- Fixed `apply_rule` accepting a candidate rule or an edited line that spans
-  several lines; such a call is now refused before any browser phase runs.
-- Fixed the AdGuard CLI route leaving an edited filter list in effect when its
-  first restore failed and cleanup retried it.
-- Fixed fix runs on Claude models, which failed on the first request because
-  the `finish_fix` tool schema had `anyOf` at the top level.
+- AdGuard CLI route: a failed edit of a line missing from the published lists
+  no longer disables the environment for the rest of the run.
+- AdGuard CLI route: an edited list is restored when the first restore fails.
+- `apply_rule` rejects multi-line rules.
+- Claude models: runs no longer fail on the first request.
 
 ## [1.0.0] - 2026-10-14
 
@@ -40,5 +37,6 @@ The format is based on [Keep a Changelog], and this project adheres to
     - Benchmark — replays fixed historical issues and compares the agent's
       rules with the maintainers' fixes.
 
-[Unreleased]: https://github.com/AdguardTeam/FiltersAgent/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/AdguardTeam/FiltersAgent/compare/v1.0.1...HEAD
+[1.0.1]: https://github.com/AdguardTeam/FiltersAgent/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/AdguardTeam/FiltersAgent/releases/tag/v1.0.0
