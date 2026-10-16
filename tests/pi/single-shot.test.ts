@@ -274,7 +274,7 @@ describe('runStructuredSingleShot', () => {
         expect(provider.requests).toHaveLength(2);
     });
 
-    it('retries a mid-stream gateway fault inside one attempt and parses the reply', async () => {
+    it('accounts for each mid-stream gateway retry and parses the reply', async () => {
         // A fault after the headers is an error MESSAGE, not a status: pi's transport retry never
         // sees it, and a live run's candidate visual review went "unavailable" on one. The loop's
         // seam classification applies here too, bounded by the same configured retries.
@@ -305,7 +305,8 @@ describe('runStructuredSingleShot', () => {
             return;
         }
         expect(result.value).toEqual({ verdict: 'present', count: 1 });
-        expect(result.attempts).toBe(1);
+        expect(result.attempts).toBe(3);
+        expect(result.usages).toHaveLength(3);
         expect(provider.requests).toHaveLength(3);
     });
 

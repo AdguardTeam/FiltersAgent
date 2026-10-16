@@ -10,6 +10,26 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- Added `LLM_API` / `llmApi` with `anthropic-messages` to run Claude with
+  your own Anthropic key, prompt caching and thinking. Its base URL has no
+  `/v1`; a URL ending in `/v1` fails at startup.
+
+### Changed
+
+- Changed `LLM_VISION_MODEL` / `llmVisionModel` to be optional, defaulting
+  to the effective reasoning model, including model overrides.
+- Changed provider content refusals (`refusal`, `sensitive`,
+  `content_filter`) and bodyless HTTP 400/404/413/422 errors to end the run
+  as `llm_rejected`.
+- Changed the vision image size cap to 5 MB for both APIs.
+
+### Fixed
+
+- Fixed the usage summary leaving out single-shot attempts that failed and
+  were retried.
+
 ## [1.0.1] - 2026-10-15
 
 ### Fixed

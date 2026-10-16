@@ -125,12 +125,12 @@ export const RunUsageSummarySchema = v.object({
      */
     completions: v.pipe(v.number(), v.integer(), v.minValue(0)),
     /**
-     * Completions whose stream carried no usage chunk.
+     * Completions with zero input, output, cache-read and cache-write token counts.
      */
     unreportedCompletions: v.pipe(v.number(), v.integer(), v.minValue(0)),
     /**
-     * Sum of (completions − 1) over single-shot calls — the bounded repair attempts this stack
-     * owns; pi-internal transport retries are unobservable.
+     * Sum of additional observed completions over single-shot calls, including schema repair and
+     * host-managed stream retries. Pi-internal transport retries remain unobservable.
      */
     repairAttempts: v.pipe(v.number(), v.integer(), v.minValue(0)),
     /**
@@ -146,7 +146,7 @@ export const RunUsageSummarySchema = v.object({
      */
     costUsd: v.nullable(v.pipe(v.number(), v.finite(), v.minValue(0))),
     /**
-     * Completeness of the reported usage chunks.
+     * Completeness of nonzero provider token counts across observed completions.
      */
     usageCompleteness: v.picklist(USAGE_COMPLETENESS_VALUES),
     /**

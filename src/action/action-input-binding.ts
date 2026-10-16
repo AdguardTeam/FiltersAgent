@@ -18,7 +18,6 @@ import {
     LLM_CONTEXT_WINDOW_TOKENS_VAR,
     LLM_MAX_OUTPUT_TOKENS_VAR,
     LLM_MODEL_VAR,
-    LLM_PROVIDER_ROUTING_VAR,
     LLM_REASONING_EFFORT_VAR,
     LLM_REQUEST_MAX_ATTEMPTS_VAR,
     LLM_SINGLE_SHOT_REASONING_EFFORT_VAR,
@@ -26,6 +25,7 @@ import {
     LLM_VISION_MODEL_VAR,
 } from '../config/config';
 import { ConfigError } from '../config/config-error';
+import { LLM_API_VAR } from '../config/llm-api';
 import {
     GITHUB_REPOSITORY_VAR,
     optionalEnvValue,
@@ -58,10 +58,10 @@ const AGENT_ACTION_INPUT_ENV_VAR: Partial<Record<AgentActionInputName, string>> 
     [AgentActionInputName.checkoutPath]: REPOSITORY_PATH_VAR,
     [AgentActionInputName.githubToken]: GITHUB_TOKEN_VAR,
     [AgentActionInputName.llmBaseUrl]: LLM_BASE_URL_VAR,
+    [AgentActionInputName.llmApi]: LLM_API_VAR,
     [AgentActionInputName.llmApiKey]: LLM_API_KEY_VAR,
     [AgentActionInputName.llmModel]: LLM_MODEL_VAR,
     [AgentActionInputName.llmVisionModel]: LLM_VISION_MODEL_VAR,
-    [AgentActionInputName.llmProviderRouting]: LLM_PROVIDER_ROUTING_VAR,
     [AgentActionInputName.llmContextWindowTokens]: LLM_CONTEXT_WINDOW_TOKENS_VAR,
     [AgentActionInputName.llmMaxOutputTokens]: LLM_MAX_OUTPUT_TOKENS_VAR,
     [AgentActionInputName.llmVisionMaxOutputTokens]: LLM_VISION_MAX_OUTPUT_TOKENS_VAR,

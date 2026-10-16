@@ -831,7 +831,7 @@ function writeLocalFailure(
 /**
  * Execute the common local investigation after selecting one trusted input loader.
  *
- * @param coreConfig - Generic OpenAI-compatible runtime configuration.
+ * @param coreConfig - Generic LLM runtime configuration.
  * @param options - Local case, environment, and output options.
  * @param loadInput - Legacy or verified-revision input boundary.
  * @param revision - Opaque verified revision, or null for the legacy output adapter.
@@ -1144,7 +1144,7 @@ async function runLocalFixWithInput(
  * This compatibility adapter validates the version-one snapshot before delegating to the same
  * execution body used by verified revision input.
  *
- * @param coreConfig - Generic OpenAI-compatible runtime configuration.
+ * @param coreConfig - Generic LLM runtime configuration.
  * @param options - Legacy issue-file, environment, and output options.
  * @param dependencies - Optional lifecycle and core seams for tests.
  * @returns Paths to the persisted agent-first report and locked result.
@@ -1169,7 +1169,7 @@ export async function runLocalFix(
  * The source envelope and original attachment paths are absent from this interface. Captured bytes
  * are materialized exclusively beneath the owned output before entering the common execution body.
  *
- * @param coreConfig - Generic OpenAI-compatible runtime configuration.
+ * @param coreConfig - Generic LLM runtime configuration.
  * @param revision - Opaque in-memory revision returned by the integrity verifier.
  * @param options - Environment and nested investigation output options.
  * @param dependencies - Optional lifecycle and core seams for tests.

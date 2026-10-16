@@ -6,6 +6,9 @@ connect the action and adapt it to a repository is in the
 
 ## Inputs
 
+`anthropic-messages` uses adaptive thinking and targets Claude models that
+support it (Claude 5.x).
+
 | Input | Required | Description |
 | --- | --- | --- |
 | `repository` | No | Repository slug (owner/repo) the run identifies itself with; defaults to the runner's `GITHUB_REPOSITORY`. |
@@ -23,24 +26,24 @@ connect the action and adapt it to a repository is in the
 | `blockerModules` | No | Blocker module manifests to plug in, one per line or comma-separated, relative to the workspace. See [Plug in another blocker](../guides/github-action.md#plug-in-another-blocker). |
 | `instructionPath` | No | Path of the run instruction file, relative to the checkout; when unset, the checkout's default instruction at `.github/filters-agent/AGENTS.md` is loaded when present. |
 | `artifactsDir` | No | Directory the run writes its artifacts to; defaults to `filters-agent-artifacts/artifacts` under the checkout. |
-| `model` | No | Reasoning-model slug overriding the LLM runtime's configured model. |
+| `model` | No | Reasoning-model slug overriding the configured model; vision follows it when `llmVisionModel` is unset. |
 | `noComment` | No | `'true'` skips posting the report as an issue comment; the report is still written to the artifacts directory. |
 | `force` | No | `'true'` for a run a maintainer triggered, by label or by a manual dispatch: a maintainer's comment, an assignee or an in-progress label on the issue no longer skips the run or keeps the report silent. A closed issue, a fix referenced, an excluded label and a report already posted for the issue's current text still do. The backlog mode ignores it. |
 | `screenshotsBranch` | No | Branch the before and after screenshots of a verified rule are committed to, so the report comment can show them; defaults to `filters-agent-screenshots`. Needs the `contents: write` permission; without it the report posts without screenshots. |
 | `lintCommand` | No | Your repository's own lint command line, for example `npx aglint`. Each candidate rule is linted with it in the checkout; a failure adds a note to the report and never stops the rule. Unset runs no lint. See [Lint with your repository's linter](../guides/github-action.md#lint-with-your-repositorys-linter). |
 | `checkoutPath` | No | Path of the analyzed checkout; defaults to the runner's `GITHUB_WORKSPACE`. |
 | `githubToken` | No | GitHub API token the run reads issues with; in practice mandatory in every run, since the action only serves GitHub-read modes — a missing token fails the job named, even together with `noComment`. |
-| `llmBaseUrl` | Yes | OpenAI-compatible API base URL of the LLM provider. |
+| `llmBaseUrl` | Yes | OpenAI chat-completions or Anthropic Messages API base URL; for Anthropic use `https://api.anthropic.com` without `/v1`. |
+| `llmApi` | No | LLM API for both model roles: `openai-completions` or `anthropic-messages`; defaults to `openai-completions`. |
 | `llmApiKey` | Yes | API key of the LLM provider; pass it from a repository secret. |
 | `llmModel` | Yes | Default reasoning-model slug for the run's LLM sessions. |
-| `llmVisionModel` | Yes | Model slug used for vision steps that read screenshots. |
+| `llmVisionModel` | No | Model slug used for screenshot steps; defaults to the effective reasoning model, including the `model` override. When unset, that model must also accept images. |
 | `llmContextWindowTokens` | Yes | Context window of the reasoning model, in tokens, as your provider states it. |
 | `llmMaxOutputTokens` | Yes | Completion cap sent with the reasoning model's requests, in tokens: the model's own limit at your provider. |
-| `llmVisionMaxOutputTokens` | When `llmVisionModel` differs from `llmModel` | Completion cap sent with the vision model's requests, in tokens. When both inputs name one model, it is `llmMaxOutputTokens`. |
-| `llmReasoningEffort` | No | Reasoning effort of the investigation's requests: `off`, `minimal`, `low`, `medium` or `high`; defaults to `high`. `off` sends no reasoning parameter, for a model that does not reason. |
-| `llmSingleShotReasoningEffort` | No | Reasoning effort of the one-question calls (reading the issue, describing a screenshot), same values; defaults to `low`. |
+| `llmVisionMaxOutputTokens` | When `llmVisionModel` differs from `llmModel` | Completion cap sent with the vision model's requests, in tokens. When `llmVisionModel` is unset or both inputs name one model, it is `llmMaxOutputTokens`. |
+| `llmReasoningEffort` | No | Reasoning effort of the investigation's requests: `off`, `minimal`, `low`, `medium` or `high`; defaults to `high`. On Anthropic, `off` omits thinking; a model that thinks by default keeps thinking. |
+| `llmSingleShotReasoningEffort` | No | Reasoning effort of the one-question calls (reading the issue, describing a screenshot), same values; defaults to `low`. On Anthropic with loop effort on, `off` sends disabled thinking on reasoning-enabled entries: Claude Opus 5.5 and Sonnet 5.5 reject it with HTTP 400, while Haiku 5.5 accepts it. |
 | `llmRequestMaxAttempts` | No | Total attempts per LLM request when the provider fails transiently (a 5xx, a timeout, a response cut off mid-stream), 1 to 3; defaults to 2. Raise it to 3 for a gateway that drops responses more than once in a row. |
-| `llmProviderRouting` | No | JSON routing preferences for an OpenRouter-compatible gateway, sent as the `provider` object on every request — for example `{"ignore":["Together"]}` to route around a faulting upstream provider. Plain configuration, not a secret; leave it unset for a gateway that does not understand the field. |
 
 ## Outputs
 

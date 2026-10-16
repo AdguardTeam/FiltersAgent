@@ -19,7 +19,7 @@ import type {
     ToolCall,
 } from '@earendil-works/pi-ai';
 import type { Logger } from '../logger/logger';
-import { TurnStopReason } from './stop-reason';
+import { PROVIDER_REFUSAL_STOP_REASONS, TurnStopReason } from './stop-reason';
 import {
     TerminalSettlement,
     type TerminalToolController,
@@ -212,22 +212,21 @@ function diagnoseNoTerminal(messages: readonly Message[], promptRejection: unkno
 const DETERMINISTIC_REJECTION_STATUSES: ReadonlySet<number> = new Set([400, 404, 413, 422]);
 
 /**
- * Leading status token of pi's composed provider message, as `formatProviderError` emits it for the
- * openai-completions API this runtime registers (`"<status>: <body>"`, no provider prefix).
+ * Leading status token in pi's openai-completions message (`"<status>: <body>"`) or the Anthropic
+ * SDK's message (`"<status> <body>"`), both without a provider prefix.
  */
-const LEADING_STATUS_PATTERN = /^(\d{3}):\s/u;
+const LEADING_STATUS_PATTERN = /^(\d{3}):?\s/u;
 
 /**
  * Decide whether pi's composed provider message names a deterministic rejection of this exact
  * request.
  *
  * Pi exposes a provider failure to the host only as the composed `errorMessage` string of the
- * turn's assistant message; the status is not otherwise surfaced. For our provider (registered with
- * `api: 'openai-completions'`), pi-ai composes `"<status>: <body>"` without a prefix
- * (`formatProviderError`), so a LEADING three-digit status token inside the message is the only
- * structural evidence available. When the message has no leading status (an SDK-folded body or an
- * alternate composition), the answer is `false` — the conservative direction: true only for a
- * structurally identified deterministic status.
+ * turn's assistant message; the status is not otherwise surfaced. Both supported APIs compose a
+ * leading three-digit status token, which is the only structural evidence available. When the
+ * message has no leading status (an SDK-folded body or an alternate composition), the answer is
+ * `false` — the conservative direction: true only for a structurally identified deterministic
+ * status.
  *
  * @param message - Pi's provider-failure message (final failed request).
  * @returns True when the message carries a deterministic rejection status.
@@ -255,6 +254,16 @@ export function isDeterministicProviderMessage(message: string): boolean {
 export function parseProviderFailureStatus(message: string): number | undefined {
     const leading = LEADING_STATUS_PATTERN.exec(message);
     return leading === null ? undefined : Number(leading[1]);
+}
+
+/**
+ * Decide whether the provider stopped because it rejected the request's content.
+ *
+ * @param rawStopReason - The provider's original stop reason from the final assistant turn.
+ * @returns True when the reason names a content refusal.
+ */
+function isProviderRefusal(rawStopReason: string | undefined): boolean {
+    return rawStopReason !== undefined && PROVIDER_REFUSAL_STOP_REASONS.has(rawStopReason);
 }
 
 /**
@@ -377,7 +386,8 @@ function classifyEnd<T>(
         return {
             kind: SealKind.ProviderFailure,
             message,
-            deterministic: isDeterministicProviderMessage(message),
+            deterministic:
+                isDeterministicProviderMessage(message) || isProviderRefusal(last.rawStopReason),
             status: parseProviderFailureStatus(message),
         };
     }

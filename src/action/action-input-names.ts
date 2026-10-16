@@ -123,6 +123,11 @@ export const AgentActionInputName = {
     llmBaseUrl: 'llmBaseUrl',
 
     /**
+     * The optional `llmApi` input; lands in the `LLM_API` environment variable.
+     */
+    llmApi: 'llmApi',
+
+    /**
      * The `llmApiKey` input; lands in the `LLM_API_KEY` environment variable `loadCoreConfig` reads
      * the LLM slice from.
      */
@@ -136,17 +141,10 @@ export const AgentActionInputName = {
 
     /**
      * The `llmVisionModel` input; lands in the `LLM_VISION_MODEL` environment variable
-     * `loadCoreConfig` reads the LLM slice from.
+     * `loadCoreConfig` reads the LLM slice from. Optional: defaults to the effective reasoning
+     * model, including the model override; that model must accept images when vision is unset.
      */
     llmVisionModel: 'llmVisionModel',
-
-    /**
-     * The `llmProviderRouting` input; lands in the `LLM_PROVIDER_ROUTING` environment variable
-     * `loadCoreConfig` validates the gateway routing document from. Optional like every other
-     * environment-channel input: an unset or blank value leaves the variable out, and the run sends
-     * no `provider` field at all.
-     */
-    llmProviderRouting: 'llmProviderRouting',
 
     /**
      * The `llmContextWindowTokens` input; lands in the `LLM_CONTEXT_WINDOW_TOKENS` environment

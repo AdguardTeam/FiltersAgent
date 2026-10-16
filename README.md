@@ -34,8 +34,9 @@ For each issue the agent:
    was proposed.
 
 The agent never merges rules, closes issues or pushes to a filters repository.
-It works with any OpenAI-compatible LLM provider that offers a reasoning model
-with tool calling and a vision model.
+It works with LLM providers speaking the OpenAI chat-completions or Anthropic
+Messages API, with a reasoning model that supports tool calling and a vision
+model. One model can fill both roles.
 
 ## Features
 
@@ -52,15 +53,15 @@ with tool calling and a vision model.
 
 ### Run it on your filters repository
 
-You need an OpenAI-compatible LLM endpoint reachable from GitHub-hosted runners
-and GitHub Issues enabled on the repository.
+You need an OpenAI chat-completions or Anthropic Messages API endpoint reachable
+from GitHub-hosted runners and GitHub Issues enabled on the repository.
 
 1. Copy
    [`docs/examples/filters-agent-workflow.yml`](docs/examples/filters-agent-workflow.yml)
    into the repository's `.github/workflows/`.
 2. Add the provider's API key as the repository secret
-   `FILTERS_AGENT_LLM_API_KEY`, and set the endpoint, the model names and
-   their token limits in the copied workflow.
+   `FILTERS_AGENT_LLM_API_KEY`, and set the API, endpoint, reasoning model and
+   token limits in the copied workflow. A separate vision model is optional.
 3. Open an issue. The report appears as a comment on it, and the full run is
    uploaded as a workflow artifact.
 
@@ -78,8 +79,10 @@ pnpm install
 cp .env.example .env
 ```
 
-Fill in the `LLM_*` values in `.env`, and `GITHUB_TOKEN` for commands that read
-GitHub issues. The stealth Chromium build downloads on the first run.
+Fill in the provider settings in `.env`; `LLM_API` selects the API and
+`LLM_VISION_MODEL` defaults to the effective reasoning model, including
+overrides. Set `GITHUB_TOKEN` for commands that read GitHub issues. The stealth
+Chromium build downloads on the first run.
 
 ## Quick start
 

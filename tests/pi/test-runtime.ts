@@ -1,3 +1,7 @@
+import * as v from 'valibot';
+import { runAgentSession } from '../../src/pi/session-runner';
+import { buildTerminalTool } from '../../src/pi/terminal-tool';
+import { LlmApi } from '../../src/config/llm-api';
 import { ReasoningEffort } from '../../src/config/reasoning-effort';
 import type { RunBudgets } from '../../src/pi/guard-types';
 import { createPiRuntime, type PiRuntime, type PiRuntimeConfig } from '../../src/pi/runtime';
@@ -84,6 +88,7 @@ export type TestPiRuntimeOptions = Partial<PiRuntimeConfig> & Pick<PiRuntimeConf
  */
 export async function createTestPiRuntime(options: TestPiRuntimeOptions): Promise<PiRuntime> {
     return await createPiRuntime({
+        api: LlmApi.OpenAiCompletions,
         apiKey: TEST_API_KEY,
         model: REASONING_MODEL,
         visionModel: VISION_MODEL,
@@ -114,7 +119,6 @@ export async function createTestVisionClient(
     const runtime = await createTestPiRuntime({ baseUrl });
     return createSingleShotClient(runtime, runtime.visionModel, {
         reasoningEffort,
-        maxTokens: runtime.visionModel.maxTokens,
     });
 }
 
@@ -148,11 +152,70 @@ export async function createTestSingleShotClients(
     return {
         reasoning: createSingleShotClient(runtime, runtime.reasoningModel, {
             reasoningEffort,
-            maxTokens: runtime.reasoningModel.maxTokens,
         }),
         vision: createSingleShotClient(runtime, runtime.visionModel, {
             reasoningEffort,
-            maxTokens: runtime.visionModel.maxTokens,
         }),
     };
+}
+
+/**
+ * Terminal tool shared by scripted provider-session tests.
+ */
+export const TEST_TERMINAL_TOOL_NAME = 'submit_verdict';
+
+const ScriptedVerdictSchema = v.object({
+    verdict: v.picklist(['ok', 'retry']),
+    summary: v.string(),
+});
+
+/**
+ * Provider endpoint and run controls for the shared scripted-session scenario.
+ */
+export interface ScriptedSessionOptions {
+    /**
+     * Local provider URL, including the version path when its API needs one.
+     */
+    baseUrl: string;
+
+    /**
+     * Adapter the scripted provider serves.
+     */
+    api: LlmApi;
+
+    /**
+     * Temporary working directory owned by the calling suite.
+     */
+    workDir: string;
+
+    /**
+     * Retry bounds under test.
+     */
+    retries: RunRetryBounds;
+}
+
+/**
+ * Run the shared terminal-verdict scenario against a scripted provider on either API.
+ *
+ * @param options - Provider endpoint, adapter and session controls.
+ * @returns The sealed outcome; provider ownership and recorded requests stay with the caller.
+ */
+export async function runScriptedSession(options: ScriptedSessionOptions) {
+    const runtime = await createTestPiRuntime({ api: options.api, baseUrl: options.baseUrl });
+    const terminal = buildTerminalTool<v.InferOutput<typeof ScriptedVerdictSchema>>({
+        name: TEST_TERMINAL_TOOL_NAME,
+        description: 'Submit the final verdict.',
+        schema: ScriptedVerdictSchema,
+    });
+    return runAgentSession({
+        runtime,
+        systemPrompt: 'You are a test agent. Finish by calling submit_verdict.',
+        userTask: 'Work the tools, then submit the verdict.',
+        nudge: 'Call submit_verdict now.',
+        terminal,
+        budgets: TEST_RUN_BUDGETS,
+        retries: options.retries,
+        reasoningEffort: TEST_REASONING_EFFORT,
+        workDir: options.workDir,
+    });
 }

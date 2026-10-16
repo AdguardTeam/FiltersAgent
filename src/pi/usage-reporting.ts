@@ -3,8 +3,8 @@ import type { Logger } from '../logger/logger';
 /**
  * The usage-reporting vocabulary every telemetry producer in `src/pi` shares: the model-attributed
  * completion usage, the per-segment report, the pi-to-app mapping (the ONE implementation of the
- * no-usage-chunk rule), and the delivery path every producer records through. Leaf module — it
- * knows nothing about sessions, pricing or the Usage Summary, so the session runner, the
+ * token-count reporting rule), and the delivery path every producer records through. Leaf module —
+ * it knows nothing about sessions, pricing or the Usage Summary, so the session runner, the
  * single-shot boundary and the collector can all depend on it without depending on each other.
  *
  * Recording is observational and must never break the observed call, but "non-fatal" is not
@@ -51,14 +51,13 @@ export type TelemetryObserver = (typeof TelemetryObserver)[keyof typeof Telemetr
 /**
  * Normalized usage of ONE provider completion, in this layer's own vocabulary — the single shape
  * every telemetry producer in `src/pi` reports, so a turn observation, a single-shot result and the
- * run's usage report can never disagree about what the same pi `Usage` said. There is exactly one
- * of these per provider reply, produced once by {@link toCompletionUsage}: the four shapes that
- * preceded it needed an `attribute`/`toCompletion` layer to convert between them, and the trace
- * ended up recording zeros as reported for a turn the usage report marked unreported.
+ * run's usage report agree on the same pi `Usage`. Each provider reply is normalized once by
+ * {@link toCompletionUsage}, so tracing and metering share the same token-count reporting
+ * decision.
  *
- * `reported` carries the no-usage-chunk signal explicitly and every count is zeroed when it is
- * false, because a completion whose telemetry never arrived is stated as such rather than rendered
- * as a free request.
+ * `reported` is true when any input, output, cache-read or cache-write count is nonzero. Every
+ * count, including reasoning, is zeroed when it is false; an all-zero completion is stated as
+ * unreported rather than rendered as a free request.
  */
 export interface CompletionUsage {
     /**
@@ -69,7 +68,7 @@ export interface CompletionUsage {
     model: string;
 
     /**
-     * Whether the provider's stream carried a usage chunk.
+     * Whether any input, output, cache-read or cache-write token count is nonzero.
      */
     reported: boolean;
 
@@ -118,22 +117,20 @@ export interface UsageReport {
 
 /**
  * Map one pi message usage onto the pi-free normalized shape, attributed to its model. The ONE
- * implementation of the no-usage-chunk rule and the only producer of a {@link CompletionUsage}: the
- * session path, the turn observation and the single-shot boundary all go through it, so they can
- * never drift apart.
+ * implementation of the token-count reporting rule and the only producer of a
+ * {@link CompletionUsage}: the session path, the turn observation and the single-shot boundary all
+ * go through it, so they can never drift apart.
  *
- * `reported` carries the exact no-usage-chunk signal: pi's pinned openai-completions adapter
- * initializes the streamed output message with a zeroed usage object that has NO `reasoning` key
- * and always sets `reasoning` (possibly 0) when a usage chunk arrives, so `usage.reasoning ===
- * undefined` ⟺ the provider sent no usage chunk.
+ * Both adapters report usage when any input, output, cache-read or cache-write count is nonzero.
+ * Pi's zeroed pre-chunk usage stays unreported. The Anthropic adapter sets `reasoning` only when it
+ * reports thinking tokens, so an absent reasoning field does not imply absent usage.
  *
  * @param model - The resolved call model id (the pricing attribution).
  * @param usage - The pi-reported usage object.
- * @returns The normalized completion usage; classified unreported and zeroed when no usage chunk
- *   arrived.
+ * @returns The normalized completion usage; classified unreported when every token count is zero.
  */
 export function toCompletionUsage(model: string, usage: Usage): CompletionUsage {
-    const reported = usage.reasoning !== undefined;
+    const reported = usage.input + usage.output + usage.cacheRead + usage.cacheWrite > 0;
     return {
         model,
         reported,

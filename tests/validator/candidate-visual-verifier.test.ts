@@ -1022,7 +1022,7 @@ describe('reviewCandidateVisually', () => {
             const result = await reviewCandidateVisually(options);
 
             expect(result.review.verdict).toBe('inconclusive');
-            expect(result.review.rationale).toContain('exceeds the per-request image byte budget');
+            expect(result.review.rationale).toContain('per-image byte budget');
             expect(JSON.stringify(chat.mock.calls)).not.toContain('before-tile-1');
         } finally {
             rmSync(root, { recursive: true, force: true });

@@ -64,19 +64,42 @@ describe('toCompletionUsage', () => {
         });
     });
 
-    it('marks a usage without the reasoning key as unreported with zeroed counts', () => {
-        const normalized = toCompletionUsage('quiet-model', ZEROED_PRE_CHUNK_USAGE);
+    it.each([undefined, 0, 7])(
+        'marks a usage with every token count zero as unreported',
+        (reasoning) => {
+            const normalized = toCompletionUsage('quiet-model', {
+                ...ZEROED_PRE_CHUNK_USAGE,
+                reasoning,
+            });
 
-        expect(normalized).toEqual({
-            model: 'quiet-model',
-            reported: false,
-            input: 0,
-            output: 0,
-            cacheRead: 0,
-            cacheWrite: 0,
-            reasoningTokens: 0,
-        });
-    });
+            expect(normalized).toEqual({
+                model: 'quiet-model',
+                reported: false,
+                input: 0,
+                output: 0,
+                cacheRead: 0,
+                cacheWrite: 0,
+                reasoningTokens: 0,
+            });
+        },
+    );
+
+    it.each(['input', 'output', 'cacheRead', 'cacheWrite'] as const)(
+        'reports a usage with token counts and no reasoning field, with zero reasoning tokens (%s)',
+        (tokenCount) => {
+            const usage = { ...ZEROED_PRE_CHUNK_USAGE, [tokenCount]: 7, totalTokens: 7 };
+
+            expect(toCompletionUsage('quiet-model', usage)).toEqual({
+                model: 'quiet-model',
+                reported: true,
+                input: usage.input,
+                output: usage.output,
+                cacheRead: usage.cacheRead,
+                cacheWrite: usage.cacheWrite,
+                reasoningTokens: 0,
+            });
+        },
+    );
 });
 
 describe('RunUsageCollector', () => {

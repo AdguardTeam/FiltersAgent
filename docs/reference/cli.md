@@ -58,7 +58,7 @@ pass `--no-comment` to keep them in the output directory only.
 | `--output-dir <path>` | Output directory; defaults to `./tmp/adguard-agent-runs/issue-<number>-<environment>` |
 | `--instruction <path>` | Run instruction file, relative to the checkout; defaults to `.github/filters-agent/AGENTS.md` when present |
 | `--lint-command <command>` | The filters repository's own lint command, run over each candidate rule |
-| `--model <name>` | Override the reasoning model for this run |
+| `--model <name>` | Override the reasoning model for this run; vision follows it when `LLM_VISION_MODEL` is unset |
 | `--routing-check` | Stop right after the agent locks its environment selection |
 | `--keep-temporary-files` | Keep the disposable checkouts for debugging |
 | `--verbose` | Debug-level logging on stderr |
@@ -82,20 +82,29 @@ any model, browser or checkout work starts.
 marked required have no default: a missing one fails the run with a
 `ConfigError` that names it.
 
+`anthropic-messages` uses adaptive thinking and targets Claude models that
+support it (Claude 5.x).
+
+On Anthropic, `LLM_REASONING_EFFORT=off` registers a non-reasoning entry and
+omits `thinking`; a model that thinks by default keeps thinking. With loop
+effort on, `LLM_SINGLE_SHOT_REASONING_EFFORT=off` sends
+`thinking: {type: "disabled"}` on reasoning-enabled entries. Claude Opus 5.5
+and Sonnet 5.5 reject this with HTTP 400; Haiku 5.5 accepts it.
+
 | Variable | Required | Default | Purpose |
 | --- | --- | --- | --- |
-| `LLM_BASE_URL` | Yes | — | OpenAI-compatible API base URL |
+| `LLM_BASE_URL` | Yes | — | OpenAI chat-completions or Anthropic Messages API base URL; for Anthropic use `https://api.anthropic.com` without `/v1` (a versioned suffix is rejected at startup) |
+| `LLM_API` | No | `openai-completions` | API for both model roles: `openai-completions` or `anthropic-messages` |
 | `LLM_API_KEY` | Yes | — | Provider API key; never written to run artifacts |
 | `LLM_MODEL` | Yes | — | Reasoning and tool-calling model |
-| `LLM_VISION_MODEL` | Yes | — | Model that reads screenshots; may equal `LLM_MODEL` |
+| `LLM_VISION_MODEL` | No | Effective reasoning model | Model that reads screenshots; follows `--model` when unset, so the effective reasoning model must accept images |
 | `LLM_CONTEXT_WINDOW_TOKENS` | Yes | — | Context window registered for both models |
 | `LLM_MAX_OUTPUT_TOKENS` | Yes | — | Completion cap of the reasoning model, sent on every loop request |
 | `LLM_VISION_MAX_OUTPUT_TOKENS` | When the vision model differs | `LLM_MAX_OUTPUT_TOKENS` | Completion cap of the vision model |
-| `LLM_REASONING_EFFORT` | No | `high` | `reasoning_effort` of loop requests: `off`, `minimal`, `low`, `medium` or `high` |
-| `LLM_SINGLE_SHOT_REASONING_EFFORT` | No | `low` | The same for single-shot calls: issue extraction and vision verdicts |
+| `LLM_REASONING_EFFORT` | No | `high` | Thinking effort of loop requests: `off`, `minimal`, `low`, `medium` or `high` |
+| `LLM_SINGLE_SHOT_REASONING_EFFORT` | No | `low` | Thinking effort of single-shot calls: issue extraction and vision verdicts |
 | `LLM_REQUEST_TIMEOUT_MS` | No | `300000` | Per-attempt stall deadline: time to the response headers, then the longest gap between streamed deltas (30000–300000) |
 | `LLM_REQUEST_MAX_ATTEMPTS` | No | `2` | Total attempts for transient LLM failures (1–3) |
-| `LLM_PROVIDER_ROUTING` | No | — | JSON routing preferences of an OpenRouter-compatible gateway, sent as the request's `provider` object |
 | `LLM_PRICING_FILE` | No | — | JSON price file runs are priced from; without it the cost is not computed ([format](../guides/benchmark.md#count-the-cost)) |
 | `GITHUB_TOKEN` | For GitHub reads and comments | — | GitHub token scoped to the repository operation |
 | `GITHUB_REPO_OWNER`, `GITHUB_REPO_NAME` | No | — | Repository identity, set together |

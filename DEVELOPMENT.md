@@ -45,7 +45,7 @@ the AdGuard CLI module and the action.
 | --- | --- | --- |
 | Node.js | 24 or newer (`engines.node` in `package.json`) | Runtime |
 | pnpm | 10.x (lockfile `lockfileVersion: '9.0'`) | The only supported package manager |
-| An LLM endpoint | Any OpenAI-compatible API | Powers the agent loop and the vision review |
+| An LLM endpoint | OpenAI chat-completions or Anthropic Messages API | Powers the agent loop and the vision review |
 | A GitHub token | Public read access | Reading issues; not needed for offline runs |
 | `gh`, `jq`, `perl` | Any recent | `scripts/copy-upstream-issue.sh` |
 | Docker | With BuildKit | Building the action image (`action.Dockerfile`) |
@@ -89,9 +89,13 @@ cp .env.example .env && chmod 600 .env
 `pnpm test:e2e` and `pnpm benchmark:case:add` load `.env` into the process
 environment with plain dotenv; variables already exported in the shell win.
 
-Every agent run needs an OpenAI-compatible provider named in full:
-`LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`, `LLM_VISION_MODEL` and the token
-limits. There is no default provider, and a missing variable fails the run
+Every agent run needs a provider speaking the OpenAI chat-completions or
+Anthropic Messages API: `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL` and the
+token limits. `LLM_API` defaults to `openai-completions`; set it to
+`anthropic-messages` for Anthropic, with `LLM_BASE_URL=https://api.anthropic.com`
+without `/v1`. `LLM_VISION_MODEL` is optional and follows the effective
+reasoning model, including `--model` overrides.
+There is no default provider, and a missing required variable fails the run
 with a `ConfigError` that names it. The
 [benchmark guide](docs/guides/benchmark.md#configure-the-provider) shows a
 complete `.env` and what each value must be.
@@ -422,9 +426,10 @@ You ran `pnpm start -- --help`. Use `pnpm start --help`, or
 ### `ConfigError: Invalid configuration` on startup
 
 A required environment variable is missing or malformed. Agent runs require
-`LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`, `LLM_VISION_MODEL` and the token
-limits; commands that read GitHub also require `GITHUB_TOKEN` and a repository
-identity. The error message names every missing or invalid variable.
+`LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL` and the token limits;
+`LLM_VISION_MODEL` follows the effective reasoning model, including overrides.
+Commands that read GitHub also require `GITHUB_TOKEN` and a repository identity.
+The error message names every missing or invalid variable.
 
 ### `repo` commands fail with "REPOSITORY_PATH is required"
 

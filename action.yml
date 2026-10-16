@@ -11,8 +11,8 @@ name: 'filters-agent'
 description: >-
     Analyzes a reported filtering issue or the open-issue backlog of this repository, verifies
     proposed rules in the AdGuard extension, and posts the report as an issue comment; run
-    artifacts are published by the workflow through the outputs below. The LLM inputs are
-    mandatory and come from repository secrets.
+    artifacts are published by the workflow through the outputs below. Configure the LLM
+    provider through the inputs below and pass its API key from a repository secret.
 
 inputs:
     repository:
@@ -101,7 +101,8 @@ inputs:
         required: false
     model:
         description: >-
-            Reasoning-model slug overriding the LLM runtime's configured model.
+            Reasoning-model slug overriding the configured model; vision follows it when
+            llmVisionModel is unset.
         required: false
     noComment:
         description: >-
@@ -111,9 +112,10 @@ inputs:
     force:
         description: >-
             'true' for a run a maintainer triggered, by label or by a manual dispatch: a
-            maintainer's comment, an assignee or an in-progress label on the issue no longer skips the
-            run or keeps the report silent. A closed issue, a fix referenced, an excluded label and a report already
-            posted for the issue's current text still do. The backlog mode ignores it.
+            maintainer's comment, an assignee or an in-progress label on the issue no longer
+            skips the run or keeps the report silent. A closed issue, a fix referenced, an
+            excluded label and a report already posted for the issue's current text still do.
+            The backlog mode ignores it.
         required: false
     screenshotsBranch:
         description: >-
@@ -134,14 +136,20 @@ inputs:
         required: false
     githubToken:
         description: >-
-            GitHub API token the run reads issues with; in practice mandatory in every run, since the
-            action only serves GitHub-read modes — a missing token fails the job named, even together
-            with noComment.
+            GitHub API token the run reads issues with; in practice mandatory in every run,
+            since the action only serves GitHub-read modes — a missing token fails the job named,
+            even together with noComment.
         required: false
     llmBaseUrl:
         description: >-
-            OpenAI-compatible API base URL of the LLM provider.
+            OpenAI chat-completions or Anthropic Messages API base URL; for Anthropic use
+            https://api.anthropic.com without /v1.
         required: true
+    llmApi:
+        description: >-
+            LLM API for both model roles: openai-completions or anthropic-messages; defaults to
+            openai-completions.
+        required: false
     llmApiKey:
         description: >-
             API key of the LLM provider; pass it from a repository secret.
@@ -152,8 +160,9 @@ inputs:
         required: true
     llmVisionModel:
         description: >-
-            Model slug used for vision steps that read screenshots.
-        required: true
+            Model slug used for screenshot steps; defaults to the effective reasoning model,
+            including the model override. When unset, that model must also accept images.
+        required: false
     llmContextWindowTokens:
         description: >-
             Context window of the reasoning model, in tokens, as your provider states it. No
@@ -168,32 +177,27 @@ inputs:
     llmVisionMaxOutputTokens:
         description: >-
             Completion cap sent with the vision model's requests, in tokens. Required when
-            llmVisionModel names a different model than llmModel; when both name one model it is
-            llmMaxOutputTokens.
+            llmVisionModel names a different model than llmModel; when llmVisionModel is unset or
+            both name one model it is llmMaxOutputTokens.
         required: false
     llmReasoningEffort:
         description: >-
             Reasoning effort of the investigation's requests: off, minimal, low, medium or high;
-            defaults to high. Set it to off for a model that does not reason, so no reasoning
-            parameter is sent.
+            defaults to high. On Anthropic, off omits thinking; a model that thinks by default
+            keeps thinking.
         required: false
     llmSingleShotReasoningEffort:
         description: >-
             Reasoning effort of the one-question calls (reading the issue, describing a
-            screenshot): off, minimal, low, medium or high; defaults to low.
+            screenshot): off, minimal, low, medium or high; defaults to low. On Anthropic with
+            loop effort on, off sends disabled thinking on reasoning-enabled entries. Claude
+            Opus 5.5 and Sonnet 5.5 reject it with 400; Haiku 5.5 accepts it.
         required: false
     llmRequestMaxAttempts:
         description: >-
             Total attempts per LLM request when the provider fails transiently (a 5xx, a timeout, a
             response cut off mid-stream), 1 to 3; defaults to 2. Raise it to 3 for a gateway that
             drops responses more than once in a row.
-        required: false
-    llmProviderRouting:
-        description: >-
-            JSON routing preferences for an OpenRouter-compatible gateway, sent as the `provider`
-            object on every request — for example {"ignore":["Together"]} to route around a faulting
-            upstream provider. Plain configuration, not a secret; leave it unset for a gateway that
-            does not understand the field.
         required: false
 
 outputs:

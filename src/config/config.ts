@@ -2,21 +2,20 @@ import * as v from 'valibot';
 import { EXTENSION_MANIFEST_VERSION_VALUES } from '../environment/extension-preparation';
 import type { GithubReadConfig } from '../github/fetch-issue';
 import { ConfigError } from './config-error';
+import { DEFAULT_LLM_API, LLM_API_VAR, LlmApiSchema, isLlmBaseUrlSupported } from './llm-api';
 import {
+    optionalEnvValue,
     REPOSITORY_PATH_VAR,
     requireRepositoryIdentity,
     type RepositoryIdentitySources,
     type RepositorySlug,
 } from './repository-identity';
-import { ProviderRoutingSchema } from './provider-routing';
 import { REASONING_EFFORT_VALUES, ReasoningEffort } from './reasoning-effort';
 
 export { ConfigError };
 
 /**
- * Environment variable naming the LLM provider's OpenAI-compatible base URL. The one place this
- * name is spelled; every other reader (the action's `llmBaseUrl` input binding included) imports it
- * instead of respelling it, so a rename here can never silently strand a caller.
+ * Provider API base URL variable, imported by the action's llmBaseUrl binding.
  */
 export const LLM_BASE_URL_VAR = 'LLM_BASE_URL';
 
@@ -31,16 +30,9 @@ export const LLM_API_KEY_VAR = 'LLM_API_KEY';
 export const LLM_MODEL_VAR = 'LLM_MODEL';
 
 /**
- * Environment variable naming the vision-model slug used for screenshot-reading steps.
+ * Vision-model slug for screenshot-reading steps, defaulting to the reasoning model when unset.
  */
 export const LLM_VISION_MODEL_VAR = 'LLM_VISION_MODEL';
-
-/**
- * Environment variable carrying the gateway routing preferences as one JSON document. The one place
- * this name is spelled; the action's `llmProviderRouting` input binding imports it instead of
- * respelling it.
- */
-export const LLM_PROVIDER_ROUTING_VAR = 'LLM_PROVIDER_ROUTING';
 
 /**
  * Environment variable carrying the reasoning model's context window in tokens. The one place this
@@ -79,6 +71,11 @@ export const LLM_SINGLE_SHOT_REASONING_EFFORT_VAR = 'LLM_SINGLE_SHOT_REASONING_E
 export const LLM_REQUEST_MAX_ATTEMPTS_VAR = 'LLM_REQUEST_MAX_ATTEMPTS';
 
 /**
+ * Environment variable carrying the per-request stall timeout in milliseconds.
+ */
+export const LLM_REQUEST_TIMEOUT_MS_VAR = 'LLM_REQUEST_TIMEOUT_MS';
+
+/**
  * Environment variable carrying the GitHub API token every GitHub-reading seam authenticates with,
  * report comments included. The one place this name is spelled; the action's `githubToken` input
  * binding imports it instead of respelling it.
@@ -86,16 +83,8 @@ export const LLM_REQUEST_MAX_ATTEMPTS_VAR = 'LLM_REQUEST_MAX_ATTEMPTS';
 export const GITHUB_TOKEN_VAR = 'GITHUB_TOKEN';
 
 /**
- * Total provider attempts per request when `LLM_REQUEST_MAX_ATTEMPTS` names none.
- *
- * Two — the initial attempt plus one retry — absorbs a single transient gateway failure without a
- * failing turn being paid for three times.
- *
- * This is the ONLY place the bound is defaulted. `requestMaxAttempts` is a required configuration
- * field, so every consumer derives from a value that is always present — `providerMaxRetries` in
- * `src/pi/llm-wiring` maps it onto pi's retry count for the loop sessions and the single-shot
- * clients alike. No layer downstream may reintroduce a fallback of its own: handing pi no bound at
- * all silently buys pi's own default of three.
+ * Two attempts absorb one transient failure. Defaulted only here; providerMaxRetries maps this
+ * required field for both call paths, which must not inherit pi's default of three attempts.
  */
 const DEFAULT_REQUEST_MAX_ATTEMPTS = 2;
 
@@ -122,8 +111,8 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 300_000;
  * `high` is the maintainer's call, and it is also the ceiling for the model this runtime registers:
  * that catalog entry is `reasoning: true` with no `thinkingLevelMap`, so pi's supported set is `off
  * | minimal | low | medium | high` and `clampThinkingLevel` would fold anything above `high` back
- * down to it. The vision model is registered `reasoning: false`, so pi sends nothing for it
- * whatever this says.
+ * down to it. The vision entry supports thinking when it shares the effective reasoning model; a
+ * separate vision model is registered without reasoning support.
  *
  * This is the ONLY place the loop level is defaulted. `reasoningEffort` is a required configuration
  * field, so its consumer — the loop session's `thinkingLevel` — reads a value that is always
@@ -173,30 +162,42 @@ function providerValueSchema(envVar: string) {
 }
 
 const CoreConfigSchema = v.object({
-    llm: v.object({
-        baseUrl: v.pipe(
-            providerValueSchema(LLM_BASE_URL_VAR),
-            v.url(`${LLM_BASE_URL_VAR} must be a URL`),
+    llm: v.pipe(
+        v.object({
+            baseUrl: v.pipe(
+                providerValueSchema(LLM_BASE_URL_VAR),
+                v.url(`${LLM_BASE_URL_VAR} must be a URL`),
+            ),
+            api: LlmApiSchema,
+            apiKey: providerValueSchema(LLM_API_KEY_VAR),
+            model: providerValueSchema(LLM_MODEL_VAR),
+            // Preserve absence so runtime model overrides can apply to both roles.
+            visionModel: v.optional(providerValueSchema(LLM_VISION_MODEL_VAR)),
+            requestTimeoutMs: v.pipe(
+                v.number(),
+                v.integer(),
+                v.minValue(30_000),
+                v.maxValue(300_000),
+            ),
+            requestMaxAttempts: v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(3)),
+            reasoningEffort: v.picklist(REASONING_EFFORT_VALUES),
+            singleShotReasoningEffort: v.picklist(REASONING_EFFORT_VALUES),
+            // The three model limits have no default: they belong to the model the deployment names,
+            // and a limit above the provider's own fails every request with HTTP 400. See
+            // `buildRawLlmLimits` for the one derived value.
+            contextWindowTokens: tokenLimitSchema(LLM_CONTEXT_WINDOW_TOKENS_VAR),
+            maxOutputTokens: tokenLimitSchema(LLM_MAX_OUTPUT_TOKENS_VAR),
+            visionMaxOutputTokens: tokenLimitSchema(LLM_VISION_MAX_OUTPUT_TOKENS_VAR),
+        }),
+        v.forward(
+            v.partialCheck(
+                [['api'], ['baseUrl']],
+                isLlmBaseUrlSupported,
+                `${LLM_BASE_URL_VAR}: drop /v1 from the anthropic-messages base URL`,
+            ),
+            ['baseUrl'],
         ),
-        apiKey: providerValueSchema(LLM_API_KEY_VAR),
-        model: providerValueSchema(LLM_MODEL_VAR),
-        visionModel: providerValueSchema(LLM_VISION_MODEL_VAR),
-        // Absent by default and absent on the wire: a routing document is an OpenAI-compatible
-        // GATEWAY feature (OpenRouter's `provider` request object), and a gateway that is not
-        // OpenRouter ignores or rejects the field, so only a deployment whose gateway understands
-        // it sets one. See `provider-routing.ts` for the document's shape.
-        providerRouting: v.optional(ProviderRoutingSchema),
-        requestTimeoutMs: v.pipe(v.number(), v.integer(), v.minValue(30_000), v.maxValue(300_000)),
-        requestMaxAttempts: v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(3)),
-        reasoningEffort: v.picklist(REASONING_EFFORT_VALUES),
-        singleShotReasoningEffort: v.picklist(REASONING_EFFORT_VALUES),
-        // The three model limits have no default: they belong to the model the deployment names,
-        // and a limit above the provider's own fails every request with HTTP 400. See
-        // `buildRawLlmLimits` for the one derived value.
-        contextWindowTokens: tokenLimitSchema(LLM_CONTEXT_WINDOW_TOKENS_VAR),
-        maxOutputTokens: tokenLimitSchema(LLM_MAX_OUTPUT_TOKENS_VAR),
-        visionMaxOutputTokens: tokenLimitSchema(LLM_VISION_MAX_OUTPUT_TOKENS_VAR),
-    }),
+    ),
     headless: v.boolean(),
     /**
      * Pass --no-sandbox to Chromium (only for CI/Docker; default false).
@@ -316,7 +317,8 @@ function parseOptionalNumber(value: string | undefined): number | undefined {
  */
 function buildRawLlmLimits(env: Record<string, string | undefined>): Record<string, unknown> {
     const maxOutputTokens = parseOptionalNumber(env[LLM_MAX_OUTPUT_TOKENS_VAR]);
-    const sharesModel = env[LLM_VISION_MODEL_VAR] === env[LLM_MODEL_VAR];
+    const visionModel = optionalEnvValue(env[LLM_VISION_MODEL_VAR]);
+    const sharesModel = visionModel === undefined || visionModel === env[LLM_MODEL_VAR];
     return {
         contextWindowTokens: parseOptionalNumber(env[LLM_CONTEXT_WINDOW_TOKENS_VAR]),
         maxOutputTokens,
@@ -335,16 +337,13 @@ function buildRawLlmLimits(env: Record<string, string | undefined>): Record<stri
 function buildRawCoreConfig(env: Record<string, string | undefined>): Record<string, unknown> {
     return {
         llm: {
-            baseUrl: env.LLM_BASE_URL,
-            apiKey: env.LLM_API_KEY,
-            model: env.LLM_MODEL,
-            visionModel: env.LLM_VISION_MODEL,
-            // Passed through raw, like the reasoning level below: the JSON document is parsed and
-            // validated by the schema, so a malformed document or a misspelled routing key fails
-            // the load naming `llm.providerRouting` instead of being quietly discarded.
-            providerRouting: env[LLM_PROVIDER_ROUTING_VAR],
+            baseUrl: env[LLM_BASE_URL_VAR],
+            api: env[LLM_API_VAR] ?? DEFAULT_LLM_API,
+            apiKey: env[LLM_API_KEY_VAR],
+            model: env[LLM_MODEL_VAR],
+            visionModel: optionalEnvValue(env[LLM_VISION_MODEL_VAR]),
             requestTimeoutMs:
-                parseOptionalNumber(env.LLM_REQUEST_TIMEOUT_MS) ?? DEFAULT_REQUEST_TIMEOUT_MS,
+                parseOptionalNumber(env[LLM_REQUEST_TIMEOUT_MS_VAR]) ?? DEFAULT_REQUEST_TIMEOUT_MS,
             requestMaxAttempts:
                 parseOptionalNumber(env[LLM_REQUEST_MAX_ATTEMPTS_VAR]) ??
                 DEFAULT_REQUEST_MAX_ATTEMPTS,

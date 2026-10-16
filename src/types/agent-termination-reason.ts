@@ -13,7 +13,8 @@ export const AgentTerminationReason = {
 
     /**
      * The provider deterministically rejected this exact request (invalid, unroutable, or
-     * oversized). The prompt is pinned by digest, so a retry meets the identical rejection.
+     * oversized) or refused its content. The prompt is pinned by digest, so a retry meets the
+     * identical rejection.
      */
     LlmRejected: 'llm_rejected',
 

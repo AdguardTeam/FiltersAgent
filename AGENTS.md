@@ -39,8 +39,9 @@ historical issues as a benchmark.
   pluggable blocker module (`adguard-cli/`) is generated from the sources and committed; the
   action, the local CLI and the benchmark plug it in by manifest.
 - **Performance Goals**: N/A — a run is bounded by `AGENT_INVESTIGATION_BUDGET_MS`.
-- **Constraints**: an OpenAI-compatible LLM endpoint configured in full; the CloakBrowser binary
-  must not be redistributed; the repository is mirrored publicly (see [Other](#other)).
+- **Constraints**: an LLM endpoint speaking the OpenAI chat-completions or the Anthropic Messages
+  API, configured in full; the CloakBrowser binary must not be redistributed; the repository is
+  mirrored publicly (see [Other](#other)).
 - **Scale/Scope**: one issue per run, or a repository's open-issue backlog.
 
 ## Project Structure
@@ -240,7 +241,7 @@ JSDoc comments use the multi-line format: `/**` on its own line, a `*` prefix on
  */
 export interface LLMConfig {
     /**
-     * The OpenAI-compatible API base URL.
+     * The LLM provider's API base URL.
      */
     baseUrl: string;
 }

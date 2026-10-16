@@ -168,11 +168,11 @@ mismatched ownership, manifest, or visibility state. There is no cleanup CLI.
 - `src/browser/page-state-probe.ts`, `src/browser/page-state-budget.ts` — the bounded
   `inspect_page_state` probe: sections are admitted round-robin against a byte ceiling so no
   section starves another. What it replaced is recorded in `REQUIREMENTS.md` §6.2.
-- `src/pi/` — `runtime.ts` (provider registration and model handles), `session-runner.ts`
-  (`runAgentSession`, the agent loop), `session-tools.ts` (tool adaptation, gate refusals, result
-  truncation), `terminal-tool.ts` (the one schema-validated tool a mode ends through; every other
-  seal is an infrastructure ending), `single-shot.ts` (metered one-off completions) and
-  `usage-collector.ts` (the run's Usage Summary).
+- `src/pi/` — `runtime.ts` (registers both model roles on the configured API and supplies their
+  handles), `session-runner.ts` (`runAgentSession`, the agent loop), `session-tools.ts` (tool
+  adaptation, gate refusals, result truncation), `terminal-tool.ts` (the schema-validated tool a
+  mode ends through; every other seal is an infrastructure ending), `single-shot.ts` (metered
+  one-off completions) and `usage-collector.ts` (the run's Usage Summary).
 - `src/session/` — `mode-session.ts` (render the three prompt documents, map configured bounds
   onto the pi runner, record turns and compactions into the trace, attach the usage summary),
   `registry-session-tools.ts` (adapt a `ToolRegistry` surface to a frozen pi session tool set) and

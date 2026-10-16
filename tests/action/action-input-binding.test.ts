@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { mapAgentRunSources } from '../../src/action/action-input-binding';
 import { ConfigError } from '../../src/config/config-error';
+import { LlmApi } from '../../src/config/llm-api';
 import { ReasoningEffort } from '../../src/config/reasoning-effort';
 import { AgentRunMode } from '../../src/entry/entry-inputs';
 import { resolveAgentRunInputs } from '../../src/entry/entry-inputs-resolution';
@@ -183,19 +184,28 @@ describe('mapAgentRunSources with the real entry resolver', () => {
         ).toEqual({ kind: AgentRunMode.Backlog, limit: 25 });
     });
 
-    it('carries the gateway routing input into the validated configuration, unset when blank', () => {
-        // Plain configuration, not a secret: a workflow steers its OpenRouter routing from the
-        // action inputs, and a faulting upstream provider is excluded by one JSON value. An empty
-        // input must stay unset all the way down, or a gateway that does not understand the
-        // `provider` field would be sent one on every request.
+    it('carries the LLM API input into the validated configuration, defaulted when blank', () => {
         const { inputs } = boundAndResolved(
-            runnerEnv({ INPUT_LLMPROVIDERROUTING: '{"ignore":["Together"]}' }),
+            runnerEnv({
+                INPUT_LLMAPI: LlmApi.AnthropicMessages,
+                INPUT_LLMBASEURL: 'https://api.anthropic.com',
+            }),
         );
-        expect(inputs.config.llm.providerRouting).toEqual({ ignore: ['Together'] });
+        expect(inputs.config.llm.api).toBe(LlmApi.AnthropicMessages);
+        expect(boundAndResolved(runnerEnv({ INPUT_LLMAPI: '  ' })).inputs.config.llm.api).toBe(
+            LlmApi.OpenAiCompletions,
+        );
+    });
 
-        const blank = boundAndResolved(runnerEnv({ INPUT_LLMPROVIDERROUTING: '   ' }));
-        expect(blank.envAdditions.LLM_PROVIDER_ROUTING).toBeUndefined();
-        expect(blank.inputs.config.llm.providerRouting).toBeUndefined();
+    it('leaves an omitted vision model for runtime resolution with the shared cap', () => {
+        const { inputs } = boundAndResolved(
+            runnerEnv({
+                INPUT_LLMVISIONMODEL: undefined,
+                INPUT_LLMVISIONMAXOUTPUTTOKENS: undefined,
+            }),
+        );
+        expect(inputs.config.llm.visionModel).toBeUndefined();
+        expect(inputs.config.llm.visionMaxOutputTokens).toBe(32_768);
     });
 
     it('carries the model limit inputs into the validated configuration', () => {
@@ -281,7 +291,7 @@ describe('mapAgentRunSources with the real entry resolver', () => {
         let failure: unknown;
         try {
             boundAndResolved(
-                runnerEnv({ INPUT_ISSUENUMBER: undefined, INPUT_LLMVISIONMODEL: undefined }),
+                runnerEnv({ INPUT_ISSUENUMBER: undefined, INPUT_LLMMODEL: undefined }),
             );
         } catch (error) {
             failure = error;
@@ -290,7 +300,7 @@ describe('mapAgentRunSources with the real entry resolver', () => {
         expect(failure).toBeInstanceOf(ConfigError);
         const message = (failure as Error).message;
         expect(message).toContain('Run mode is required');
-        expect(message).toContain('llm.visionModel');
+        expect(message).toContain('llm.model');
     });
 
     it('resolves with the token still traveling when noComment disables posting', () => {

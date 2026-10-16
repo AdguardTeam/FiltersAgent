@@ -12,6 +12,40 @@
  */
 
 /**
+ * The provider's own stop reason (`AssistantMessage.rawStopReason`) for a verdict on the request's
+ * content.
+ */
+export const ProviderRefusalStopReason = {
+    /**
+     * The provider refused the request's content.
+     */
+    Refusal: 'refusal',
+
+    /**
+     * The provider stopped because it classified the content as sensitive.
+     */
+    Sensitive: 'sensitive',
+
+    /**
+     * The provider's content filter rejected the request or response.
+     */
+    ContentFilter: 'content_filter',
+} as const;
+
+/**
+ * ProviderRefusalStopReason value.
+ */
+export type ProviderRefusalStopReason =
+    (typeof ProviderRefusalStopReason)[keyof typeof ProviderRefusalStopReason];
+
+/**
+ * Provider content verdicts that remain deterministic even without an HTTP error status.
+ */
+export const PROVIDER_REFUSAL_STOP_REASONS: ReadonlySet<string> = new Set(
+    Object.values(ProviderRefusalStopReason),
+);
+
+/**
  * How one provider completion ended, in this codebase's own vocabulary.
  *
  * The members pi also produces keep pi's spelling, so existing comparisons and already-persisted

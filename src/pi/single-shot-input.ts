@@ -15,8 +15,8 @@ import type { ImageContent, Message } from '@earendil-works/pi-ai';
  */
 
 /**
- * MIME types the image sniffer can classify; pi's openai-completions adapter sends them as
- * `image_url` data URIs.
+ * MIME types the image sniffer can classify. Pi sends base64 image content as OpenAI image_url data
+ * URIs or Anthropic image source blocks.
  */
 export const VisionImageMime = {
     /**
@@ -38,11 +38,10 @@ export type VisionImageMime = (typeof VisionImageMime)[keyof typeof VisionImageM
 /**
  * Largest image sent to the vision model inside one request.
  *
- * Measured against the provider gateway: a 9.5 MB request succeeds while 19 MB is refused with HTTP
- * 413, so the request ceiling is about 10 MB. base64 inflates image bytes by a third, and 6 MB
- * keeps one image plus prompt text safely below the ceiling.
+ * The cap measures raw image bytes before base64 encoding. Anthropic's per-image limit is 5 MB;
+ * applying it to both APIs keeps one shared cap below the gateway's roughly 10 MB request ceiling.
  */
-export const MAX_VISION_IMAGE_BYTES = 6 * 1024 * 1024;
+export const MAX_VISION_IMAGE_BYTES = 5 * 1024 * 1024;
 
 /**
  * Tallest full-page overview, as a multiple of its width, that a vision model can still read.
@@ -230,9 +229,8 @@ function sniffImageMime(bytes: Uint8Array): VisionImageMime {
 /**
  * Materialize one caller image input into a pi image content part, enforcing the byte cap.
  *
- * Pi's openai-completions adapter sends image parts as `image_url` data URIs and drops the OpenAI
- * `detail` hint, so no `'high'`/`'low'` hint is sent at all — an accepted loss, not a gap something
- * later fills.
+ * Pi maps base64 images to image_url data URIs on OpenAI or image source blocks on Anthropic.
+ * Neither path here sets a provider-specific detail hint.
  *
  * @param image - File path or in-memory bytes.
  * @returns The pi image content part.

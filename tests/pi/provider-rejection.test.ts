@@ -2,12 +2,12 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import * as v from 'valibot';
-import { type PiRuntime } from '../../src/pi/runtime';
-import { runAgentSession } from '../../src/pi/session-runner';
 import { SealKind } from '../../src/pi/seal-types';
-import { isDeterministicProviderMessage } from '../../src/pi/run-sealing';
-import { buildTerminalTool } from '../../src/pi/terminal-tool';
+import { ProviderRefusalStopReason } from '../../src/pi/stop-reason';
+import {
+    isDeterministicProviderMessage,
+    parseProviderFailureStatus,
+} from '../../src/pi/run-sealing';
 import {
     HermeticScenario,
     type HermeticProvider,
@@ -15,9 +15,8 @@ import {
     ScriptedReplyKind,
     startHermeticProvider,
 } from './hermetic-provider';
-import { TEST_REASONING_EFFORT, TEST_RUN_BUDGETS, createTestPiRuntime } from './test-runtime';
-
-const TERMINAL_TOOL_NAME = 'submit_verdict';
+import { runScriptedSession, TEST_TERMINAL_TOOL_NAME as TERMINAL_TOOL_NAME } from './test-runtime';
+import { LlmApi } from '../../src/config/llm-api';
 
 /**
  * The fault text a live campaign run was answered with at loop turn 51, verbatim: the gateway
@@ -33,9 +32,6 @@ const UPSTREAM_STREAM_FAULT_MESSAGE =
  * message — the HTTP response itself was 200 — so it must not be what makes the retry fire.
  */
 const UPSTREAM_STREAM_FAULT_CODE = 502;
-
-const VerdictSchema = v.object({ verdict: v.picklist(['ok', 'retry']), summary: v.string() });
-type Verdict = v.InferOutput<typeof VerdictSchema>;
 
 let workDir: string;
 let provider: HermeticProvider | undefined;
@@ -80,27 +76,24 @@ async function runScripted(
         script,
         scriptExhausted,
     });
-    const runtime: PiRuntime = await createTestPiRuntime({ baseUrl: provider.baseUrl });
-    const terminal = buildTerminalTool<Verdict>({
-        name: TERMINAL_TOOL_NAME,
-        description: 'Submit the final verdict.',
-        schema: VerdictSchema,
-    });
-    const outcome = await runAgentSession<Verdict>({
-        runtime,
-        systemPrompt: 'You are a test agent. Finish by calling submit_verdict.',
-        userTask: 'Work the tools, then submit the verdict.',
-        nudge: 'Call submit_verdict now.',
-        terminal,
-        budgets: TEST_RUN_BUDGETS,
-        retries,
-        reasoningEffort: TEST_REASONING_EFFORT,
+    const outcome = await runScriptedSession({
+        baseUrl: provider.baseUrl,
+        api: LlmApi.OpenAiCompletions,
+        retries: retries,
         workDir,
     });
     return { outcome, requests: provider.requests };
 }
 
 describe('isDeterministicProviderMessage', () => {
+    it('reads the leading status with or without a colon', () => {
+        expect(isDeterministicProviderMessage('400: {...}')).toBe(true);
+        expect(isDeterministicProviderMessage('400 {...}')).toBe(true);
+        expect(isDeterministicProviderMessage('404 status code (no body)')).toBe(true);
+        expect(isDeterministicProviderMessage('503 {...}')).toBe(false);
+        expect(parseProviderFailureStatus('413 too large')).toBe(413);
+    });
+
     it('detects deterministic rejections by a leading status token', () => {
         expect(isDeterministicProviderMessage('400: Invalid request')).toBe(true);
         expect(isDeterministicProviderMessage('404: unknown model')).toBe(true);
@@ -234,12 +227,15 @@ describe('transient gateway failures', () => {
         expect(requests).toHaveLength(2);
     });
 
-    it('does not retry a content_filter finish reason', async () => {
+    it('seals a content_filter finish reason as a deterministic rejection without a retry', async () => {
         // A verdict on the request's content is deterministic: the same request meets the same
         // verdict, so the bare-reason pattern must not sweep it in.
         const { outcome, requests } = await runScripted(
             [
-                { kind: ScriptedReplyKind.FinishReason, reason: 'content_filter' },
+                {
+                    kind: ScriptedReplyKind.FinishReason,
+                    reason: ProviderRefusalStopReason.ContentFilter,
+                },
                 {
                     kind: ScriptedReplyKind.ToolCall,
                     toolName: TERMINAL_TOOL_NAME,
@@ -250,6 +246,7 @@ describe('transient gateway failures', () => {
         );
 
         expect(outcome.kind).toBe(SealKind.ProviderFailure);
+        expect(outcome).toMatchObject({ deterministic: true });
         expect(requests).toHaveLength(1);
     });
 

@@ -60,13 +60,12 @@ export interface RunBudgets {
      * time. It is enforced in two halves, because neither half covers a whole request on its own:
      *
      * - Up to the response headers by pi's `retry.provider.timeoutMs` setting, which becomes the
-     *   OpenAI SDK's `timeout`. The SDK arms it around `fetch` and clears it in a `finally` the
-     *   moment the response resolves — that is, when the headers arrive — so a provider that never
-     *   answers fails here, as a timeout error pi's auto-retry treats as transient.
+     *   selected provider SDK's request timeout on OpenAI or Anthropic. This bounds waiting for
+     *   response headers, so a provider that never answers fails here, as a timeout error pi's
+     *   auto-retry treats as transient.
      * - From there to the end of the assistant message by the runner's own per-request guard, which
-     *   restarts on every streamed delta. Nothing in pi bounds the streamed body for
-     *   openai-completions (pi's undici dispatcher with body timeouts is installed only by its own
-     *   CLI entry points), so without this guard a provider that opened a stream and stopped
+     *   restarts on every streamed delta on either API. It supplies the same inactivity bound
+     *   regardless of the provider SDK's streaming behavior. Without it a provider that stopped
      *   producing left one turn — and therefore the run — unbounded. The guard aborts the session
      *   and the run seals `budget-exceeded` with `GuardCause.RequestDeadline`.
      *

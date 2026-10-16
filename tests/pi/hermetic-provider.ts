@@ -74,6 +74,11 @@ export interface HermeticUsageSpec {
      * `prompt_tokens_details.cached_tokens`. Omitted when absent.
      */
     cachedTokens?: number;
+
+    /**
+     * Prompt tokens written to the cache, separately metered from uncached input.
+     */
+    cacheWriteTokens?: number;
 }
 
 /**
@@ -110,16 +115,8 @@ export const ScriptedReplyKind = {
     BareStatus: 'bare-status',
 
     /**
-     * HTTP 200 with SSE headers, then ONE in-stream error chunk instead of a completion — what an
-     * OpenAI-compatible gateway sends when it accepted the request, started answering, and then its
-     * own upstream connection broke.
-     *
-     * A distinct kind because the failure carries no HTTP status at all: the response was 200, and
-     * the OpenAI SDK's stream parser throws `APIError(undefined, data.error, ...)` on a chunk whose
-     * payload has an `error` key, which composes to the chunk's `message` and nothing else (no
-     * status is known, so pi-ai's `formatProviderError` returns the SDK message unchanged). That is
-     * the only reply shape that can show what prose alone decides — an `Error` or `BareStatus`
-     * reply always puts a status in front of the message.
+     * HTTP 200 followed by an in-stream error, represented by the selected provider's SSE wire. The
+     * HTTP status stays successful, so classification must read the error event.
      */
     StreamFault: 'stream-fault',
 
@@ -255,17 +252,20 @@ export type ScriptedReply =
           kind: typeof ScriptedReplyKind.StreamFault;
 
           /**
-           * Fault text carried by the chunk's `error.message`; it becomes the whole composed
-           * provider message, so it is everything a retry classification has to work with.
+           * Fault text in error.message; the OpenAI adapter exposes it as the provider message.
            */
           message: string;
 
           /**
-           * Upstream code carried by the chunk's `error.code`, the way a real gateway relays one.
-           * It reaches the wire but NOT the composed message — the response's own status was 200 —
-           * which is exactly why this shape defeats status-based classification.
+           * OpenAI in-stream error.code; Anthropic maps this status to its error type. Neither
+           * changes the HTTP 200 status, so retry classification must read the stream error.
            */
           code: number;
+
+          /**
+           * Usage observed before the stream fault, null for zero counts on Anthropic.
+           */
+          usage?: HermeticUsageSpec | null;
       }
     | {
           /**
@@ -446,13 +446,6 @@ export interface RecordedProviderRequest {
      * derives it from the registered catalog entry, clamped to the remaining context window.
      */
     maxCompletionTokens: number | null;
-
-    /**
-     * `provider` from the request body; `null` when the request carried none. Pi forwards the
-     * registered catalog entry's `compat.openRouterRouting` verbatim into this field, so it is the
-     * only wire evidence that a deployment's gateway routing preference reached a request.
-     */
-    provider: Record<string, unknown> | null;
 }
 
 /**
@@ -481,7 +474,7 @@ export interface HermeticProvider {
  * @param request - The incoming request.
  * @returns The raw body text.
  */
-function readBody(request: IncomingMessage): Promise<string> {
+export function readBody(request: IncomingMessage): Promise<string> {
     return new Promise((resolve) => {
         // Decode once, after the last chunk: a multi-byte UTF-8 character can straddle a chunk
         // boundary, and decoding each chunk on its own turns it into replacement characters.
@@ -528,9 +521,18 @@ function toWireUsage(spec: HermeticUsageSpec): Record<string, unknown> {
         prompt_tokens: spec.promptTokens,
         completion_tokens: spec.completionTokens,
         total_tokens: spec.promptTokens + spec.completionTokens,
-        ...(spec.cachedTokens === undefined
+        ...(spec.cachedTokens === undefined && spec.cacheWriteTokens === undefined
             ? {}
-            : { prompt_tokens_details: { cached_tokens: spec.cachedTokens } }),
+            : {
+                  prompt_tokens_details: {
+                      ...(spec.cachedTokens === undefined
+                          ? {}
+                          : { cached_tokens: spec.cachedTokens }),
+                      ...(spec.cacheWriteTokens === undefined
+                          ? {}
+                          : { cache_write_tokens: spec.cacheWriteTokens }),
+                  },
+              }),
     };
 }
 
@@ -702,10 +704,6 @@ export async function startHermeticProvider(
                 maxCompletionTokens:
                     typeof body.max_completion_tokens === 'number'
                         ? body.max_completion_tokens
-                        : null,
-                provider:
-                    typeof body.provider === 'object' && body.provider !== null
-                        ? (body.provider as Record<string, unknown>)
                         : null,
             });
             const model =

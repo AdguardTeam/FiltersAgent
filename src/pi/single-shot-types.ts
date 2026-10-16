@@ -65,8 +65,8 @@ export interface SingleShotParsed<T> {
     value: T;
 
     /**
-     * Usage of every attempt, in order (a repaired call prices both attempts). One entry for the
-     * text path, which makes exactly one attempt.
+     * Usage of every observed completion attempt, in order, including schema repair and stream
+     * retries on both the structured and text paths.
      */
     usages: CompletionUsage[];
 
@@ -167,8 +167,9 @@ export interface SingleShotCallOptions {
     temperature?: number;
 
     /**
-     * Optional output-token cap. Uncapped by default: reasoning shares the completion budget, and a
-     * cap that reasoning exhausts truncates the JSON while recording success.
+     * Optional output-token cap for the configured API. Pi uses the registered model's maxTokens
+     * when neither the call nor the client overrides it, clamped to remaining context. Thinking and
+     * the answer share this cap.
      */
     maxTokens?: number;
 
@@ -176,9 +177,8 @@ export interface SingleShotCallOptions {
      * Per-request deadline in milliseconds (mapped from `llm.requestTimeoutMs`), enforced in the
      * two halves neither of which covers a whole request alone:
      *
-     * - Up to the response headers as the OpenAI SDK's own `timeout`, which the SDK arms around
-     *   `fetch` and clears the moment the response resolves, so a provider that never answers fails
-     *   there.
+     * - Up to the response headers through the selected OpenAI or Anthropic SDK's request timeout.
+     *   This does not guarantee an inactivity bound over its streamed response.
      * - From there to the end of the assistant message as an INACTIVITY deadline over the streamed
      *   response, armed on the stream's first event and re-armed on every event after it
      *   (`single-shot-completion.ts`). It bounds the GAP between events, never the response's total
@@ -202,10 +202,10 @@ export interface SingleShotCallOptions {
     maxRetries?: number;
 
     /**
-     * Reasoning effort for this call, overriding the bound client's default (mapped from
-     * `llm.singleShotReasoningEffort` at the wiring sites). `off` — and an absent value — sends no
-     * reasoning parameter. It reaches the wire only for a model registered `reasoning: true`, so it
-     * is inert on a client bound to the vision model and live on one bound to a reasoning model.
+     * Reasoning effort for this call, overriding the bound client's default. Active effort applies
+     * to entries registered reasoning: true, including shared-model vision. On Anthropic, off sends
+     * disabled thinking for those entries, which some models reject. Other entries omit thinking
+     * and leave the model's own default in effect.
      */
     reasoningEffort?: ReasoningEffort;
 
@@ -267,10 +267,9 @@ export interface SingleShotClient {
  */
 export interface SingleShotClientDefaults {
     /**
-     * Completion cap put on the wire (`max_completion_tokens`) for every call of this client unless
-     * a call passes its own. Without it a single-shot request carries no cap at all and the
-     * provider applies its own default, which a reasoning model's thinking exhausts before the
-     * answer, so a vision verdict can end `length` with nothing to show.
+     * Completion cap for the configured API, used unless a call passes its own. When neither
+     * supplies a cap, streamSimple uses the registered model's maxTokens. Pi clamps the cap to the
+     * remaining context window; thinking and the final answer share that output budget.
      */
     maxTokens?: number;
 

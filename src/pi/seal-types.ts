@@ -152,12 +152,12 @@ export interface ProviderFailureSealed {
     message: string;
 
     /**
-     * Whether the provider failure is a deterministic rejection of this exact request (pi's message
-     * starts with a `DETERMINISTIC_REJECTION_STATUSES` status). Optional on purpose: the sealing
-     * seam always records a boolean, while `undefined` — carried by construction sites that do not
-     * care — means transient, the same conservative default as the harvest fallback. Only
-     * `deterministic === true` selects `LlmRejected` downstream; absent or `false` means transient,
-     * like every non-matching message.
+     * Whether the provider rejected this exact request by a deterministic HTTP status or a
+     * content-refusal stop reason. Optional on purpose: the sealing seam always records a boolean,
+     * while `undefined` — carried by construction sites that do not care — means transient, the
+     * same conservative default as the harvest fallback. Only `deterministic === true` selects
+     * `LlmRejected` downstream; absent or `false` means transient, like every non-matching
+     * message.
      */
     deterministic?: boolean;
 

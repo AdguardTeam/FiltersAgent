@@ -12,6 +12,7 @@ import {
 } from '../../src/orchestrator/preparation-session';
 import { PREPARATION_WRITE_MAX_BYTES } from '../../src/orchestrator/preparation-tools';
 import type { LlmConfig } from '../../src/config/config';
+import { LlmApi } from '../../src/config/llm-api';
 import { ReasoningEffort } from '../../src/config/reasoning-effort';
 import type { HermeticProvider, ScriptedReply } from '../pi/hermetic-provider';
 import {
@@ -69,6 +70,7 @@ function finishPreparation(payload: Record<string, unknown>): ScriptedReply {
  */
 function preparationLlm(): LlmConfig {
     return {
+        api: LlmApi.OpenAiCompletions,
         baseUrl: 'https://provider.test',
         apiKey: TEST_API_KEY,
         model: REASONING_MODEL,

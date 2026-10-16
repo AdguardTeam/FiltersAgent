@@ -40,7 +40,7 @@ import {
  * watches — but a swallowed failure must still leave a trace: every failure is logged with its
  * observer context through the injected logger. It does NOT change what the turn reports: a
  * trace-recording failure is not a usage failure, the provider's counts are in hand either way, and
- * `usageCompleteness: partial` means one thing only — the provider sent no usage chunk.
+ * `usageCompleteness: partial` means some completions have all four token counts zero.
  */
 
 /**
@@ -157,8 +157,8 @@ function toTurnObservation(
  * diagnostics.
  *
  * A failing observer changes nothing about what is reported: the provider's counts are already in
- * hand, and reporting the turn as unreported would say the provider sent no usage chunk — the one
- * thing `usageCompleteness` means — because a trace recorder threw. The failure is logged instead.
+ * hand. A trace-recorder exception must not mark a completion with nonzero token counts as
+ * unreported. The observer failure is logged instead.
  *
  * @param message - The assistant message pi just produced.
  * @param index - Zero-based turn index within the run.
@@ -187,6 +187,7 @@ function observeTurnEnd(
             {
                 turnIndex: observation.index,
                 stopReason: observation.stopReason,
+                rawStopReason: message.rawStopReason,
                 errorMessage: observation.errorMessage,
                 ...(observation.errorMessage === undefined
                     ? {}

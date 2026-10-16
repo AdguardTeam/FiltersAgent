@@ -67,13 +67,17 @@ jobs:
                   # Mandatory in every run: the action only serves GitHub-read modes, and the report
                   # comment posts through this token (the issues: write permission above).
                   githubToken: ${{ github.token }}
-                  # Only the API key is a secret; the endpoint and the two model slugs below are
-                  # plain values in this file. Replace all three with your own provider's — shown
-                  # here in the shape an OpenRouter-compatible endpoint takes.
+                  # Only the API key is a secret; the endpoint and model slugs are plain values.
+                  # Replace them with your provider's — shown here for an OpenRouter-compatible
+                  # endpoint. For Anthropic use https://api.anthropic.com without /v1 and set
+                  # llmApi: anthropic-messages.
+                  # llmApi: openai-completions
                   llmBaseUrl: https://openrouter.ai/api/v1
                   llmApiKey: ${{ secrets.FILTERS_AGENT_LLM_API_KEY }}
                   llmModel: <reasoning model slug>
-                  llmVisionModel: <vision model slug>
+                  # Optional: defaults to the effective reasoning model, including the model
+                  # override. When unset, that model must also accept screenshot images.
+                  # llmVisionModel: <vision model slug>
                   # Required: the reasoning model's context window and completion cap, from your
                   # provider's model page. A limit above the provider's own fails every request, so
                   # there are no defaults; a run without them fails before it spends anything.
@@ -81,18 +85,15 @@ jobs:
                   llmMaxOutputTokens: '<completion cap in tokens>'
                   # Required when the vision model differs from the reasoning model: its own
                   # completion cap. A gateway that routes by the requested cap finds no endpoint
-                  # for a model whose own limit is lower. Remove it when both slugs name one model.
-                  llmVisionMaxOutputTokens: '<vision completion cap in tokens>'
+                  # for a model whose own limit is lower. Leave it unset when llmVisionModel is
+                  # unset or both slugs name one model.
+                  # llmVisionMaxOutputTokens: '<vision completion cap in tokens>'
                   # Optional: 'off' for a reasoning model slug that does not reason, so no
                   # reasoning parameter is sent; defaults to 'high'.
                   # llmReasoningEffort: 'off'
                   # Optional: total attempts per LLM request (1-3, default 2). Raise it when your
                   # gateway drops responses mid-stream more than once in a row.
                   # llmRequestMaxAttempts: '3'
-                  # Optional plain config, not a secret: routing preferences an
-                  # OpenRouter-compatible gateway takes as the request's provider object, to route
-                  # around an upstream provider that is faulting.
-                  # llmProviderRouting: '{"ignore":["Together"]}'
                   # Optional: which blockers verify the rule. Unset runs the browser extension alone;
                   # a blocker module adds its own executor (github-action.md, "Plug in another
                   # blocker"). Its secrets go in this step's env.

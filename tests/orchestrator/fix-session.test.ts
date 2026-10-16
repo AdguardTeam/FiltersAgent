@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { createToolRegistry } from '../../src/agent/tool-factory';
 import type { LlmConfig } from '../../src/config/config';
+import { LlmApi } from '../../src/config/llm-api';
 import { ReasoningEffort } from '../../src/config/reasoning-effort';
 import { GuidanceDocumentOrigin, GuidanceDocumentRole } from '../../src/knowledge/guidance-source';
 import type { LoadedInstruction } from '../../src/knowledge/instruction-loader';
@@ -274,6 +275,7 @@ async function runSession(script: ScriptedReply[], options: FixSessionOptions) {
  */
 function sessionLlm(overrides: Partial<LlmConfig> = {}): LlmConfig {
     return {
+        api: LlmApi.OpenAiCompletions,
         baseUrl: 'https://provider.test',
         apiKey: TEST_API_KEY,
         model: REASONING_MODEL,

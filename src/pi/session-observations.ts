@@ -50,10 +50,10 @@ export interface SessionTurnObservation {
 
     /**
      * Normalized usage of the turn — the SAME object the run's usage report counts for it, so a
-     * turn the provider sent no usage chunk for reads as `reported: false` in the trace instead of
-     * as four zeros indistinguishable from a free request. Its `model` is the pricing attribution
-     * (the id the run asked for); the observation's own `model` is the gateway's echoed build
-     * name.
+     * turn with all four provider token counts zero reads as reported: false in the trace instead
+     * of as four zeros indistinguishable from a free request. Its `model` is the pricing
+     * attribution (the id the run asked for); the observation's own `model` is the gateway's echoed
+     * build name.
      */
     usage: CompletionUsage;
 }

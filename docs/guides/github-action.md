@@ -20,8 +20,8 @@ When it runs against an issue, `filters-agent`:
 
 ## Requirements
 
-- An OpenAI-compatible LLM endpoint reachable from GitHub-hosted runners. The action calls it
-  directly; nothing is proxied or hosted for you.
+- An LLM endpoint speaking the OpenAI chat-completions or Anthropic Messages API, reachable
+  from GitHub-hosted runners. The action calls it directly; nothing is proxied or hosted for you.
 - GitHub Issues enabled on your repository — that's where reports come from, and where the action
   posts its findings.
 
@@ -30,9 +30,13 @@ When it runs against an issue, `filters-agent`:
 1. Copy [`docs/examples/filters-agent-workflow.yml`](../examples/filters-agent-workflow.yml)
    into your repository's `.github/workflows/`.
 2. Add your LLM provider's API key as the repository secret `FILTERS_AGENT_LLM_API_KEY`. The
-   endpoint URL, the two model names and the reasoning model's limits are not secret — edit them
-   directly in the workflow file you just copied, which ships with an OpenRouter-shaped
-   placeholder. Take the limits from your provider's model page: `llmContextWindowTokens` and
+   endpoint URL, the reasoning model, the optional vision model and the reasoning model's limits
+   are not secret — edit them directly in the workflow file you just copied, which ships with an
+   OpenRouter-shaped placeholder. Set `llmApi: anthropic-messages` for Anthropic and use
+   `llmBaseUrl: https://api.anthropic.com` without `/v1`; otherwise `llmApi` defaults to
+   `openai-completions`. Without `llmVisionModel`, vision uses the effective reasoning model,
+   including the `model` override, which must then accept images. Take the limits from your
+   provider's model page: `llmContextWindowTokens` and
    `llmMaxOutputTokens` for the reasoning model, and `llmVisionMaxOutputTokens` when the vision
    model is a different one. A limit above the provider's own fails every request, so the action
    has no defaults for them, and a run without them fails before it spends anything. For a model

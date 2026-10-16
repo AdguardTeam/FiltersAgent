@@ -70,10 +70,10 @@ const BUDGET_TERMINATION_REASONS: Record<BudgetExceededSealed['budget'], AgentTe
  * Map a seal that produced no accepted payload onto the typed reason the run ended for.
  *
  * A provider failure forks on `deterministic`: a rejection of this exact request (the pinned
- * 400/404/413/422 statuses) can never succeed on a resend, so it seals `llm_rejected` — which
- * `fix-core` reads back as `InfrastructureFailureReason.LlmRejected` and a retry scheduler refuses
- * to pay for again. Only a transient failure (`false` or absent, the conservative default) seals
- * `llm_error` and stays eligible for another attempt.
+ * 400/404/413/422 statuses or a content refusal) seals llm_rejected — which `fix-core` reads back
+ * as `InfrastructureFailureReason.LlmRejected` and a retry scheduler refuses to pay for again. Only
+ * a transient failure (`false` or absent, the conservative default) seals `llm_error` and stays
+ * eligible for another attempt.
  *
  * Every pi-driven mode ends a run through this one mapping — the trace outcome below and the fix
  * session's host-fallback seal alike — so the fork can never be decided two different ways.
@@ -161,7 +161,7 @@ export interface SealTraceDetails {
     providerMessage?: string;
 
     /**
-     * Whether the provider rejected this exact request deterministically (provider-failure seals).
+     * Whether an HTTP status or content-refusal stop reason rejected this exact request.
      */
     deterministic?: boolean;
 
@@ -384,8 +384,8 @@ export function recordSessionTurn(recorder: TraceRecorder): TurnObserver {
                 ...(turn.errorMessage === undefined ? {} : { errorMessage: turn.errorMessage }),
                 content: turn.text,
                 toolCalls: turn.toolCallNames,
-                // Absent when the provider sent no usage chunk, rather than four zeros a reader
-                // would price as a free request.
+                // Absent when all four provider token counts are zero, rather than values a
+                // reader would price as a reported free request.
                 ...(turn.usage.reported
                     ? {
                           promptTokens: turn.usage.input,

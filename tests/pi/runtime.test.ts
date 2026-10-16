@@ -1,13 +1,18 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { AssistantMessage } from '@earendil-works/pi-ai';
+import { loadCoreConfig } from '../../src/config/config';
+import { createPiRuntimeFromConfig } from '../../src/pi/llm-wiring';
+import { TEST_PROVIDER_ENV } from '../config/test-core-config';
+import { LlmApi } from '../../src/config/llm-api';
 import { ReasoningEffort } from '../../src/config/reasoning-effort';
+import { createRunUsageCollector, meterSingleShotClient } from '../../src/pi/usage-collector';
 import { createSingleShotClient } from '../../src/pi/single-shot';
 import { SingleShotResultKind } from '../../src/pi/single-shot-types';
 import { TurnStopReason } from '../../src/pi/stop-reason';
 import {
     createPiRuntime,
     registerAdditionalTextModel,
-    OPENAI_COMPATIBLE_PROVIDER_ID,
+    REASONING_PROVIDER_ID,
     type PiRuntime,
 } from '../../src/pi/runtime';
 import {
@@ -40,6 +45,7 @@ const PNG_1PX =
 
 function testConfig(baseUrl: string) {
     return {
+        api: LlmApi.OpenAiCompletions,
         baseUrl,
         apiKey: TEST_API_KEY,
         model: REASONING_MODEL,
@@ -61,7 +67,7 @@ async function completeAfterPriorTurn(runtime: PiRuntime): Promise<void> {
         role: 'assistant',
         content: [{ type: 'text', text: 'earlier answer' }],
         api: 'openai-completions',
-        provider: OPENAI_COMPATIBLE_PROVIDER_ID,
+        provider: REASONING_PROVIDER_ID,
         model: REASONING_MODEL,
         usage: {
             input: 1,
@@ -133,6 +139,52 @@ afterEach(async () => {
 });
 
 describe('pi runtime against the hermetic provider', () => {
+    it('meters and prices cache writes reported by an OpenAI-compatible gateway', async () => {
+        const gateway = await startHermeticProvider({
+            scenario: HermeticScenario.Text,
+            usage: {
+                promptTokens: 1000,
+                completionTokens: 50,
+                cachedTokens: 600,
+                cacheWriteTokens: 300,
+            },
+        });
+        try {
+            const runtime = await createPiRuntime(testConfig(gateway.baseUrl));
+            const collector = createRunUsageCollector({
+                rates: {
+                    [REASONING_MODEL]: {
+                        inputUsdPerMillionTokens: 1,
+                        outputUsdPerMillionTokens: 2,
+                        cachedInputUsdPerMillionTokens: 0.1,
+                        cacheWriteUsdPerMillionTokens: 1.25,
+                    },
+                },
+            });
+            const client = meterSingleShotClient(
+                createSingleShotClient(runtime, runtime.reasoningModel),
+                collector,
+            );
+            const result = await client.text({
+                messages: [{ role: 'user', text: 'Return a verdict.' }],
+            });
+            expect(result.kind).toBe(SingleShotResultKind.Parsed);
+            const summary = collector.summary();
+            expect(summary.tokens).toEqual({
+                input: 100,
+                output: 50,
+                cacheRead: 600,
+                cacheWrite: 300,
+                reasoningTokens: 0,
+            });
+            expect(summary.completions).toBe(1);
+            expect(summary.unreportedCompletions).toBe(0);
+            expect(summary.costUsd).toBeCloseTo(0.000635, 10);
+        } finally {
+            await gateway.close();
+        }
+    });
+
     it('drives a completion round-trip: streamed text, usage, Bearer auth', async () => {
         provider = await startHermeticProvider({ scenario: HermeticScenario.Text, text: 'pong' });
         const runtime = await createPiRuntime(testConfig(provider.baseUrl));
@@ -154,6 +206,66 @@ describe('pi runtime against the hermetic provider', () => {
         expect(request.model).toBe(REASONING_MODEL);
         expect(request.stream).toBe(true);
     });
+
+    it.each([
+        {
+            visionModel: undefined,
+            visionCap: undefined,
+            expectedModel: 'override-model',
+            expectedCap: Number(TEST_PROVIDER_ENV.LLM_MAX_OUTPUT_TOKENS),
+        },
+        {
+            visionModel: '',
+            visionCap: undefined,
+            expectedModel: 'override-model',
+            expectedCap: Number(TEST_PROVIDER_ENV.LLM_MAX_OUTPUT_TOKENS),
+        },
+        {
+            visionModel: REASONING_MODEL,
+            visionCap: '4096',
+            expectedModel: REASONING_MODEL,
+            expectedCap: 4096,
+        },
+    ])(
+        'resolves vision against the reasoning override ($visionModel)',
+        async ({ visionModel, visionCap, expectedModel, expectedCap }) => {
+            provider = await startHermeticProvider({
+                scenario: HermeticScenario.Text,
+                text: 'an image arrived',
+            });
+            const config = loadCoreConfig({
+                ...TEST_PROVIDER_ENV,
+                LLM_BASE_URL: provider.baseUrl,
+                LLM_MODEL: REASONING_MODEL,
+                LLM_VISION_MODEL: visionModel,
+                LLM_VISION_MAX_OUTPUT_TOKENS: visionCap,
+            });
+            const runtime = await createPiRuntimeFromConfig(config.llm, 'override-model');
+            const result = await createSingleShotClient(runtime, runtime.visionModel).text({
+                messages: [
+                    {
+                        role: 'user',
+                        text: 'Describe the image.',
+                        images: [{ bytes: Buffer.from(PNG_1PX, 'base64') }],
+                    },
+                ],
+            });
+            expect(result.kind).toBe(SingleShotResultKind.Parsed);
+            expect(provider.requests[0]!.model).toBe(expectedModel);
+            expect(provider.requests[0]!.maxCompletionTokens).toBe(expectedCap);
+            expect(JSON.stringify(provider.requests[0]!.messages.at(-1))).toContain(
+                `data:image/png;base64,${PNG_1PX}`,
+            );
+            const reasoning = await createSingleShotClient(runtime, runtime.reasoningModel).text({
+                messages: [{ role: 'user', text: 'Review this.' }],
+            });
+            expect(reasoning.kind).toBe(SingleShotResultKind.Parsed);
+            expect(provider.requests[1]!.model).toBe('override-model');
+            expect(provider.requests[1]!.maxCompletionTokens).toBe(
+                Number(TEST_PROVIDER_ENV.LLM_MAX_OUTPUT_TOKENS),
+            );
+        },
+    );
 
     it('attaches session-affinity headers when a session id is passed', async () => {
         provider = await startHermeticProvider({ scenario: HermeticScenario.Text });
@@ -305,46 +417,6 @@ describe('pi runtime against the hermetic provider', () => {
         expect(userWire).toContain('data:image/png;base64,');
         expect(userWire).not.toContain('image omitted');
         expect(provider.requests[0]!.reasoningEffort).toBe(ReasoningEffort.Low);
-    });
-
-    it('steers every request with the configured gateway routing, and sends none without it', async () => {
-        // OpenRouter routes one model slug across a dozen upstream providers, and a faulting one
-        // ("Upstream error from Together: Stream error: h2 protocol error") ended four live runs
-        // that the retry bound could not absorb. The routing document is how a deployment routes
-        // around it, so it has to reach EVERY request the run makes — a loop turn, a vision
-        // single shot, and a reviewer model registered later on the same runtime. The other half
-        // of the contract is just as load-bearing: routing is one gateway's feature, and a
-        // deployment that configured none must send no `provider` field at all, because another
-        // gateway rejects the unknown field and fails the run.
-        provider = await startHermeticProvider({ scenario: HermeticScenario.Text });
-        const routing = { ignore: ['Together'], allow_fallbacks: true };
-        const routed = await createPiRuntime({
-            ...testConfig(provider.baseUrl),
-            providerRouting: routing,
-        });
-
-        await routed.modelRuntime.complete(routed.reasoningModel, {
-            messages: [{ role: 'user', content: 'ping', timestamp: Date.now() }],
-        });
-        await createSingleShotClient(routed, routed.visionModel).text({
-            messages: [{ role: 'user', text: 'what is wrong here' }],
-        });
-        await routed.modelRuntime.complete(registerAdditionalTextModel(routed, 'reviewer-routed'), {
-            messages: [{ role: 'user', content: 'review', timestamp: Date.now() }],
-        });
-
-        expect(provider.requests.map((request) => request.provider)).toEqual([
-            routing,
-            routing,
-            routing,
-        ]);
-
-        const unrouted = await createPiRuntime(testConfig(provider.baseUrl));
-        await unrouted.modelRuntime.complete(unrouted.reasoningModel, {
-            messages: [{ role: 'user', content: 'ping', timestamp: Date.now() }],
-        });
-
-        expect(provider.requests.at(-1)!.provider).toBeNull();
     });
 
     it('registers an additional text model for per-deployment reviewer overrides', async () => {

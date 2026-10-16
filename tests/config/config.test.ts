@@ -5,6 +5,7 @@ import {
     loadGithubReadConfig,
     ConfigError,
 } from '../../src/config/config';
+import { LlmApi } from '../../src/config/llm-api';
 import { ReasoningEffort } from '../../src/config/reasoning-effort';
 
 const validEnv = {
@@ -84,6 +85,58 @@ describe('loadConfig', () => {
             expect(message).toContain('GITHUB_REPOSITORY');
             expect(message).toContain('REPOSITORY_PATH');
         }
+    });
+
+    it('defaults the LLM API to openai-completions and accepts anthropic-messages', () => {
+        expect(loadCoreConfig({ ...validEnv }).llm.api).toBe(LlmApi.OpenAiCompletions);
+        expect(
+            loadCoreConfig({
+                ...validEnv,
+                LLM_API: LlmApi.AnthropicMessages,
+                LLM_BASE_URL: 'https://api.anthropic.com',
+            }).llm.api,
+        ).toBe(LlmApi.AnthropicMessages);
+    });
+
+    it.each(['https://api.anthropic.com/v1', 'https://api.anthropic.com/v1/'])(
+        'refuses a versioned Anthropic base URL at startup (%s)',
+        (baseUrl) => {
+            const load = () =>
+                loadCoreConfig({
+                    ...validEnv,
+                    LLM_API: LlmApi.AnthropicMessages,
+                    LLM_BASE_URL: baseUrl,
+                });
+            expect(load).toThrow(ConfigError);
+            expect(load).toThrow(/LLM_BASE_URL.*drop \/v1/u);
+        },
+    );
+
+    it('accepts the unversioned Anthropic base URL and keeps versioned OpenAI URLs', () => {
+        expect(
+            loadCoreConfig({
+                ...validEnv,
+                LLM_API: LlmApi.AnthropicMessages,
+                LLM_BASE_URL: 'https://api.anthropic.com',
+            }).llm.baseUrl,
+        ).toBe('https://api.anthropic.com');
+        expect(loadCoreConfig(validEnv).llm.baseUrl).toBe(validEnv.LLM_BASE_URL);
+    });
+
+    it('rejects an unknown LLM_API, naming the variable', () => {
+        const load = () => loadCoreConfig({ ...validEnv, LLM_API: 'anthropic' });
+        expect(load).toThrow(ConfigError);
+        expect(load).toThrow(/LLM_API/u);
+    });
+
+    it('preserves an omitted vision model for runtime resolution with its shared completion cap', () => {
+        const env: Record<string, string | undefined> = { ...validEnv };
+        delete env.LLM_VISION_MODEL;
+        delete env.LLM_VISION_MAX_OUTPUT_TOKENS;
+        const config = loadCoreConfig(env);
+        expect(config.llm.visionModel).toBeUndefined();
+        expect(config.llm.visionMaxOutputTokens).toBe(Number(validEnv.LLM_MAX_OUTPUT_TOKENS));
+        expect(loadCoreConfig({ ...env, LLM_VISION_MODEL: '' })).toEqual(config);
     });
 
     it('parses explicit provider-neutral LLM configuration', () => {
@@ -185,7 +238,7 @@ describe('loadConfig', () => {
             expect(msg).toContain('llm.baseUrl');
             expect(msg).toContain('llm.apiKey');
             expect(msg).toContain('llm.model');
-            expect(msg).toContain('llm.visionModel');
+            expect(msg).not.toContain('llm.visionModel');
         }
     });
 
@@ -205,6 +258,7 @@ describe('loadConfig', () => {
         });
 
         expect(config.llm).toEqual({
+            api: LlmApi.OpenAiCompletions,
             apiKey: 'local-token',
             baseUrl: 'https://llm.example.com/api/v1',
             model: 'deepseek-v4-flash',
@@ -304,39 +358,10 @@ describe('loadConfig', () => {
         ).toThrow(/llm\.singleShotReasoningEffort/u);
     });
 
-    it('carries no gateway routing by default and parses a configured document', () => {
-        // The gateway's `provider` request object, absent unless a deployment sets it: it is
-        // OpenRouter's feature, and another gateway rejects or ignores the unknown field, so an
-        // unconfigured run must put nothing on the wire. A configured document arrives as one JSON
-        // value and reaches the runtime already typed.
-        expect(loadCoreConfig({ ...validEnv }).llm.providerRouting).toBeUndefined();
-
-        const routed = loadCoreConfig({
-            ...validEnv,
-            LLM_PROVIDER_ROUTING: '{"ignore":["Together"],"allow_fallbacks":true}',
-        });
-        expect(routed.llm.providerRouting).toEqual({
-            ignore: ['Together'],
-            allow_fallbacks: true,
-        });
-    });
-
-    it('rejects a gateway routing document that is malformed or names an unknown key', () => {
-        // External input, so it fails loudly at the boundary naming the field. A misspelled key is
-        // the interesting rejection: dropped silently, the run would route exactly as it did
-        // before while the operator believed the faulting upstream was excluded.
-        expect(() =>
-            loadCoreConfig({ ...validEnv, LLM_PROVIDER_ROUTING: '{"ignore":["Together"' }),
-        ).toThrow(ConfigError);
-        expect(() =>
-            loadCoreConfig({ ...validEnv, LLM_PROVIDER_ROUTING: '{"ignore":["Together"' }),
-        ).toThrow(/llm\.providerRouting/u);
-        expect(() =>
-            loadCoreConfig({ ...validEnv, LLM_PROVIDER_ROUTING: '{"ignor":["Together"]}' }),
-        ).toThrow(ConfigError);
-        expect(() =>
-            loadCoreConfig({ ...validEnv, LLM_PROVIDER_ROUTING: '{"ignor":["Together"]}' }),
-        ).toThrow(/llm\.providerRouting/u);
+    it('ignores a leftover LLM_PROVIDER_ROUTING value', () => {
+        expect(loadCoreConfig({ ...validEnv, LLM_PROVIDER_ROUTING: 'not json' })).toEqual(
+            loadCoreConfig({ ...validEnv }),
+        );
     });
 
     it('rejects a reasoning effort outside the levels this model supports', () => {
@@ -363,7 +388,7 @@ describe('loadConfig', () => {
         ).toThrow(ConfigError);
     });
 
-    it.each(['LLM_BASE_URL', 'LLM_API_KEY', 'LLM_MODEL', 'LLM_VISION_MODEL'] as const)(
+    it.each(['LLM_BASE_URL', 'LLM_API_KEY', 'LLM_MODEL'] as const)(
         'requires explicit %s configuration, naming the variable',
         (key) => {
             // No provider has a default: whoever runs the agent names their own endpoint, key and
@@ -378,7 +403,6 @@ describe('loadConfig', () => {
 
     it('rejects empty model identifiers', () => {
         expect(() => loadCoreConfig({ ...validEnv, LLM_MODEL: '' })).toThrow(ConfigError);
-        expect(() => loadCoreConfig({ ...validEnv, LLM_VISION_MODEL: '' })).toThrow(ConfigError);
     });
 
     it.each([

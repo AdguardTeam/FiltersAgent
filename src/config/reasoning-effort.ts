@@ -6,9 +6,9 @@
  * `picklist`, and a `src/config` module must not reach into the harness, so the vocabulary cannot
  * live next to the pi wiring that consumes it. The literals are chosen to match pi's own spellings
  * exactly, in both places the value lands: `createAgentSession({ thinkingLevel })` for a loop
- * session and the provider request's `reasoningEffort` field for a single-shot call. That is why no
- * mapping table exists here — there is nothing for a pi upgrade to silently desynchronize, and a
- * renamed pi level would surface as a type error at the boundary instead of as a wrong request.
+ * session and `streamSimple`'s `reasoning` field for a single-shot call. That is why no mapping
+ * table exists here — there is nothing for a pi upgrade to silently desynchronize, and a renamed pi
+ * level would surface as a type error at the boundary instead of as a wrong request.
  */
 
 /**
@@ -63,8 +63,7 @@ export const REASONING_EFFORT_VALUES = Object.values(ReasoningEffort);
 /**
  * A reasoning effort that actually puts a level on the wire — every member but `Off`.
  *
- * Named because the provider request field is typed exactly this way: pi's per-API
- * `reasoningEffort` option has no `off` member, since "off" is expressed by omitting the field
- * rather than by naming a level.
+ * The active levels passed to `streamSimple`'s `reasoning` field; "off" is expressed by omitting
+ * the field rather than by naming a level.
  */
 export type ActiveReasoningEffort = Exclude<ReasoningEffort, typeof ReasoningEffort.Off>;

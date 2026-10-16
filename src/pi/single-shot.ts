@@ -15,7 +15,7 @@ import type { PiRuntime } from './runtime';
 import { completeOnce } from './single-shot-completion';
 import { toPiMessages } from './single-shot-input';
 import { toTurnStopReason, TurnStopReason } from './stop-reason';
-import { toCompletionUsage, type CompletionUsage } from './usage-reporting';
+import type { CompletionUsage } from './usage-reporting';
 import { formatIssues } from './valibot-issues';
 
 /**
@@ -257,16 +257,21 @@ export async function runStructuredSingleShot<T>(
     let lastFailure = 'unknown validation failure';
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
         const startedAt = Date.now();
-        const message = await completeOnce(runtime, model, systemPrompt, messages, {
-            ...options,
-            sessionId,
-        });
+        const { message, usages: attemptUsages } = await completeOnce(
+            runtime,
+            model,
+            systemPrompt,
+            messages,
+            {
+                ...options,
+                sessionId,
+            },
+        );
         const durationMs = Date.now() - startedAt;
+        usages.push(...attemptUsages);
         if (message.stopReason !== TurnStopReason.Stop) {
-            // Account for the attempt before returning: a provider call that failed is still a
-            // provider call, and dropping it let a run whose last call failed report COMPLETE
-            // usage on the strength of the calls that happened to succeed.
-            usages.push(toCompletionUsage(model.id, message.usage));
+            // Failed completions remain in the ledger so missing token counts cannot leave the
+            // run's usage looking complete on the strength of its successful calls.
             const failureMessage =
                 message.errorMessage ??
                 `pi completion ended with stop reason "${message.stopReason}"`;
@@ -275,7 +280,7 @@ export async function runStructuredSingleShot<T>(
                     kind: SingleShotResultKind.ProviderFailure,
                     stopReason: message.stopReason,
                     message: failureMessage,
-                    attempts: attempt,
+                    attempts: usages.length,
                     model: model.id,
                     durationMs,
                 },
@@ -289,15 +294,21 @@ export async function runStructuredSingleShot<T>(
                 model: model.id,
             };
         }
-        const usage = toCompletionUsage(model.id, message.usage);
-        usages.push(usage);
-        logSingleShotCompletion(options.logger, model.id, message, durationMs, usage, attempt);
+        const usage = attemptUsages.at(-1)!;
+        logSingleShotCompletion(
+            options.logger,
+            model.id,
+            message,
+            durationMs,
+            usage,
+            usages.length,
+        );
         try {
             return {
                 kind: SingleShotResultKind.Parsed,
                 value: v.parse(options.schema, parseJsonResponse(contentText(message.content))),
                 usages,
-                attempts: attempt,
+                attempts: usages.length,
                 model: model.id,
             };
         } catch (error) {
@@ -331,7 +342,7 @@ export async function runStructuredSingleShot<T>(
         {
             kind: SingleShotResultKind.InvalidResult,
             detail: lastFailure,
-            attempts: maxAttempts,
+            attempts: usages.length,
             model: model.id,
         },
         'single-shot LLM call failed: no schema-valid reply after bounded repair attempts',
@@ -339,7 +350,7 @@ export async function runStructuredSingleShot<T>(
     return {
         kind: SingleShotResultKind.InvalidResult,
         detail: lastFailure,
-        attempts: maxAttempts,
+        attempts: usages.length,
         usages,
         model: model.id,
     };
@@ -410,7 +421,7 @@ export function createSingleShotClient(
         text: async (options: SingleShotCallOptions): Promise<SingleShotResult<string>> => {
             const converted = await toPiMessages(options.messages);
             const startedAt = Date.now();
-            const message = await completeOnce(
+            const { message, usages } = await completeOnce(
                 runtime,
                 model,
                 converted.systemPrompt,
@@ -420,26 +431,26 @@ export function createSingleShotClient(
                     ceilingMs: defaults.ceilingMs,
                     maxRetries: defaults.maxRetries,
                     maxTokens: defaults.maxTokens,
+                    logger: defaults.logger,
                     reasoningEffort: defaults.reasoningEffort,
                     ...options,
                 },
             );
             const durationMs = Date.now() - startedAt;
-            const usages = [toCompletionUsage(model.id, message.usage)];
             if (message.stopReason === TurnStopReason.Stop) {
                 logSingleShotCompletion(
                     options.logger ?? defaults.logger,
                     model.id,
                     message,
                     durationMs,
-                    usages[0]!,
-                    1,
+                    usages.at(-1)!,
+                    usages.length,
                 );
                 return {
                     kind: SingleShotResultKind.Parsed,
                     value: contentText(message.content),
                     usages,
-                    attempts: 1,
+                    attempts: usages.length,
                     model: model.id,
                 };
             }
@@ -452,7 +463,7 @@ export function createSingleShotClient(
                     kind: SingleShotResultKind.ProviderFailure,
                     stopReason: message.stopReason,
                     message: failureMessage,
-                    attempts: 1,
+                    attempts: usages.length,
                     model: model.id,
                     durationMs,
                 },

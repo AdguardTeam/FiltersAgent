@@ -3,9 +3,9 @@
 The benchmark replays historical AdguardFilters issues that maintainers have
 already fixed. For each case the agent investigates the issue as it was
 reported, before the fix existed. A browser then checks the agent's rule
-against the rule the maintainer committed. Any OpenAI-compatible provider
-works: you supply the endpoint, the key, the models, and optionally the
-prices.
+against the rule the maintainer committed. An endpoint speaking the OpenAI
+chat-completions or Anthropic Messages API works: you supply the endpoint,
+the key, the models, and optionally the prices.
 
 - [Before you start](#before-you-start)
 - [Configure the provider](#configure-the-provider)
@@ -23,9 +23,9 @@ You need:
 - **git** and network access to `github.com`. Each case clones
   AdguardFilters at the commit before the fix and downloads the pinned
   AdGuard Browser Extension release.
-- **An OpenAI-compatible endpoint** (chat completions) with two models:
-    - a reasoning model that supports tool calling;
-    - a vision model that accepts images. It can be the same model.
+- **An LLM endpoint** speaking the OpenAI chat-completions or Anthropic
+  Messages API, with a reasoning model that supports tool calling and a
+  vision model that accepts images. One model can fill both roles.
 - **A GitHub token** with public read access, only to add cases. Running
   cases works without one; set `GITHUB_TOKEN` anyway if GitHub rate-limits
   your anonymous clones.
@@ -47,43 +47,52 @@ pnpm install
 Put the provider settings in `.env` at the repository root. The benchmark
 commands read it; variables already exported in your shell take precedence.
 
+`anthropic-messages` uses adaptive thinking and targets Claude models that
+support it (Claude 5.x).
+
 ```dotenv
+# LLM_API=openai-completions
 LLM_BASE_URL=https://llm.example.com/v1
 LLM_API_KEY=your-key
 LLM_MODEL=example-reasoning-model
-LLM_VISION_MODEL=example-vision-model
+# Optional: defaults to LLM_MODEL.
+# LLM_VISION_MODEL=example-vision-model
 LLM_CONTEXT_WINDOW_TOKENS=131072
 LLM_MAX_OUTPUT_TOKENS=32768
-LLM_VISION_MAX_OUTPUT_TOKENS=8192
+# Required only for a different vision model.
+# LLM_VISION_MAX_OUTPUT_TOKENS=8192
 ```
 
 | Variable | Value |
 | --- | --- |
-| `LLM_BASE_URL` | Base URL of the OpenAI-compatible API, up to `/v1` |
+| `LLM_API` | `openai-completions` (default) or `anthropic-messages`, for both model roles |
+| `LLM_BASE_URL` | OpenAI chat-completions API base URL, usually ending in `/v1`; for Anthropic Messages use `https://api.anthropic.com` without `/v1` |
 | `LLM_API_KEY` | API key of that endpoint |
 | `LLM_MODEL` | Reasoning model id, as the provider spells it |
-| `LLM_VISION_MODEL` | Vision model id, as the provider spells it |
+| `LLM_VISION_MODEL` | Optional vision model id; defaults to `LLM_MODEL` |
 | `LLM_CONTEXT_WINDOW_TOKENS` | Context window of the models |
 | `LLM_MAX_OUTPUT_TOKENS` | Completion limit of the reasoning model |
-| `LLM_VISION_MAX_OUTPUT_TOKENS` | Completion limit of the vision model |
+| `LLM_VISION_MAX_OUTPUT_TOKENS` | Completion limit of the vision model; defaults to `LLM_MAX_OUTPUT_TOKENS` when vision uses the reasoning model |
 
-There are no defaults. Take the limits from your provider's model page: a
-value above the model's own limit fails every request with HTTP 400. Set
+The base URL, key, reasoning model and token limits have no defaults. Take
+the limits from your provider's model page: a value above the model's own
+limit fails every request with HTTP 400. Set
 `LLM_MAX_OUTPUT_TOKENS` to the model's full limit, because the model's
 reasoning and its final answer share it. `LLM_VISION_MAX_OUTPUT_TOKENS` may be
-left out only when both model variables name the same model.
+left out when `LLM_VISION_MODEL` is unset or both model variables name the
+same model. For Anthropic, set `LLM_API=anthropic-messages` and
+`LLM_BASE_URL=https://api.anthropic.com` without `/v1`.
 
-A missing or empty variable stops the command before the first case and names
-the variable:
+A missing or empty required variable stops the command before the first
+case and names the variable:
 
 ```text
 Invalid configuration:
   - llm.model: LLM_MODEL is required
 ```
 
-Optional tuning variables (reasoning effort, request timeout, retries,
-gateway routing) are listed in the
-[CLI reference](../reference/cli.md#environment-variables).
+Optional tuning variables (reasoning effort, request timeout, retries) are
+listed in the [CLI reference](../reference/cli.md#environment-variables).
 
 ## Run one case or the whole set
 
@@ -219,6 +228,11 @@ complete example with invented models and prices:
 | `cachedInputUsdPerMillionTokens` | No | Input tokens read from the provider's cache; defaults to the input price |
 | `cacheWriteUsdPerMillionTokens` | No | Input tokens written to the cache; defaults to the input price |
 | `reasoningUsdPerMillionTokens` | No | Reasoning tokens; defaults to the output price |
+
+Anthropic runs report cache writes as well as reads. Set
+`cachedInputUsdPerMillionTokens` and `cacheWriteUsdPerMillionTokens` to the
+provider's cache rates for an accurate cost; their fallback input price does
+not reflect Anthropic's cache pricing.
 
 A file that cannot be read, has an unknown field, or lists no model stops the
 command before the first case, naming `LLM_PRICING_FILE` and the problem.

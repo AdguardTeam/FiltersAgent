@@ -6,6 +6,16 @@ import {
 } from '../../src/pi/single-shot-input';
 
 describe('visionOverviewRefusal', () => {
+    it('refuses an overview above the 5 MB per-image limit of the Anthropic API', () => {
+        expect(
+            visionOverviewRefusal({
+                bytes: 5 * 1024 * 1024 + 1,
+                documentWidth: 1_280,
+                documentHeight: 2_000,
+            }),
+        ).toBe(VisionOverviewRefusal.Oversized);
+    });
+
     // The contract: an overview a provider would shrink below readability never reaches the model.
     // In one live run a 375x10334 px mobile overview went as one image, arrived about 74 px
     // wide, and the model reported ten "remaining" reserved ad bands read off the symptom text

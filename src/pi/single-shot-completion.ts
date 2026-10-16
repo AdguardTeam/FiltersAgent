@@ -1,7 +1,15 @@
-import type { Api, AssistantMessage, Message, Model } from '@earendil-works/pi-ai';
+import {
+    isContextOverflow,
+    isRetryableAssistantError,
+    type Api,
+    type AssistantMessage,
+    type Message,
+    type Model,
+} from '@earendil-works/pi-ai';
 import { ReasoningEffort, type ActiveReasoningEffort } from '../config/reasoning-effort';
 import type { SingleShotCallOptions } from './single-shot-types';
 import type { PiRuntime } from './runtime';
+import { toCompletionUsage, type CompletionUsage } from './usage-reporting';
 import { TurnStopReason } from './stop-reason';
 import { isTransientGatewayFailure } from './transient-gateway-retry';
 
@@ -15,23 +23,19 @@ import { isTransientGatewayFailure } from './transient-gateway-retry';
  * vocabulary — the stream, its events and the abort composed from two sources — and because both
  * modules stay inside the repo's ~500-line rule that way.
  *
- * Why an inactivity bound at all: `timeoutMs` reaches the OpenAI SDK as its `timeout`, and the SDK
- * clears that timer in a `finally` the moment the response resolves — that is, when the HEADERS
- * arrive. Nothing below bounds the streamed body for openai-completions, so a gateway that opens a
- * stream and then stops producing leaves a single-shot call unbounded: an
- * `inspect_full_page_capture` call can sit silent for 44 minutes until the gateway's OWN idle
- * timeout ends the stalled stream with `Upstream idle timeout exceeded`, and the run's 60-minute
- * wall-clock guard cannot take effect until then. The agent loop already bounds exactly this half
- * in `run-guards.ts`, armed on the assistant `message_start` and re-armed on every
- * `message_update`; this is the same bound for the out-of-loop calls, arming on the stream's first
- * event and re-arming on each one after it.
+ * Provider SDK request timeouts bound request setup for both APIs; they do not guarantee an
+ * inactivity bound over the streamed body. A provider that sends headers and then goes silent needs
+ * a separate timer. The OpenAI SDK clears its request timer at the headers, and an Anthropic SSE
+ * stream can likewise stop producing before its terminal event. The agent loop bounds that silence
+ * in run-guards.ts; single-shot calls use the same re-armed inactivity rule.
  */
 
 /**
  * Sampling temperature applied when a call passes none.
  *
  * Structured paths (vision, reviewer, oracle) need deterministic output, and an unset temperature
- * would let the gateway default decide — 0 keeps every call deterministic.
+ * would let the provider default decide — 0 keeps every call deterministic. A profile that does not
+ * accept `temperature` drops it.
  */
 const DEFAULT_TEMPERATURE = 0;
 
@@ -73,26 +77,22 @@ export const SINGLE_SHOT_CALL_CEILING_MS = 10 * 60_000;
 /**
  * Map the configured reasoning effort onto the provider request field, or onto nothing.
  *
- * The pi boundary in one place. Single-shot calls go through the API-typed streaming path, so the
- * field pi reads is `reasoningEffort` — `reasoning` is the `streamSimple`-only spelling that pi
- * clamps before forwarding under this same name, and passing it here would be silently dropped.
- * That path applies no clamping and has no `off` member: "off" is expressed by omitting the field,
- * which for a model with no `thinkingLevelMap` (ours) is what makes pi send no `reasoning_effort`
- * at all. The remaining literals are pi's own, so no lookup table stands between the configuration
- * and the wire.
+ * Pi's `streamSimple` maps `reasoning` per adapter: `reasoning_effort` on openai-completions,
+ * adaptive thinking with `output_config.effort` on anthropic-messages. It also clamps `maxTokens`
+ * to the remaining context window. Off omits the reasoning option: Anthropic emits disabled
+ * thinking on reasoning-enabled entries, but omits thinking on other entries. A model's default
+ * thinking can therefore remain active. The remaining literals are pi's own.
  *
  * @param effort - The configured effort, or undefined when neither the call nor the client set one.
  * @returns The request fields to spread, empty for `off` and for an unset effort.
  */
-function reasoningEffortRequestFields(effort: ReasoningEffort | undefined): {
+function reasoningRequestFields(effort: ReasoningEffort | undefined): {
     /**
-     * The level pi puts on the wire as `reasoning_effort`; absent means no reasoning parameter.
+     * The active effort pi maps onto the selected adapter; absent uses its off representation.
      */
-    reasoningEffort?: ActiveReasoningEffort;
+    reasoning?: ActiveReasoningEffort;
 } {
-    return effort === undefined || effort === ReasoningEffort.Off
-        ? {}
-        : { reasoningEffort: effort };
+    return effort === undefined || effort === ReasoningEffort.Off ? {} : { reasoning: effort };
 }
 
 /**
@@ -148,7 +148,22 @@ export type SingleShotCompletionOptions = Omit<SingleShotCallOptions, 'messages'
 };
 
 /**
- * Run one completion through the pi runtime and return the raw assistant message.
+ * Final reply and usage for every observed attempt of one bounded completion.
+ */
+export interface SingleShotCompletion {
+    /**
+     * Last assistant reply, including a terminal failure when retries were exhausted.
+     */
+    message: AssistantMessage;
+
+    /**
+     * Normalized usage in attempt order, including retried failures.
+     */
+    usages: CompletionUsage[];
+}
+
+/**
+ * Run a bounded completion, preserving the final message and every observed attempt's usage.
  *
  * The response is bounded in two halves, both from `options.timeoutMs`: up to the headers by the
  * SDK's own `timeout`, and from there to the end of the assistant message by the inactivity
@@ -162,15 +177,15 @@ export type SingleShotCompletionOptions = Omit<SingleShotCallOptions, 'messages'
  * @param systemPrompt - Optional system prompt.
  * @param messages - Pi message list.
  * @param options - Call controls, including the cache-routing session id.
- * @returns The raw assistant message (pi resolves provider failures instead of throwing). A
- *   transient gateway failure mid-stream — the same set the agent loop's seam retries
- *   (`isTransientGatewayFailure`) — is retried here up to `options.maxRetries` times with a short
- *   growing delay: pi's own transport retry (`maxRetries` on the request) decides on the HTTP
- *   status of the request phase alone, so a fault after the headers surfaces as an error message it
- *   never retries, and one such fault would leave a candidate visual review "unavailable". A
- *   request pi refused because the provider asked for a pause above pi's own cap is retried the
- *   same way after that pause, up to `MAX_PROVIDER_REQUESTED_RETRY_DELAY_MS`. A caller abort and
- *   every deterministic failure return at once.
+ * @returns The final assistant message with usage for every observed attempt. Pi's retryable
+ *   provider errors and the gateway seam's additional failures are retried, excluding context
+ *   overflow, up to options.maxRetries times with a short growing delay: pi's own transport retry
+ *   (`maxRetries` on the request) decides on the HTTP status of the request phase alone, so a fault
+ *   after the headers surfaces as an error message it never retries, and one such fault would leave
+ *   a candidate visual review "unavailable". A request pi refused because the provider asked for a
+ *   pause above pi's own cap is retried the same way after that pause, up to
+ *   `MAX_PROVIDER_REQUESTED_RETRY_DELAY_MS`. A caller abort and every deterministic failure return
+ *   at once.
  */
 export async function completeOnce(
     runtime: PiRuntime,
@@ -178,18 +193,21 @@ export async function completeOnce(
     systemPrompt: string | undefined,
     messages: Message[],
     options: SingleShotCompletionOptions,
-): Promise<AssistantMessage> {
+): Promise<SingleShotCompletion> {
+    const usages: CompletionUsage[] = [];
     const maxRetries = options.maxRetries ?? 0;
     for (let retry = 0; ; retry += 1) {
         const message = await completeUnretried(runtime, model, systemPrompt, messages, options);
-        if (retry >= maxRetries || options.signal?.aborted === true) {
-            return message;
+        usages.push(toCompletionUsage(model.id, message.usage));
+        const completion = { message, usages };
+        if (retry >= maxRetries || options.signal?.aborted === true || isContextOverflow(message)) {
+            return completion;
         }
         const requestedDelayMs = providerRequestedRetryDelayMs(message);
         let delayMs: number;
         if (requestedDelayMs !== undefined) {
             if (requestedDelayMs > MAX_PROVIDER_REQUESTED_RETRY_DELAY_MS) {
-                return message;
+                return completion;
             }
             options.logger?.warn(
                 {
@@ -202,17 +220,17 @@ export async function completeOnce(
                 'single-shot LLM call: the provider asked for a pause; waiting it out, then retrying',
             );
             delayMs = requestedDelayMs;
-        } else if (isTransientGatewayFailure(message)) {
+        } else if (isTransientGatewayFailure(message) || isRetryableAssistantError(message)) {
             options.logger?.warn(
                 { message: message.errorMessage, retry: retry + 1, maxRetries, model: model.id },
-                'single-shot LLM call met a transient gateway failure mid-stream; retrying',
+                'single-shot LLM call met a transient provider failure; retrying',
             );
             delayMs = TRANSIENT_RETRY_DELAY_MS * (retry + 1);
         } else {
-            return message;
+            return completion;
         }
         if (!(await sleepUnlessAborted(delayMs, options.signal))) {
-            return message;
+            return completion;
         }
     }
 }
@@ -290,12 +308,12 @@ async function completeUnretried(
         ...(ceilingMs === undefined ? [] : [ceilingController.signal]),
     ];
     const signal = sources.length === 0 ? undefined : AbortSignal.any(sources);
-    const stream = runtime.modelRuntime.stream(
+    const stream = runtime.modelRuntime.streamSimple(
         model,
         { ...(systemPrompt !== undefined ? { systemPrompt } : {}), messages },
         {
             temperature: options.temperature ?? DEFAULT_TEMPERATURE,
-            ...reasoningEffortRequestFields(options.reasoningEffort),
+            ...reasoningRequestFields(options.reasoningEffort),
             ...(options.maxTokens !== undefined ? { maxTokens: options.maxTokens } : {}),
             ...(stallBoundMs !== undefined ? { timeoutMs: stallBoundMs } : {}),
             ...(options.maxRetries !== undefined ? { maxRetries: options.maxRetries } : {}),

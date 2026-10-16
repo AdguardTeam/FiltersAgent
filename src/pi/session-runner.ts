@@ -170,7 +170,7 @@ export interface RunAgentSessionOptions<T> {
     retries: RunRetryBounds;
 
     /**
-     * The session's thinking level, carried on every request of the run as `reasoning_effort`.
+     * The session's thinking level, mapped to the configured API on every request of the run.
      * Required: `llm.reasoningEffort` is defaulted once at the env boundary, so this is always
      * stated and the runner never falls back to pi's own `medium`.
      */
@@ -371,15 +371,11 @@ export async function runAgentSession<T>(
         resourceLoader,
         sessionManager: SessionManager.inMemory(SESSION_LOGICAL_CWD),
         settingsManager,
-        // Explicit and configured, never inherited: pi's own default is `medium`, and whatever
-        // level it is given lands on EVERY request of the session as `reasoning_effort` (the
-        // reasoning model is registered `reasoning: true` and the gateway passes pi's
-        // reasoning-effort compatibility detection). The default is `high` — the maintainer's call,
-        // and the ceiling this model can carry: with no `thinkingLevelMap` on the catalog entry pi
-        // supports `off | minimal | low | medium | high` and clamps anything above `high` down to
-        // it. `LLM_REASONING_EFFORT=off` sends no reasoning parameter at all. The literals are pi's
-        // own spellings, so `ReasoningEffort` is assignable as-is — a renamed pi level breaks this
-        // line instead of quietly changing the request.
+        // The configured API carries this thinking level on every eligible session request.
+        // The default is resolved once at the environment boundary, so the session never inherits
+        // pi's own medium default. With no thinkingLevelMap, pi supports off through high and
+        // clamps higher levels to high. Off requests no thinking. ReasoningEffort uses pi's own
+        // spellings, so a renamed level breaks this assignment at compile time.
         thinkingLevel: options.reasoningEffort,
     });
     // Applied to every session before the first prompt: pi's own retry classification does not know

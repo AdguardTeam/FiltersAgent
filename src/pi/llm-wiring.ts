@@ -44,15 +44,16 @@ export async function createPiRuntimeFromConfig(
     llm: LlmConfig,
     modelOverride?: string,
 ): Promise<PiRuntime> {
+    const model = modelOverride ?? llm.model;
     return await createPiRuntime({
+        api: llm.api,
         baseUrl: llm.baseUrl,
         apiKey: llm.apiKey,
-        model: modelOverride ?? llm.model,
-        visionModel: llm.visionModel,
+        model,
+        visionModel: llm.visionModel ?? model,
         contextWindowTokens: llm.contextWindowTokens,
         maxOutputTokens: llm.maxOutputTokens,
         visionMaxOutputTokens: llm.visionMaxOutputTokens,
-        providerRouting: llm.providerRouting,
         reasoningEffort: llm.reasoningEffort,
     });
 }
@@ -95,15 +96,11 @@ export function createConfiguredSingleShotClient(
         // streaming is otherwise ended only by the tool deadline around it, half an hour later.
         ceilingMs: SINGLE_SHOT_CALL_CEILING_MS,
         maxRetries: providerMaxRetries(llm),
-        // The role's configured completion cap, sent explicitly: pi's typed completion path sends
-        // only what the call passes, so without this a single-shot request carries no cap and the
-        // provider's own default can cut a reasoning model's vision verdict at `length`.
-        maxTokens: model.maxTokens,
         // The single-shot level, one setting for every single-shot call the run makes (the loop
         // sessions carry `llm.reasoningEffort`). It reaches the wire only for a model registered
-        // `reasoning: true`, so it is inert on a client bound to the vision model and live on one
-        // bound to a reasoning model (the intake extraction, a reviewer); wiring it once here is
-        // what keeps those from diverging.
+        // `reasoning: true`, including the vision role when it shares the effective reasoning
+        // model. A separate vision model is registered without reasoning support; one setting
+        // keeps the intake extraction, reviewers and eligible vision calls consistent.
         reasoningEffort: llm.singleShotReasoningEffort,
         logger: options.logger,
     });

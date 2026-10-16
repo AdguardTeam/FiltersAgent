@@ -42,10 +42,10 @@ const MAX_VISION_IMAGE_BYTES_PER_REQUEST = 6 * 1024 * 1024;
  */
 export function evidenceImageBytes(image: CandidateVisualEvidenceImage): number {
     const bytes = statSync(image.path).size;
-    if (bytes > MAX_VISION_IMAGE_BYTES_PER_REQUEST) {
+    if (bytes > MAX_VISION_IMAGE_BYTES) {
         throw new Error(
-            `Evidence image ${image.id} contains ${bytes} bytes and exceeds the per-request ` +
-                `image byte budget of ${MAX_VISION_IMAGE_BYTES_PER_REQUEST} bytes.`,
+            `Evidence image ${image.id} contains ${bytes} bytes and exceeds the per-image ` +
+                `byte budget of ${MAX_VISION_IMAGE_BYTES} bytes.`,
         );
     }
     return bytes;

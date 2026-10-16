@@ -1,4 +1,5 @@
 import type { CoreConfig, LlmConfig } from '../../src/config/config';
+import { LlmApi } from '../../src/config/llm-api';
 import { ReasoningEffort } from '../../src/config/reasoning-effort';
 
 /**
@@ -14,6 +15,7 @@ import { ReasoningEffort } from '../../src/config/reasoning-effort';
  * and caps its completions — exactly like a real one.
  */
 const DEFAULT_LLM_CONFIG: LlmConfig = {
+    api: LlmApi.OpenAiCompletions,
     baseUrl: 'https://llm.example.test/v1',
     apiKey: 'test-llm-key',
     model: 'deepseek-v4-flash',

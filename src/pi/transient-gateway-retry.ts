@@ -24,8 +24,7 @@ import { TurnStopReason } from './stop-reason';
  */
 
 /**
- * Leading HTTP status of a Cloudflare origin-side failure, as pi-ai composes a provider error for
- * the `openai-completions` API this runtime registers.
+ * Leading HTTP status of a Cloudflare origin-side failure in either supported API's error text.
  *
  * The gateway this runtime talks to sits behind Cloudflare, and Cloudflare answers an origin-side
  * fault with its own 52x/530 range rather than the origin's status.
@@ -40,12 +39,10 @@ import { TurnStopReason } from './stop-reason';
  * deliberately: the set means "Cloudflare answered for the origin", and pi already retrying one
  * member of it is not a reason to spell the range with a hole.
  *
- * Why anchored at the start: that is where the status lands. For this API pi-ai's
- * `formatProviderError` composes `"<status>: <body>"` with NO provider prefix (the same structural
- * fact `isDeterministicProviderMessage` reads in `run-sealing.ts`), and when the response carries
- * no body at all the OpenAI SDK's own message is `"<status> status code (no body)"`. Anchoring is
- * what keeps a token count, an id or a byte size quoted inside a body from being read as a gateway
- * status.
+ * Anchored because statuses lead the error text: pi's OpenAI adapter composes "<status>: <body>",
+ * while the Anthropic SDK composes "<status> <body>". The OpenAI SDK also emits "<status> status
+ * code (no body)" for an empty response. This keeps token counts, ids and byte sizes inside a
+ * response body from being classified as gateway statuses.
  */
 const TRANSIENT_GATEWAY_STATUS_PATTERN = /^\s*(?:52[0-7]|530)\b/u;
 

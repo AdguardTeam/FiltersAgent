@@ -288,7 +288,9 @@ describe('createLabFixEntryDelegate', () => {
             );
 
         expect(delegate).toThrow(ConfigError);
-        for (const name of Object.keys(TEST_PROVIDER_ENV).filter((key) => key !== 'LLM_API_KEY')) {
+        for (const name of Object.keys(TEST_PROVIDER_ENV).filter(
+            (key) => key !== 'LLM_API_KEY' && key !== 'LLM_VISION_MODEL',
+        )) {
             expect(delegate).toThrow(new RegExp(name, 'u'));
         }
     });

@@ -1,17 +1,16 @@
 import { InMemoryCredentialStore, type Api, type Model } from '@earendil-works/pi-ai';
 import { ModelRuntime } from '@earendil-works/pi-coding-agent';
 import type { LlmConfig } from '../config/config';
-import type { ProviderRouting } from '../config/provider-routing';
+import { LlmApi } from '../config/llm-api';
 import { ReasoningEffort } from '../config/reasoning-effort';
 import { installHttpTransport } from './http-transport';
 
 /**
  * Pi runtime setup: turn application provider configuration into a ready pi model runtime — the
- * configured OpenAI-compatible gateway registered entirely in code over the OpenAI-completions API,
- * credentials held in an in-memory store, both model handles resolved, compatibility flags
- * applied.
+ * configured provider registered entirely in code over the configured API, credentials held in an
+ * in-memory store, both model handles resolved, compatibility flags applied.
  *
- * One gateway, but TWO provider registrations — one per ROLE — because a pi provider catalog holds
+ * One provider, but TWO provider registrations — one per ROLE — because a pi provider catalog holds
  * one entry per model ID and pi resolves a handle by `getModels(provider).find(m => m.id === id)`
  * (`pi-ai`'s `models.js`). The two roles are registered with deliberately different capabilities:
  * the reasoning entry is `input: ['text']`, the vision entry `input: ['text', 'image']`. Put both
@@ -25,17 +24,17 @@ import { installHttpTransport } from './http-transport';
  */
 
 /**
- * Provider id the REASONING role's gateway entry is registered under inside the pi runtime.
+ * Provider id the REASONING role's provider entry is registered under inside the pi runtime.
  */
-export const OPENAI_COMPATIBLE_PROVIDER_ID = 'openai-compatible';
+export const REASONING_PROVIDER_ID = 'llm';
 
 /**
- * Provider id the VISION role's gateway entry is registered under inside the pi runtime.
+ * Provider id the VISION role's provider entry is registered under inside the pi runtime.
  *
- * Same gateway, same credential, same API — a second registration exists only so the vision entry
+ * Same provider, same credential, same API — a second registration exists only so the vision entry
  * owns its own catalog slot; see the module note for what sharing one slot cost.
  */
-export const OPENAI_COMPATIBLE_VISION_PROVIDER_ID = 'openai-compatible-vision';
+export const VISION_PROVIDER_ID = 'llm-vision';
 
 /**
  * Explicit zero rates registered with every catalog entry.
@@ -48,54 +47,49 @@ export const OPENAI_COMPATIBLE_VISION_PROVIDER_ID = 'openai-compatible-vision';
 const UNPRICED_MODEL_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } as const;
 
 /**
- * OpenAI-completions compatibility flags for the configured gateway, applied to every registered
- * model.
- *
- * `requiresReasoningContentOnAssistantMessages` replays `reasoning_content` on assistant history:
- * some thinking-mode OpenAI-compatible gateways hard-fail the following request without it. pi's
- * URL auto-detection cannot fire here — the gateway host is not `deepseek.com` — so the flag must
- * be explicit, and it only takes effect on entries registered with `reasoning: true`.
- *
- * `sendSessionAffinityHeaders` with `sessionAffinityFormat: 'openai'` attaches `session_id`,
- * `x-client-request-id`, and `x-session-affinity` headers whenever a caller passes a session id,
- * which is how the gateway routes one session to a warm prompt-cache replica.
- *
- * `supportsDeveloperRole: false` keeps the system prompt under the `system` role. Pi's
- * openai-completions API sends it as `developer` for any entry registered `reasoning: true` unless
- * the flag says otherwise, and its URL auto-detection only turns the role off for hosts it knows
- * (`deepseek.com`, `cerebras.ai`, …) — the gateway host is none of them, so the detected default is
- * `true`. The gateway's upstream pool is not uniform on that role: a replica can answer 400
- * "messages[0].role: unknown variant developer, expected one of system, user, assistant, tool"
- * mid-session after other replicas accepted the same model, system prompt and role, and the run
- * then seals `provider-failure` as a deterministic rejection. `system` is the one spelling every
- * OpenAI-shaped upstream accepts, and the two roles are equivalent to the gateway, so nothing is
- * given up by pinning it.
+ * Compatibility settings pinned to the pi adapter type for each configured API.
  */
-const OPENAI_COMPATIBLE_COMPAT = {
-    requiresReasoningContentOnAssistantMessages: true,
-    sendSessionAffinityHeaders: true,
-    sessionAffinityFormat: 'openai',
-    supportsDeveloperRole: false,
-} as const;
-
-/**
- * The compatibility settings one catalog entry carries: the gateway's fixed OpenAI-completions
- * flags, plus the deployment's routing preferences when it configured any.
- *
- * Absent stays absent. Pi puts a `provider` object on the request only for an entry whose compat
- * carries `openRouterRouting`, and a gateway that is not OpenRouter ignores or rejects that field,
- * so an unconfigured deployment must send no `provider` at all — an empty object would be a
- * configured preference on the wire.
- *
- * @param providerRouting - The configured routing document, or `undefined` when none is set.
- * @returns The entry's compat settings.
- */
-function gatewayCompat(providerRouting: ProviderRouting | undefined) {
-    return {
-        ...OPENAI_COMPATIBLE_COMPAT,
-        ...(providerRouting === undefined ? {} : { openRouterRouting: providerRouting }),
-    };
-}
+const API_COMPAT_PROFILE = {
+    /**
+     * OpenAI-completions compatibility flags for the configured gateway, applied to every
+     * registered model.
+     *
+     * `requiresReasoningContentOnAssistantMessages` replays `reasoning_content` on assistant
+     * history: some thinking-mode OpenAI-compatible gateways hard-fail the following request
+     * without it. pi's URL auto-detection cannot fire here — the gateway host is not `deepseek.com`
+     * — so the flag must be explicit, and it only takes effect on entries registered with
+     * `reasoning: true`.
+     *
+     * `sendSessionAffinityHeaders` with `sessionAffinityFormat: 'openai'` attaches `session_id`,
+     * `x-client-request-id`, and `x-session-affinity` headers whenever a caller passes a session
+     * id, which is how the gateway routes one session to a warm prompt-cache replica.
+     *
+     * `supportsDeveloperRole: false` keeps the system prompt under the `system` role. Pi's
+     * openai-completions API sends it as `developer` for any entry registered `reasoning: true`
+     * unless the flag says otherwise, and its URL auto-detection only turns the role off for hosts
+     * it knows (`deepseek.com`, `cerebras.ai`, …) — the gateway host is none of them, so the
+     * detected default is `true`. The gateway's upstream pool is not uniform on that role: a
+     * replica can answer 400 "messages[0].role: unknown variant developer, expected one of system,
+     * user, assistant, tool" mid-session after other replicas accepted the same model, system
+     * prompt and role, and the run then seals `provider-failure` as a deterministic rejection.
+     * `system` is the one spelling every OpenAI-shaped upstream accepts, and the two roles are
+     * equivalent to the gateway, so nothing is given up by pinning it.
+     */
+    [LlmApi.OpenAiCompletions]: {
+        requiresReasoningContentOnAssistantMessages: true,
+        sendSessionAffinityHeaders: true,
+        sessionAffinityFormat: 'openai',
+        supportsDeveloperRole: false,
+    },
+    /**
+     * Claude 5.x refuses temperature with HTTP 400 and takes adaptive thinking as its thinking
+     * format, so both behaviors must be explicit for arbitrary configured model ids.
+     */
+    [LlmApi.AnthropicMessages]: {
+        supportsTemperature: false,
+        forceAdaptiveThinking: true,
+    },
+} as const satisfies { [K in LlmApi]: NonNullable<Model<K>['compat']> };
 
 /**
  * The provider registration shape accepted by `ModelRuntime.registerProvider`.
@@ -112,23 +106,25 @@ type CatalogEntry = NonNullable<ProviderRegistration['models']>[number];
 
 /**
  * Provider configuration the pi runtime setup consumes: the slice of `CoreConfig.llm` that
- * describes the gateway and the two models registered against it.
+ * describes the configured provider over the configured API and its two model roles.
  *
- * Taken directly, not re-validated: `loadCoreConfig` already enforced this shape at the environment
- * boundary and `createPiRuntimeFromConfig` hands over exactly that validated value, so a second
- * check here could only ever pass.
+ * `loadCoreConfig` validates provider values and limits at the environment boundary, and
+ * `createPiRuntimeFromConfig` resolves the optional vision model after applying a model override.
+ * Runtime setup consumes the resolved configuration without validating it again.
  */
-export type PiRuntimeConfig = Pick<
-    LlmConfig,
-    | 'baseUrl'
-    | 'apiKey'
-    | 'model'
-    | 'visionModel'
-    | 'contextWindowTokens'
-    | 'maxOutputTokens'
-    | 'visionMaxOutputTokens'
-    | 'providerRouting'
-    | 'reasoningEffort'
+export type PiRuntimeConfig = Required<
+    Pick<
+        LlmConfig,
+        | 'api'
+        | 'baseUrl'
+        | 'apiKey'
+        | 'model'
+        | 'visionModel'
+        | 'contextWindowTokens'
+        | 'maxOutputTokens'
+        | 'visionMaxOutputTokens'
+        | 'reasoningEffort'
+    >
 >;
 
 /**
@@ -168,18 +164,6 @@ export interface PiRuntime {
      * when the two configured ids are identical.
      */
     visionModel: Model<Api>;
-
-    /**
-     * The gateway routing preferences this runtime was configured with, or `undefined` when the
-     * deployment set none.
-     *
-     * Kept on the handle because routing is a property of the RUN, not of one registration: a model
-     * registered later on this runtime (`registerAdditionalTextModel`) must steer exactly like the
-     * two registered at creation, and the handle is the only thing it is given. Without it, a
-     * deployment that routes around a faulting upstream would still send the reviewer's requests
-     * into it.
-     */
-    providerRouting?: ProviderRouting;
 }
 
 /**
@@ -187,8 +171,8 @@ export interface PiRuntime {
  *
  * A caller's model override (a reviewer model, for instance, defaulting to the configured reasoning
  * model) may name a slug outside the two configured models; the pi runtime supports any slug the
- * gateway serves by extending the in-code catalog. Idempotent: an already-registered id resolves
- * without re-registering.
+ * configured provider serves by extending the in-code catalog. Idempotent: an already-registered id
+ * resolves without re-registering.
  *
  * The new entry inherits the resolved reasoning model's catalog limits — it stands in for exactly
  * that role — so an override model is bounded by the configured values and no second default for
@@ -196,24 +180,22 @@ export interface PiRuntime {
  * reason: it is a reasoning-role entry, and the vision role's catalog stays untouched.
  *
  * @param runtime - The runtime whose provider catalog is extended.
- * @param modelId - The additional model id served by the gateway.
+ * @param modelId - The additional model id served by the configured provider.
  * @returns The resolved model handle.
  */
 export function registerAdditionalTextModel(runtime: PiRuntime, modelId: string): Model<Api> {
-    const existing = runtime.modelRuntime.getModel(OPENAI_COMPATIBLE_PROVIDER_ID, modelId);
+    const existing = runtime.modelRuntime.getModel(REASONING_PROVIDER_ID, modelId);
     if (existing) {
         return existing;
     }
-    const registration = runtime.modelRuntime.getRegisteredProviderConfig(
-        OPENAI_COMPATIBLE_PROVIDER_ID,
-    );
+    const registration = runtime.modelRuntime.getRegisteredProviderConfig(REASONING_PROVIDER_ID);
     if (!registration) {
         throw new PiModelLookupError(
-            `Invalid pi runtime configuration:\n  - model: provider ${OPENAI_COMPATIBLE_PROVIDER_ID} ` +
+            `Invalid pi runtime configuration:\n  - model: provider ${REASONING_PROVIDER_ID} ` +
                 'is not registered on this runtime',
         );
     }
-    runtime.modelRuntime.registerProvider(OPENAI_COMPATIBLE_PROVIDER_ID, {
+    runtime.modelRuntime.registerProvider(REASONING_PROVIDER_ID, {
         ...registration,
         models: [
             ...(registration.models ?? []),
@@ -225,22 +207,21 @@ export function registerAdditionalTextModel(runtime: PiRuntime, modelId: string)
                 cost: { ...UNPRICED_MODEL_COST },
                 contextWindow: runtime.reasoningModel.contextWindow,
                 maxTokens: runtime.reasoningModel.maxTokens,
-                compat: gatewayCompat(runtime.providerRouting),
+                compat: runtime.reasoningModel.compat,
             },
         ],
     });
-    return resolveModel(runtime.modelRuntime, OPENAI_COMPATIBLE_PROVIDER_ID, modelId, 'model');
+    return resolveModel(runtime.modelRuntime, REASONING_PROVIDER_ID, modelId, 'model');
 }
 
 /**
  * The catalog fields both role entries carry identically: unpriced cost, the configured context
- * window, and the gateway compat flags.
+ * window, and the configured API compat flags.
  *
  * `contextWindow` is not decoration — pi measures its auto-compaction threshold (`contextWindow −
- * reserveTokens`) against it on every request — and it is one number for the gateway, not per role,
- * so it is shared here. It is required configuration, defaulted once in `config.ts`. The compat
- * settings are shared for the same reason: routing is the gateway's, so both roles steer alike and
- * every loop turn and single-shot call of the run carries the same preference.
+ * reserveTokens`) against it on every request — and it is one number for the provider, not per
+ * role, so it is shared here. It is required configuration, defaulted once in `config.ts`. The
+ * compat settings are shared for the same reason: both roles use the same configured API.
  *
  * @param config - Validated provider configuration.
  * @returns The shared slice of a catalog entry.
@@ -249,7 +230,7 @@ function sharedCatalogFields(config: PiRuntimeConfig) {
     return {
         cost: { ...UNPRICED_MODEL_COST },
         contextWindow: config.contextWindowTokens,
-        compat: gatewayCompat(config.providerRouting),
+        compat: API_COMPAT_PROFILE[config.api],
     };
 }
 
@@ -266,14 +247,14 @@ function reasons(config: PiRuntimeConfig): boolean {
 /**
  * Build the catalog entry for the configured REASONING model.
  *
- * `maxTokens` is sent as `max_completion_tokens`, clamped to what is left of the window, and the
- * completion cap is per ROLE because the two roles are bounded by different things: the loop model
+ * `maxTokens` supplies the configured API's completion cap, clamped to the remaining context
+ * window. The cap is per ROLE because the two roles are bounded by different things: the loop model
  * spends the same budget on thinking and on the terminal payload that follows it, while a vision
  * call returns one bounded JSON verdict. `input: ['text']` is what the loop model is asked for.
  *
- * `reasoning` follows the configured effort: an entry registered `reasoning: true` puts a level on
- * the wire and replays `reasoning_content` on its history (the DeepSeek-style compat flags), and a
- * model that does not reason may refuse both, so `off` registers it as a plain model.
+ * `reasoning` follows the configured effort: an entry registered `reasoning: true` supports the
+ * configured API's thinking level. The OpenAI profile also replays `reasoning_content` on its
+ * history. A model that does not reason may refuse these fields, so `off` registers a plain model.
  *
  * @param config - Validated provider configuration.
  * @returns The reasoning entry with its configured completion cap.
@@ -353,7 +334,7 @@ function resolveModel(
  * to any home-directory pi configuration, and `ModelRuntime.create` performs no network access (its
  * model-network flag defaults off), so setup is safe to run anywhere.
  *
- * The one gateway is registered TWICE — same `baseUrl`, same API, same compat flags, same
+ * The configured provider is registered TWICE — same `baseUrl`, same API, same compat flags, same
  * credential — so each role owns its own catalog slot and a configuration naming one slug for both
  * roles still resolves an image-capable vision handle; see the module note for why that matters. Pi
  * keys everything it does off `model.provider` — credential lookup included — which is why
@@ -369,31 +350,25 @@ export async function createPiRuntime(config: PiRuntimeConfig): Promise<PiRuntim
         modelsPath: null,
         credentials: new InMemoryCredentialStore(),
     });
-    const gateway = { baseUrl: config.baseUrl, api: 'openai-completions' } as const;
-    modelRuntime.registerProvider(OPENAI_COMPATIBLE_PROVIDER_ID, {
-        ...gateway,
-        name: 'OpenAI-compatible',
+    const provider = { baseUrl: config.baseUrl, api: config.api };
+    modelRuntime.registerProvider(REASONING_PROVIDER_ID, {
+        ...provider,
+        name: 'LLM',
         models: [reasoningCatalogEntry(config)],
     });
-    modelRuntime.registerProvider(OPENAI_COMPATIBLE_VISION_PROVIDER_ID, {
-        ...gateway,
-        name: 'OpenAI-compatible (vision)',
+    modelRuntime.registerProvider(VISION_PROVIDER_ID, {
+        ...provider,
+        name: 'LLM (vision)',
         models: [visionCatalogEntry(config)],
     });
-    await modelRuntime.setRuntimeApiKey(OPENAI_COMPATIBLE_PROVIDER_ID, config.apiKey);
-    await modelRuntime.setRuntimeApiKey(OPENAI_COMPATIBLE_VISION_PROVIDER_ID, config.apiKey);
+    await modelRuntime.setRuntimeApiKey(REASONING_PROVIDER_ID, config.apiKey);
+    await modelRuntime.setRuntimeApiKey(VISION_PROVIDER_ID, config.apiKey);
     return {
         modelRuntime,
-        providerRouting: config.providerRouting,
-        reasoningModel: resolveModel(
-            modelRuntime,
-            OPENAI_COMPATIBLE_PROVIDER_ID,
-            config.model,
-            'model',
-        ),
+        reasoningModel: resolveModel(modelRuntime, REASONING_PROVIDER_ID, config.model, 'model'),
         visionModel: resolveModel(
             modelRuntime,
-            OPENAI_COMPATIBLE_VISION_PROVIDER_ID,
+            VISION_PROVIDER_ID,
             config.visionModel,
             'visionModel',
         ),
