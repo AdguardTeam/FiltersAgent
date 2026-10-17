@@ -50,6 +50,9 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 - Fixed benchmark failures before the filters checkout being reported as a
   filters-base mismatch instead of the original error.
+- Fixed benchmark cases ending as infrastructure failures, and
+  `pnpm benchmark:case:add` rejecting issues, when the reporter's settings
+  import link carries `&amp;` separators.
 - Fixed intake errors reporting provider rejections as generic extraction
   failures.
 - Fixed provider tuning validation errors omitting the environment variable

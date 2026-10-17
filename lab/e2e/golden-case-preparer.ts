@@ -21,6 +21,7 @@ import {
     type LocalIssueComment,
     type LocalIssueSnapshot,
 } from '../../src/local/issue-snapshot';
+import { parseReporterSettingsImportUrl } from '../../src/browser/adguard-settings-import-url';
 import type { IssueFacts } from '../../src/types/issue-facts';
 import { reportToIssueFacts } from '../../src/intake/report-facts';
 import type { Report } from '../../src/intake/report';
@@ -271,7 +272,7 @@ function hasExactExtensionImport(facts: IssueFacts, extensionVersion: string): b
     if (!facts.settingsImportUrl) {
         return false;
     }
-    const importUrl = new URL(facts.settingsImportUrl);
+    const importUrl = parseReporterSettingsImportUrl(facts.settingsImportUrl);
     return (
         importUrl.searchParams.get('product_type') === 'ext' &&
         importUrl.searchParams.get('product_version') === extensionVersion &&

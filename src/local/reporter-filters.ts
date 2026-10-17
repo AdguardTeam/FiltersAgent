@@ -7,6 +7,7 @@
  * browsing with the Base filter alone.
  */
 
+import { parseReporterSettingsImportUrl } from '../browser/adguard-settings-import-url';
 import { decideExecutableFilters } from '../environment/official-filter-catalog';
 import { FilterBaselineStatus } from '../environment/filter-baseline-status';
 import { expandCombinedOfficialFilterIds } from '../environment/official-filter-table';
@@ -59,7 +60,7 @@ export function readReporterFilterSelection(
     }
     let url: URL;
     try {
-        url = new URL(settingsImportUrl.replace(/&amp;/giu, '&'));
+        url = parseReporterSettingsImportUrl(settingsImportUrl);
     } catch {
         return null;
     }

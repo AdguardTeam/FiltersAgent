@@ -11,6 +11,7 @@
  */
 import {
     canonicalAdGuardSettingsImportUrlSha256,
+    parseReporterSettingsImportUrl,
     TRUSTED_REPORT_SETTINGS_HOSTS,
 } from '../browser/adguard-settings-import-url';
 import type { RawIssue } from '../github/fetch-issue';
@@ -60,7 +61,7 @@ export function reporterSettingsImportUrls(issue: RawIssue): ReadonlyMap<string,
     const urls = new Map<string, string>();
     for (const match of text.matchAll(REPORT_SETTINGS_URL_PATTERN)) {
         try {
-            const url = new URL(match[0].replace(/&amp;/giu, '&'));
+            const url = parseReporterSettingsImportUrl(match[0]);
             if (
                 url.protocol === 'https:' &&
                 TRUSTED_REPORT_SETTINGS_HOSTS.has(url.hostname.toLowerCase()) &&

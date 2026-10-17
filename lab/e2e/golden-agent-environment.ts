@@ -1,4 +1,7 @@
-import { TRUSTED_REPORT_SETTINGS_HOSTS } from '../../src/browser/adguard-settings-import-url';
+import {
+    parseReporterSettingsImportUrl,
+    TRUSTED_REPORT_SETTINGS_HOSTS,
+} from '../../src/browser/adguard-settings-import-url';
 import type { RawIssue } from '../../src/github/fetch-issue';
 import type { LocalExtensionProvenance, LocalRunRecord } from '../../src/local/run-output';
 import { loadLocalIssueSnapshot, toAgentIssueInput } from '../../src/local/issue-snapshot';
@@ -216,7 +219,7 @@ export async function extractGoldenReporterEnvironment(
     if (!facts.settingsImportUrl) {
         throw new Error('Golden issue has no exact reporter settings import URL.');
     }
-    const importUrl = new URL(facts.settingsImportUrl);
+    const importUrl = parseReporterSettingsImportUrl(facts.settingsImportUrl);
     if (!TRUSTED_REPORT_SETTINGS_HOSTS.has(importUrl.hostname.toLowerCase())) {
         throw new Error(`Golden settings import host is not trusted: ${importUrl.hostname}.`);
     }

@@ -229,6 +229,22 @@ describe('assessGoldenAgentEnvironment', () => {
         });
     });
 
+    it('reads the reporter settings from an HTML-escaped link the extraction copied verbatim', async () => {
+        // GitHub issue bodies carry the import link with `&amp;` separators, and a judge model
+        // may return it exactly as written.
+        const escapedUrl = REPORT_URL.replaceAll('&', '&amp;');
+        const issueFile = writeIssue(`### System configuration\n[Import](${escapedUrl})`);
+
+        expect(
+            await assessGoldenAgentEnvironment(lockedRecord(), {
+                readReporterEnvironment: () =>
+                    extractGoldenReporterEnvironment(issueFile, async () =>
+                        reportWithImport(escapedUrl),
+                    ),
+            }),
+        ).toMatchObject({ status: 'matched' });
+    });
+
     it.each(Object.entries(TRACKED_CASE_IMPORTS))(
         'matches exact reporter filter selection recorded for tracked case %s',
         async (_caseName, tracked) => {
