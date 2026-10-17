@@ -16,6 +16,7 @@ import { registerAdditionalTextModel } from '../../src/pi/runtime';
 import { SealKind } from '../../src/pi/seal-types';
 import { createSingleShotClient } from '../../src/pi/single-shot';
 import { SingleShotResultKind } from '../../src/pi/single-shot-types';
+import { VISION_IMAGE_LIMITS } from '../../src/pi/single-shot-input';
 import { ProviderRefusalStopReason, TurnStopReason } from '../../src/pi/stop-reason';
 import { createRunUsageCollector, meterSingleShotClient } from '../../src/pi/usage-collector';
 import {
@@ -23,6 +24,7 @@ import {
     startHermeticAnthropicProvider,
 } from './hermetic-anthropic-provider';
 import { ScriptedReplyKind, type ScriptedReply } from './hermetic-provider';
+import { encodePng, imageSize } from './fixtures/png-image';
 import {
     createTestPiRuntime,
     REASONING_MODEL,
@@ -360,6 +362,33 @@ describe('Anthropic Messages API', () => {
                 type: 'image',
                 source: { type: 'base64', media_type: 'image/png', data: PNG_1PX },
             }),
+        );
+    });
+
+    it('sends a page taller than the side limit within it', async () => {
+        // The native API refuses an image above 8000 px on a side with HTTP 400, so a tall
+        // full-page overview has to arrive scaled to fit.
+        provider = await startHermeticAnthropicProvider({
+            script: [{ kind: ScriptedReplyKind.Text, text: 'an image arrived' }],
+        });
+        const runtime = await createTestPiRuntime({
+            api: LlmApi.AnthropicMessages,
+            baseUrl: provider.baseUrl,
+        });
+        const page = encodePng(400, VISION_IMAGE_LIMITS.maxSidePx + 1_000, () => [200, 200, 200]);
+
+        const result = await createSingleShotClient(runtime, runtime.visionModel).text({
+            messages: [{ role: 'user', text: 'Describe the page.', images: [{ bytes: page }] }],
+        });
+
+        expect(result.kind).toBe(SingleShotResultKind.Parsed);
+        const messages = provider.requests[0]!.body.messages as {
+            content: { type: string; source?: { data: string } }[];
+        }[];
+        const image = messages.at(-1)!.content.find((part) => part.type === 'image')!;
+        const size = imageSize(Buffer.from(image.source!.data, 'base64'));
+        expect(Math.max(size.width, size.height)).toBeLessThanOrEqual(
+            VISION_IMAGE_LIMITS.maxSidePx,
         );
     });
 

@@ -10,6 +10,7 @@
  */
 import type { CallLimiter } from '../pi/call-limiter';
 import * as v from 'valibot';
+import { describeProviderFailure } from '../pi/single-shot';
 import { SingleShotResultKind } from '../pi/single-shot-types';
 import { SingleShotMessageRole, type SingleShotMessage } from '../pi/single-shot-input';
 import {
@@ -154,7 +155,7 @@ async function inventoryImages(
         ...(options.signal === undefined ? {} : { signal: options.signal }),
     });
     if (result.kind === SingleShotResultKind.ProviderFailure) {
-        throw new Error(result.message);
+        throw new Error(`Vision ${describeProviderFailure(result)}`);
     }
     if (result.kind === SingleShotResultKind.InvalidResult) {
         throw new Error(`Vision model did not return schema-valid JSON: ${result.detail}`);

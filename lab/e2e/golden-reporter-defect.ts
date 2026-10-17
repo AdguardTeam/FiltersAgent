@@ -1,3 +1,4 @@
+import { describeProviderFailure } from '../../src/pi/single-shot';
 import { SingleShotResultKind, type SingleShotClient } from '../../src/pi/single-shot-types';
 import type { LocalIssueSnapshot } from '../../src/local/issue-snapshot';
 import { stripBenchmarkIssueMarker } from '../../src/github/benchmark-issue-marker';
@@ -62,7 +63,7 @@ export async function analyzeGoldenReporterScreenshots(
             // shared with the structured path and the arm is named rather than assumed away.
             throw new Error(
                 result.kind === SingleShotResultKind.ProviderFailure
-                    ? result.message
+                    ? `Vision ${describeProviderFailure(result)}`
                     : result.detail,
             );
         }

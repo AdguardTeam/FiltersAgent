@@ -7,6 +7,7 @@
  * verdict can never be reached from pixels this run did not already cite.
  */
 import * as v from 'valibot';
+import { describeProviderFailure } from '../pi/single-shot';
 import { SingleShotResultKind } from '../pi/single-shot-types';
 import { SingleShotMessageRole, type SingleShotMessage } from '../pi/single-shot-input';
 import { TraceEventType } from '../types/trace';
@@ -513,7 +514,7 @@ export async function synthesizeFinalReview(
         // One schema-validation attempt per outer attempt: the loop owns bounded repair and the
         // dismissal audit, so the client must not burn its own repair budget here.
         if (result.kind === SingleShotResultKind.ProviderFailure) {
-            throw new Error(result.message);
+            throw new Error(`Vision ${describeProviderFailure(result)}`);
         }
         if (result.kind === SingleShotResultKind.InvalidResult) {
             lastValidationError = result.detail;
@@ -648,6 +649,12 @@ export async function synthesizeFinalReview(
 }
 
 /**
+ * Opening of the rationale a visual review records when it could not run at all. The benchmark
+ * matches it to tell a review that never happened from one that judged the page inconclusive.
+ */
+export const VISUAL_REVIEW_UNAVAILABLE_PREFIX = 'Visual review unavailable:';
+
+/**
  * Convert any model or screenshot failure into a bounded inconclusive observation.
  *
  * @param error - Failure raised while preparing or executing the visual review.
@@ -663,7 +670,7 @@ export function inconclusiveModelOutput(error: unknown): CandidateVisualReviewMo
         beforeInstances: [],
         remainingInstances: [],
         pageIntegrity: CandidateVisualPageIntegrity.Unclear,
-        rationale: `Visual review unavailable: ${detail}`.slice(0, MAX_RATIONALE_CHARS),
+        rationale: `${VISUAL_REVIEW_UNAVAILABLE_PREFIX} ${detail}`.slice(0, MAX_RATIONALE_CHARS),
         observedDamage: [],
     };
 }

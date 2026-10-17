@@ -1,9 +1,14 @@
+import { randomBytes } from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
 import * as v from 'valibot';
 import { ReasoningEffort } from '../../src/config/reasoning-effort';
 import { createSingleShotClient } from '../../src/pi/single-shot';
 import { SingleShotResultKind } from '../../src/pi/single-shot-types';
-import { MAX_VISION_IMAGE_BYTES } from '../../src/pi/single-shot-input';
+import {
+    MAX_VISION_IMAGE_BYTES,
+    VISION_IMAGE_LIMITS,
+    type SingleShotImage,
+} from '../../src/pi/single-shot-input';
 import type { Logger } from '../../src/logger/logger';
 import {
     HermeticScenario,
@@ -20,6 +25,7 @@ import {
     createTestSingleShotClients,
     createTestVisionClient,
 } from './test-runtime';
+import { encodePng, imageSize, type RgbPixel } from './fixtures/png-image';
 
 const VerdictSchema = v.object({ verdict: v.string(), count: v.number() });
 
@@ -587,5 +593,162 @@ describe('createSingleShotClient', () => {
             }),
         ).rejects.toThrow(/byte cap/);
         expect(provider.requests).toHaveLength(0);
+    });
+});
+
+/**
+ * Smallest images in the other two formats a reporter screenshot may arrive in, each 1x1.
+ */
+const GIF_1PX = 'R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+const WEBP_1PX = 'UklGRiQAAABXRUJQVlA4IBgAAAAwAQCdASoBAAEAAwA0JaQAA3AA/vuUAAA=';
+
+/**
+ * Generous per-test bound for the image-fit suites. Every image is decoded, resized and re-encoded
+ * in its own worker, and a shared CI runner needs several times the five-second default for the
+ * many-image and oversized-bytes cases.
+ */
+const VISION_FIT_TEST_TIMEOUT_MS = 30_000;
+
+/**
+ * One image as the provider received it.
+ */
+interface ReceivedImage {
+    /**
+     * Media type the data URI declared.
+     */
+    mediaType: string;
+
+    /**
+     * Decoded image bytes.
+     */
+    bytes: Buffer;
+}
+
+/**
+ * Decode every image part the provider received in the request's last user message.
+ *
+ * @param request - Recorded request messages.
+ * @returns The received images, in order.
+ */
+function receivedImages(request: HermeticProvider['requests'][number]): ReceivedImage[] {
+    const content = request.messages.at(-1)!.content as {
+        type: string;
+        image_url?: { url: string };
+    }[];
+    return content
+        .filter((part) => part.type === 'image_url')
+        .map((part) => {
+            const [header, data] = part.image_url!.url.split(',');
+            return {
+                mediaType: header!.slice('data:'.length).split(';')[0]!,
+                bytes: Buffer.from(data!, 'base64'),
+            };
+        });
+}
+
+/**
+ * Send one structured vision call carrying `images` and return what the provider received.
+ *
+ * @param images - Images attached to the single user turn.
+ * @returns The images as the provider received them.
+ */
+async function sendImages(images: SingleShotImage[]): Promise<ReceivedImage[]> {
+    provider = await startHermeticProvider({
+        scenario: HermeticScenario.Scripted,
+        script: [{ kind: ScriptedReplyKind.Text, text: '{"verdict":"x","count":1}' }],
+    });
+    const client = await createTestVisionClient(provider.baseUrl);
+    const result = await client.structured({
+        messages: [{ role: 'user', text: 'inspect', images }],
+        schema: VerdictSchema,
+    });
+    expect(result.kind).toBe(SingleShotResultKind.Parsed);
+    return receivedImages(provider.requests[0]!);
+}
+
+/**
+ * A page-like stripe pattern: a band of colour every 50 rows, so the image is not one flat colour.
+ *
+ * @param _x - Column, unused.
+ * @param y - Row.
+ * @returns The pixel colour.
+ */
+function stripes(_x: number, y: number): RgbPixel {
+    return Math.floor(y / 50) % 2 === 0 ? [240, 240, 240] : [30, 90, 200];
+}
+
+describe('vision image limits', { timeout: VISION_FIT_TEST_TIMEOUT_MS }, () => {
+    // The contract: whatever a caller attaches, the provider receives images inside the published
+    // per-image limits, so no vision request is refused for the image itself. A live run sent a
+    // 1920x14044 full-page overview and Anthropic refused every such request with HTTP 400.
+    it('scales a page taller than the side limit into one image that keeps the whole page', async () => {
+        const width = 400;
+        const height = VISION_IMAGE_LIMITS.maxSidePx + 1_000;
+
+        const [received] = await sendImages([{ bytes: encodePng(width, height, stripes) }]);
+
+        const size = imageSize(received!.bytes);
+        expect(size.height).toBeLessThanOrEqual(VISION_IMAGE_LIMITS.maxSidePx);
+        expect(size.width).toBeLessThanOrEqual(VISION_IMAGE_LIMITS.maxSidePx);
+        // Scaled, not cropped: the received image keeps the page's proportions.
+        expect(size.height / size.width).toBeCloseTo(height / width, 1);
+    });
+
+    it('holds every image of a many-image request to the stricter side limit', async () => {
+        const count = VISION_IMAGE_LIMITS.manyImagesThreshold + 1;
+        const image = encodePng(20, VISION_IMAGE_LIMITS.manyImagesMaxSidePx + 500, stripes);
+
+        const received = await sendImages(Array.from({ length: count }, () => ({ bytes: image })));
+
+        expect(received).toHaveLength(count);
+        for (const { bytes } of received) {
+            const size = imageSize(bytes);
+            expect(Math.max(size.width, size.height)).toBeLessThanOrEqual(
+                VISION_IMAGE_LIMITS.manyImagesMaxSidePx,
+            );
+        }
+    });
+
+    it('fits an image whose encoded size passes the per-image size limit', async () => {
+        // Random noise does not compress, so the PNG stays under the input cap while its base64
+        // form passes the per-image limit.
+        const width = 1_500;
+        const noise = randomBytes(width * 1_100 * 3);
+        const image = encodePng(width, 1_100, (x, y) => {
+            const offset = (y * width + x) * 3;
+            return [noise[offset]!, noise[offset + 1]!, noise[offset + 2]!];
+        });
+        expect(image.byteLength).toBeLessThanOrEqual(MAX_VISION_IMAGE_BYTES);
+        expect(image.toString('base64').length).toBeGreaterThan(
+            VISION_IMAGE_LIMITS.maxEncodedBytes,
+        );
+
+        const [received] = await sendImages([{ bytes: image }]);
+
+        expect(received!.bytes.toString('base64').length).toBeLessThanOrEqual(
+            VISION_IMAGE_LIMITS.maxEncodedBytes,
+        );
+    });
+
+    it('sends an image already inside the limits byte for byte', async () => {
+        const image = encodePng(1_920, 1_080, stripes);
+
+        const [received] = await sendImages([{ bytes: image }]);
+
+        expect(received!.bytes.equals(image)).toBe(true);
+        expect(received!.mediaType).toBe('image/png');
+    });
+
+    it.each([
+        { format: 'GIF', data: GIF_1PX, mediaType: 'image/gif' },
+        { format: 'WebP', data: WEBP_1PX, mediaType: 'image/webp' },
+    ])('labels a $format reporter screenshot with its own media type', async (sample) => {
+        // A provider may refuse an image whose declared type does not match its bytes.
+        const image = Buffer.from(sample.data, 'base64');
+
+        const [received] = await sendImages([{ bytes: image }]);
+
+        expect(received!.bytes.equals(image)).toBe(true);
+        expect(received!.mediaType).toBe(sample.mediaType);
     });
 });

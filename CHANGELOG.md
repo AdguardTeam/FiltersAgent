@@ -33,6 +33,12 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Fixed
 
+- Fixed full-page visual review on Claude vision models: screenshots longer
+  than 8000 px are now scaled to the provider's image limits instead of being
+  rejected, and a provider rejection of a vision request is reported as a
+  rejection.
+- Fixed GIF and WebP reporter screenshots being sent to the vision model
+  labelled as PNG.
 - Fixed the usage summary leaving out single-shot attempts that failed and
   were retried.
 - Fixed historical benchmark and local historical `fix` runs using current

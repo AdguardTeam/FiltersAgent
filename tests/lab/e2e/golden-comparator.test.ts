@@ -470,6 +470,37 @@ describe('classifyGoldenResult', () => {
         expect(probe).not.toHaveBeenCalled();
     });
 
+    it('names why the visual review was unavailable instead of the agent prose', async () => {
+        // A vision provider that refused the screenshots is a provider rejection; the benchmark
+        // detail has to say so, not echo whatever the agent concluded around it.
+        const rule = 'wpoznaniu.pl##.inner-ads-header';
+        const rationale =
+            'Visual review unavailable: Vision provider rejected the request: 400: ' +
+            '{"message":"At least one of the image dimensions exceed max allowed size"}';
+        const probe = vi.fn();
+
+        const result = await classifyGoldenResult(
+            semanticallyVerifiedResult(
+                rule,
+                {},
+                {
+                    reasoning: 'The page looks fixed but vision could not confirm it.',
+                    candidateVisualReview: {
+                        ...semanticallyVerifiedResult(rule).candidateVisualReview!,
+                        verdict: 'inconclusive',
+                        rationale,
+                    },
+                },
+            ),
+            HUMAN_FIX,
+            probe,
+        );
+
+        expect(result).toMatchObject({ status: 'infrastructure_failure', exitCode: 3 });
+        expect(result.detail).toBe(rationale);
+        expect(probe).not.toHaveBeenCalled();
+    });
+
     it('keeps an explicit agent infrastructure failure above missing environment evidence', async () => {
         const probe = vi.fn();
 

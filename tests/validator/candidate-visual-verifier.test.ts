@@ -19,6 +19,7 @@ import {
     startHermeticProvider,
 } from '../pi/hermetic-provider';
 import { VISION_MODEL, createTestVisionClient } from '../pi/test-runtime';
+import { encodePng } from '../pi/fixtures/png-image';
 
 const CANDIDATE_RULE = 'example.test##.advert';
 const CANDIDATE_HASH = createHash('sha256').update(CANDIDATE_RULE).digest('hex');
@@ -112,7 +113,11 @@ function makeOptions(
         ...evidence.beforeTiles,
         ...evidence.afterTiles,
     ]) {
-        writeFileSync(item.path, Buffer.from(`png:${item.id}`));
+        // A real image: the single-shot client decodes every image to fit it to provider limits.
+        writeFileSync(
+            item.path,
+            encodePng(4, 4, () => [255, 255, 255]),
+        );
     }
     return {
         candidateRule: CANDIDATE_RULE,
@@ -776,7 +781,30 @@ describe('reviewCandidateVisually', () => {
                 observedDamage: [],
             });
             expect(result.review.rationale).toContain('vision provider unavailable');
+            expect(result.review.rationale).not.toMatch(/rejected/u);
             expect(persisted).toEqual(result.review);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it('names a provider rejection of the screenshots as a rejection', async () => {
+        // An HTTP 400 for the image itself is refused identically on every retry; the review must
+        // say the provider rejected the request rather than read like an outage.
+        const root = mkdtempSync(join(tmpdir(), 'candidate-visual-review-rejected-'));
+        const recorder = new TraceRecorder({ runId: 'visual-review', issueNumber: 3, mode: 'fix' });
+        const { vision } = makeProvider(
+            new Error(
+                '400: {"message":"messages.0.content.2.image.source.base64.data: At least one ' +
+                    'of the image dimensions exceed max allowed size: 8000 pixels"}',
+            ),
+        );
+        try {
+            const result = await reviewCandidateVisually(makeOptions(root, vision, recorder));
+
+            expect(result.review.verdict).toBe('inconclusive');
+            expect(result.review.rationale).toMatch(/rejected/u);
+            expect(result.review.rationale).toContain('8000 pixels');
         } finally {
             rmSync(root, { recursive: true, force: true });
         }

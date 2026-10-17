@@ -7,10 +7,12 @@ import {
     type SingleShotCallOptions,
     type SingleShotClient,
     type SingleShotClientDefaults,
+    type SingleShotProviderFailure,
     type SingleShotResult,
     type SingleShotStructuredOptions,
 } from './single-shot-types';
 import type { Logger } from '../logger/logger';
+import { isDeterministicProviderMessage } from './run-sealing';
 import type { PiRuntime } from './runtime';
 import { completeOnce } from './single-shot-completion';
 import { toPiMessages } from './single-shot-input';
@@ -391,6 +393,23 @@ function logSingleShotCompletion(
         },
         'single-shot LLM call completed',
     );
+}
+
+/**
+ * Say what went wrong with one single-shot provider failure, naming a rejection as one.
+ *
+ * A deterministic status (an HTTP 400 for an image the provider will not take, say) means the
+ * provider refused this exact request and refuses it again on every retry; anything else is the
+ * provider failing to answer. Every caller that turns a provider failure into an error or a report
+ * reads it from here, so a rejection never reads like an outage.
+ *
+ * @param failure - The provider failure of one single-shot call.
+ * @returns The provider's own message, prefixed with what kind of failure it was.
+ */
+export function describeProviderFailure(failure: SingleShotProviderFailure): string {
+    return isDeterministicProviderMessage(failure.message)
+        ? `provider rejected the request: ${failure.message}`
+        : `provider failed: ${failure.message}`;
 }
 
 /**

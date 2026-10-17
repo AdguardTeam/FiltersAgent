@@ -2,9 +2,11 @@ import { createHash } from 'node:crypto';
 import { RuleKind, normalizeRule } from '../../src/repo/rule-normalizer';
 import {
     EffectiveMode,
+    FixRunStatus,
     VerificationStatus,
     type FixRunResult,
 } from '../../src/types/fix-run-result';
+import { VISUAL_REVIEW_UNAVAILABLE_PREFIX } from '../../src/validator/candidate-visual-synthesis';
 import type { GoldenAgentEnvironmentAssessment } from './golden-agent-environment';
 import type { ExtractedHumanFix, HumanFixCandidate } from './human-commit-oracle';
 import {
@@ -397,25 +399,37 @@ function candidateMatches(result: FixRunResult, human: HumanFixCandidate): boole
 }
 
 /**
- * Decide whether the locked run failed before producing comparable agent behavior.
+ * Decide whether the locked run failed before producing comparable agent behavior, and say why.
+ *
+ * A run-level failure is explained by the run's own reasoning. A visual review that could not run
+ * is explained by the review's rationale, which names what the vision provider did — refused the
+ * request or failed to answer — where the agent's reasoning only reports what it concluded around
+ * the missing review.
  *
  * @param result - Locked core result.
- * @returns True only for explicitly identified browser, build, LLM, or vision failures.
+ * @returns The failure detail for explicitly identified browser, build, LLM, or vision failures;
+ *   null otherwise.
  */
-function isInfrastructureRunFailure(result: FixRunResult): boolean {
-    const visualReviewUnavailable =
-        result.candidateVisualReview?.verdict === 'inconclusive' &&
-        result.candidateVisualReview.rationale.startsWith('Visual review unavailable:');
+function infrastructureRunFailureDetail(result: FixRunResult): string | null {
     const infrastructureFallback = isInfrastructureFallbackReason(result.fallbackReason ?? null);
     const targetEnvironmentFallback = isTargetEnvironmentFallbackReason(
         result.fallbackReason ?? null,
     );
-    return (
+    if (
         result.infrastructureFailureReason !== undefined ||
-        (result.runStatus === 'browser_unavailable' && !targetEnvironmentFallback) ||
-        infrastructureFallback ||
-        visualReviewUnavailable
-    );
+        (result.runStatus === FixRunStatus.BrowserUnavailable && !targetEnvironmentFallback) ||
+        infrastructureFallback
+    ) {
+        return result.reasoning;
+    }
+    const review = result.candidateVisualReview;
+    if (
+        review?.verdict === CandidateVisualVerdict.Inconclusive &&
+        review.rationale.startsWith(VISUAL_REVIEW_UNAVAILABLE_PREFIX)
+    ) {
+        return review.rationale;
+    }
+    return null;
 }
 
 /**
@@ -437,11 +451,12 @@ export function classifyGoldenPreOracleResult(
     const actualRule = result.candidatePatch
         ? normalizeRule(result.candidatePatch.rule).canonical
         : null;
-    if (isInfrastructureRunFailure(result)) {
+    const infrastructureDetail = infrastructureRunFailureDetail(result);
+    if (infrastructureDetail !== null) {
         return {
             status: 'infrastructure_failure',
             exitCode: 3,
-            detail: result.reasoning,
+            detail: infrastructureDetail,
             actualRule,
             expectedRule: null,
             humanFixCommit,
@@ -524,16 +539,17 @@ export async function classifyGoldenResult(
     const actualRule = result.candidatePatch
         ? normalizeRule(result.candidatePatch.rule).canonical
         : null;
+    const infrastructureDetail = infrastructureRunFailureDetail(result);
     if (agentEnvironment) {
         const preOracle = classifyGoldenPreOracleResult(result, agentEnvironment, humanFix.commit);
         if (preOracle) {
             return { ...preOracle, humanFixFirstParent: humanFix.firstParent };
         }
-    } else if (isInfrastructureRunFailure(result)) {
+    } else if (infrastructureDetail !== null) {
         return {
             status: 'infrastructure_failure',
             exitCode: 3,
-            detail: result.reasoning,
+            detail: infrastructureDetail,
             actualRule,
             expectedRule: null,
             humanFixCommit: humanFix.commit,

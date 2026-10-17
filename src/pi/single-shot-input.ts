@@ -1,13 +1,16 @@
 import { readFile } from 'node:fs/promises';
 import type { ImageContent, Message } from '@earendil-works/pi-ai';
+import { resizeImage } from '@earendil-works/pi-coding-agent';
 
 /**
  * Caller-input conversion for single-shot LLM calls: caller-authored messages to pi context parts
  * (system entries merge into the one system prompt, user entries become text or
  * text-plus-image-parts messages) and image intake (screenshot file path or in-memory bytes become
- * pi image content parts, with MIME sniffing and the vision byte cap enforced before any request
- * leaves the module). Owned by the input side of the single-shot mechanism so the call-path module
- * stays inside the repo's ~500-line module rule.
+ * pi image content parts, with MIME sniffing, the vision byte cap and the provider's per-image
+ * limits enforced before any request leaves the module). Every image any vision request carries
+ * passes through here, so this is the one place that fits images to {@link VISION_IMAGE_LIMITS}.
+ * Owned by the input side of the single-shot mechanism so the call-path module stays inside the
+ * repo's ~500-line module rule.
  *
  * The same limits decide, before a request is even planned, whether a stored full-page overview may
  * be offered to vision at all ({@link visionOverviewRefusal}); every caller that makes that
@@ -28,6 +31,16 @@ export const VisionImageMime = {
      * Joint Photographic Experts Group.
      */
     Jpeg: 'image/jpeg',
+
+    /**
+     * Graphics Interchange Format; a reporter screenshot may arrive as one.
+     */
+    Gif: 'image/gif',
+
+    /**
+     * WebP; a reporter screenshot may arrive as one.
+     */
+    Webp: 'image/webp',
 } as const;
 
 /**
@@ -36,12 +49,44 @@ export const VisionImageMime = {
 export type VisionImageMime = (typeof VisionImageMime)[keyof typeof VisionImageMime];
 
 /**
- * Largest image sent to the vision model inside one request.
+ * Largest image a caller may hand to the vision model, in raw bytes before base64 encoding.
  *
- * The cap measures raw image bytes before base64 encoding. Anthropic's per-image limit is 5 MB;
- * applying it to both APIs keeps one shared cap below the gateway's roughly 10 MB request ceiling.
+ * One shared cap for both APIs that keeps a request of a few images below the gateway's roughly 10
+ * MB request ceiling. What the provider itself accepts per image is {@link VISION_IMAGE_LIMITS},
+ * which every image is fitted to after this cap admits it.
  */
 export const MAX_VISION_IMAGE_BYTES = 5 * 1024 * 1024;
+
+/**
+ * Per-image limits a vision provider enforces, from Anthropic's vision guide
+ * (https://platform.claude.com/docs/en/build-with-claude/vision#request-limits), the strictest of
+ * the supported providers; OpenAI-family models downscale oversized images instead of refusing
+ * them. A request breaking one is refused with HTTP 400 for the image itself, so every image is
+ * fitted to them before it leaves this module.
+ */
+export const VISION_IMAGE_LIMITS = {
+    /**
+     * Longest side of one image: "The maximum dimensions per image are 8000x8000 px."
+     */
+    maxSidePx: 8_000,
+
+    /**
+     * Image count above which the stricter side limit applies to every image of the request.
+     */
+    manyImagesThreshold: 20,
+
+    /**
+     * Longest side of every image in a request carrying more than `manyImagesThreshold` images.
+     */
+    manyImagesMaxSidePx: 2_000,
+
+    /**
+     * Base64-encoded size of one image: 5 MB on Amazon Bedrock and Google Cloud, 10 MB on the
+     * Claude API itself. An OpenAI-compatible gateway does not say which platform serves the model,
+     * so the lower one holds on both APIs.
+     */
+    maxEncodedBytes: 5 * 1024 * 1024,
+} as const;
 
 /**
  * Tallest full-page overview, as a multiple of its width, that a vision model can still read.
@@ -214,28 +259,82 @@ export type SingleShotMessage =
       };
 
 /**
- * Detect the exact image MIME from magic bytes so JPEG overviews are not mislabeled as PNG.
+ * Signature a GIF file starts with, shared by GIF87a and GIF89a.
+ */
+const GIF_SIGNATURE = Buffer.from('GIF8', 'ascii');
+
+/**
+ * RIFF container tag a WebP file starts with.
+ */
+const RIFF_SIGNATURE = Buffer.from('RIFF', 'ascii');
+
+/**
+ * Form type at byte 8 of a RIFF container that holds a WebP image.
+ */
+const WEBP_FORM_TYPE = Buffer.from('WEBP', 'ascii');
+
+/**
+ * Byte offset of the RIFF form type, after the tag and the four-byte chunk size.
+ */
+const RIFF_FORM_TYPE_OFFSET = 8;
+
+/**
+ * Detect the exact image MIME from magic bytes. An image inside the provider limits is sent as it
+ * is, with this type declared beside it, and a provider may refuse an image whose declared type
+ * does not match its bytes.
  *
  * @param bytes - Encoded image bytes.
- * @returns JPEG MIME for a JPEG SOI marker, PNG MIME otherwise.
+ * @returns JPEG, GIF or WebP MIME for their signatures, PNG MIME otherwise.
  */
 function sniffImageMime(bytes: Uint8Array): VisionImageMime {
-    if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    const head = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    if (head.length >= 3 && head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff) {
         return VisionImageMime.Jpeg;
+    }
+    if (head.subarray(0, GIF_SIGNATURE.length).equals(GIF_SIGNATURE)) {
+        return VisionImageMime.Gif;
+    }
+    if (
+        head.subarray(0, RIFF_SIGNATURE.length).equals(RIFF_SIGNATURE) &&
+        head
+            .subarray(RIFF_FORM_TYPE_OFFSET, RIFF_FORM_TYPE_OFFSET + WEBP_FORM_TYPE.length)
+            .equals(WEBP_FORM_TYPE)
+    ) {
+        return VisionImageMime.Webp;
     }
     return VisionImageMime.Png;
 }
 
 /**
- * Materialize one caller image input into a pi image content part, enforcing the byte cap.
+ * Longest image side a request carrying `imageCount` images may send.
+ *
+ * @param imageCount - Images in the whole request.
+ * @returns The side limit every image of that request must fit.
+ */
+function maxSidePx(imageCount: number): number {
+    return imageCount > VISION_IMAGE_LIMITS.manyImagesThreshold
+        ? VISION_IMAGE_LIMITS.manyImagesMaxSidePx
+        : VISION_IMAGE_LIMITS.maxSidePx;
+}
+
+/**
+ * Materialize one caller image input into a pi image content part that fits the provider limits.
+ *
+ * An image inside the limits is sent byte for byte. A larger one is scaled down whole, aspect kept,
+ * and re-encoded as whichever of PNG or JPEG fits; cropping or splitting would change what the
+ * caller asked about. Past the side limit alone, scaling loses nothing the model could read: the
+ * provider would shrink the image at least as far before the model sees it. Past the encoded-size
+ * limit it does lose detail the provider would have kept: the image is re-encoded as JPEG at
+ * falling quality, then shrunk further, until it fits.
  *
  * Pi maps base64 images to image_url data URIs on OpenAI or image source blocks on Anthropic.
  * Neither path here sets a provider-specific detail hint.
  *
  * @param image - File path or in-memory bytes.
+ * @param sideLimitPx - Longest side the image may keep in this request.
  * @returns The pi image content part.
  */
-export async function toImageContent(image: SingleShotImage): Promise<ImageContent> {
+async function toImageContent(image: SingleShotImage, sideLimitPx: number): Promise<ImageContent> {
     const bytes = 'path' in image ? await readFile(image.path) : image.bytes;
     if (bytes.byteLength > MAX_VISION_IMAGE_BYTES) {
         throw new Error(
@@ -243,16 +342,24 @@ export async function toImageContent(image: SingleShotImage): Promise<ImageConte
                 `(${bytes.byteLength} bytes)`,
         );
     }
-    return {
-        type: 'image',
-        data: Buffer.from(bytes).toString('base64'),
-        mimeType: sniffImageMime(bytes),
-    };
+    const fitted = await resizeImage(bytes, sniffImageMime(bytes), {
+        maxWidth: sideLimitPx,
+        maxHeight: sideLimitPx,
+        maxBytes: VISION_IMAGE_LIMITS.maxEncodedBytes,
+    });
+    if (fitted === null) {
+        throw new Error(
+            `Vision image of ${bytes.byteLength} bytes could not be decoded or fitted to ` +
+                `${sideLimitPx} px per side and ${VISION_IMAGE_LIMITS.maxEncodedBytes} encoded bytes`,
+        );
+    }
+    return { type: 'image', data: fitted.data, mimeType: fitted.mimeType };
 }
 
 /**
  * Convert caller messages into pi context parts: system texts joined in order, user messages with
- * optional image parts; each image is read and capped at that instant.
+ * optional image parts; each image is read, capped and fitted at that instant, against the side
+ * limit the request's total image count selects.
  *
  * @param messages - Caller-authored single-shot messages.
  * @returns The joined system prompt (when any) and the pi message list.
@@ -270,6 +377,12 @@ export async function toPiMessages(messages: SingleShotMessage[]): Promise<{
 }> {
     const systemTexts: string[] = [];
     const converted: Message[] = [];
+    const sideLimitPx = maxSidePx(
+        messages.reduce(
+            (count, message) => count + ('images' in message ? message.images.length : 0),
+            0,
+        ),
+    );
     for (const message of messages) {
         if (message.role === SingleShotMessageRole.System) {
             systemTexts.push(message.text);
@@ -281,7 +394,9 @@ export async function toPiMessages(messages: SingleShotMessage[]): Promise<{
         }
         const parts = [
             ...(message.text !== undefined ? [{ type: 'text' as const, text: message.text }] : []),
-            ...(await Promise.all(message.images.map(toImageContent))),
+            ...(await Promise.all(
+                message.images.map((image) => toImageContent(image, sideLimitPx)),
+            )),
         ];
         converted.push({ role: 'user', content: parts, timestamp: Date.now() });
     }

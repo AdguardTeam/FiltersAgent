@@ -2,6 +2,7 @@ import { realpathSync } from 'node:fs';
 import { isAbsolute, relative } from 'node:path';
 import * as v from 'valibot';
 import { isBreakageSymptom, type SymptomKind } from '../validator/symptom-rubric';
+import { describeProviderFailure } from '../pi/single-shot';
 import { SingleShotResultKind, type SingleShotClient } from '../pi/single-shot-types';
 import type { SingleShotMessage } from '../pi/single-shot-input';
 import type { TraceRecorder } from '../tracer/trace-recorder';
@@ -375,7 +376,7 @@ export async function inspectInventoryBatch(
         ...(options.signal === undefined ? {} : { signal: options.signal }),
     });
     if (result.kind === SingleShotResultKind.ProviderFailure) {
-        throw new Error(result.message);
+        throw new Error(`Vision ${describeProviderFailure(result)}`);
     }
     if (result.kind === SingleShotResultKind.InvalidResult) {
         throw new Error(`Vision model did not return schema-valid JSON: ${result.detail}`);

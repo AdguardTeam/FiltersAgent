@@ -14,6 +14,7 @@ import { isAbsolute, relative, sep } from 'node:path';
 import * as v from 'valibot';
 import { VISION_TOOL_DEADLINE_MS } from './vision-tool-deadline';
 import { withToolDeadline } from '../pi/session-tools';
+import { describeProviderFailure } from '../pi/single-shot';
 import { SingleShotResultKind, type SingleShotClient } from '../pi/single-shot-types';
 import type { TraceRecorder } from '../tracer/trace-recorder';
 import { type SymptomKind } from '../validator/symptom-rubric';
@@ -215,7 +216,7 @@ export function registerAnalyzeScreenshotTool(
                         const detail =
                             result.kind === SingleShotResultKind.InvalidResult
                                 ? result.detail
-                                : result.message;
+                                : `Vision ${describeProviderFailure(result)}`;
                         return {
                             artifactId,
                             error: `Screenshot analysis failed: ${detail.slice(0, MAX_VISION_FAILURE_DETAIL_CHARS)}`,
