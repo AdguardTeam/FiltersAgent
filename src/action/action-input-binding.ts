@@ -25,6 +25,10 @@ import {
     LLM_VISION_MODEL_VAR,
 } from '../config/config';
 import { ConfigError } from '../config/config-error';
+import {
+    CLOAKBROWSER_AUTO_UPDATE_VAR,
+    CLOAKBROWSER_AUTO_UPDATE_DISABLED,
+} from '../browser/cloakbrowser-auto-update';
 import { LLM_API_VAR } from '../config/llm-api';
 import {
     GITHUB_REPOSITORY_VAR,
@@ -35,18 +39,6 @@ import type { AgentRunInputSources } from '../entry/entry-inputs';
 import { BrowserExtensionExecutorName } from '../environment/executor-name';
 import { AgentActionInputName } from './action-input-names';
 import { GITHUB_WORKSPACE_VAR, workspaceArtifactsDefault } from './container-context';
-
-/**
- * Environment variable cloakbrowser consults before self-updating; pinned for every action run.
- */
-const CLOAKBROWSER_AUTO_UPDATE_VAR = 'CLOAKBROWSER_AUTO_UPDATE';
-
-/**
- * The value pinning {@link CLOAKBROWSER_AUTO_UPDATE_VAR} off: an auto-update mid-run would swap the
- * browser binary under the run and silently invalidate it. The Docker image installs the browser at
- * build time; the action face verifies its presence only and never downloads.
- */
-const CLOAKBROWSER_AUTO_UPDATE_DISABLED = 'false';
 
 /**
  * Which entry environment variable each environment-channel input feeds, keyed by the input-name
@@ -282,6 +274,7 @@ export function mapAgentRunSources(
     };
 
     const envAdditions: Record<string, string> = {
+        // The image installs Chromium at build time; changing the binary mid-run invalidates it.
         [CLOAKBROWSER_AUTO_UPDATE_VAR]: CLOAKBROWSER_AUTO_UPDATE_DISABLED,
     };
     // `Object.entries` always widens object keys to `string`; the cast recovers the input-name

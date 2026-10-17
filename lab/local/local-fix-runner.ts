@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import {
-    extname,
     isAbsolute,
     join,
     relative,
@@ -46,21 +45,14 @@ import {
     guidanceRepositorySlugFromRemote,
 } from './knowledge-base-preparer';
 import type { PreparedKnowledgeBase } from './knowledge-base-preparer';
-import { loadRunInstruction, toInstructionProvenance } from './instruction-provisioning';
+import {
+    loadRunInstruction,
+    refuseLoadedRunInstruction,
+    toInstructionProvenance,
+} from './instruction-provisioning';
 import { fileBackedApplicationRefusalDetail } from '../../src/knowledge/instruction-application';
 import { parseRepositorySlugFromGitUrl } from '../../src/types/repository-slug';
-import {
-    AgentIssueInputSchema,
-    loadLocalIssueSnapshot,
-    safeAttachmentExtension,
-    toAgentIssueInput,
-    type AgentIssueInput,
-} from '../../src/local/issue-snapshot';
-import {
-    copyVerifiedAttachments,
-    copyVerifiedIssueInput,
-    type VerifiedIssueRevision,
-} from '../../src/local/issue-revision';
+import type { VerifiedIssueRevision } from '../../src/local/issue-revision';
 import { clearLocalRunOutputDir } from '../../src/local/output-directory';
 import {
     publishLocalRun,
@@ -79,6 +71,7 @@ import {
 import { RedirectOriginPolicy } from '../../src/browser/redirect-origin-policy';
 import {
     LocalFailureStage,
+    INTAKE_SKIPPED_PREFIX,
     FileBackedApplicationRefusalError,
     infrastructureFailureReasonForStage,
 } from './local-failure-stage';
@@ -96,15 +89,29 @@ import {
     removePrivateEvidenceCollection,
     type PrivateEvidenceCollection,
 } from './local-evidence-publish-step';
+import {
+    loadLegacyLocalFixInput,
+    materializeVerifiedLocalFixInput,
+    type LocalFixInputLoader,
+} from './local-fix-input';
 import { ExtensionEnvironmentKind } from '../../src/types/extension-environment-kind';
 import { RepositoryEditKind } from '../../src/types/repository-edit-kind';
-import { IssueAttachmentKind } from '../../src/types/issue-attachment-kind';
 import { KnowledgeBaseEnvironmentKind } from '../../src/types/knowledge-base-environment-kind';
 
 /**
  * CLI-independent options for one local browser-first fix run.
  */
 export interface RunLocalFixOptions {
+    /**
+     * Present the historical report as open and unassigned without resolution labels.
+     */
+    neutralIssueInput?: boolean;
+
+    /**
+     * Refuse loaded repository instructions before preparing guidance or running the core.
+     */
+    refuseRepositoryInstruction?: boolean;
+
     /**
      * Issue number expected in the local snapshot.
      */
@@ -176,6 +183,11 @@ export interface RunLocalFixOptions {
  * CLI-independent options for a fix run whose issue revision is already verified in memory.
  */
 export interface RunVerifiedLocalFixOptions {
+    /**
+     * Refuse loaded repository instructions before preparing guidance or running the core.
+     */
+    refuseRepositoryInstruction?: boolean;
+
     /**
      * Issue number expected in the verified revision.
      */
@@ -255,26 +267,6 @@ export interface RunVerifiedLocalFixOptions {
      */
     lintCommand?: string;
 }
-
-/**
- * Immutable issue data prepared before environment or model work.
- */
-interface PreparedLocalFixInput {
-    /**
-     * Prompt-safe issue supplied to the common core.
-     */
-    issue: AgentIssueInput;
-
-    /**
-     * Owned prompt-visible screenshot paths used by the report adapter.
-     */
-    issueScreenshots: string[];
-}
-
-/**
- * Input loader executed after the runner owns and clears its output directory.
- */
-type LocalFixInputLoader = (outputDir: string) => PreparedLocalFixInput;
 
 /**
  * Apply an optional trusted campaign documentation pin to a resolved local environment.
@@ -471,69 +463,6 @@ export function renderLocalCandidatePatch(checkoutPath: string, candidate: Candi
  */
 function prepareOutputArtifacts(outputDir: string, workspaceRoot: string): string {
     return clearLocalRunOutputDir(outputDir, workspaceRoot, ['runs', 'collections']);
-}
-
-/**
- * Load and validate the legacy file-based snapshot adapter.
- *
- * @param options - Legacy issue-file options.
- * @returns Prompt-safe issue and validated source attachment paths.
- */
-function loadLegacyLocalFixInput(options: RunLocalFixOptions): PreparedLocalFixInput {
-    const snapshot = loadLocalIssueSnapshot(options.issueFile);
-    if (snapshot.rawIssue.number !== options.issueNumber) {
-        throw new Error(
-            `Local issue snapshot is #${snapshot.rawIssue.number}, expected ` +
-                `#${options.issueNumber}.`,
-        );
-    }
-    return {
-        issue: toAgentIssueInput(snapshot),
-        issueScreenshots: snapshot.attachments
-            .filter(
-                (attachment) =>
-                    attachment.kind === IssueAttachmentKind.IssueScreenshot &&
-                    attachment.promptVisible,
-            )
-            .map((attachment) => attachment.localPath),
-    };
-}
-
-/**
- * Materialize captured revision bytes only under the runner-owned artifact tree.
- *
- * @param revision - Opaque revision produced by the integrity verifier.
- * @param outputDir - Already-cleared local investigation output.
- * @returns Prompt-safe issue whose attachment paths reference exclusive owned copies.
- */
-function materializeVerifiedLocalFixInput(
-    revision: VerifiedIssueRevision,
-    outputDir: string,
-): PreparedLocalFixInput {
-    const issue = copyVerifiedIssueInput(revision);
-    const captured = copyVerifiedAttachments(revision);
-    const inputDir = join(outputDir, 'artifacts', 'input');
-    mkdirSync(inputDir, { recursive: true, mode: 0o700 });
-    const materialized = captured.map(({ attachment, bytes }, index) => {
-        const localPath = join(
-            inputDir,
-            `${String(index + 1).padStart(2, '0')}-${attachment.sha256.slice(0, 16)}` +
-                safeAttachmentExtension(extname(attachment.localPath)),
-        );
-        writeFileSync(localPath, bytes, { flag: 'wx', mode: 0o600 });
-        return { ...attachment, localPath };
-    });
-    const promptVisible = materialized.filter((attachment) => attachment.promptVisible);
-    const ownedIssue = v.parse(AgentIssueInputSchema, {
-        ...issue,
-        attachments: promptVisible,
-    });
-    return {
-        issue: ownedIssue,
-        issueScreenshots: promptVisible
-            .filter((attachment) => attachment.kind === IssueAttachmentKind.IssueScreenshot)
-            .map((attachment) => attachment.localPath),
-    };
 }
 
 /**
@@ -842,7 +771,7 @@ async function runLocalFixWithInput(
             );
             throw new LocalExecutionInfrastructureError(
                 LocalInfrastructureFailureCategory.InvestigationInput,
-                `Issue #${issue.number} skipped: ${intake.reason}`,
+                `${INTAKE_SKIPPED_PREFIX} Issue #${issue.number}: ${intake.reason}`,
             );
         }
         const facts = intake.facts;
@@ -873,6 +802,9 @@ async function runLocalFixWithInput(
                 runConfig.instructionPath,
                 logger,
             );
+            if (options.refuseRepositoryInstruction) {
+                refuseLoadedRunInstruction(instruction, logger);
+            }
             // The same gate the public entry applies: a file-backed verification method can never
             // be honoured yet, so the run refuses here, before the core's paid investigation.
             const fileBackedRefusal = instruction

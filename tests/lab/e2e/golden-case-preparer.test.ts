@@ -108,14 +108,7 @@ function fixtureCheckout(baseRule = ''): typeof withPreparedFiltersCheckout {
 
 describe('prepareGoldenCase', () => {
     it.each([
-        [
-            'writes the reporter extension build into a v3 run.json after the guard passes',
-            '5.4.3.96',
-            '! Clean list',
-            null,
-            '',
-            [],
-        ],
+        ['writes both human timestamps into oracle.json', '5.4.3.96', '! Clean list', null, '', []],
         [
             'ignores duplicate additions from the base and prints absent removals before saving',
             '5.4.3.96',
@@ -202,6 +195,8 @@ describe('prepareGoldenCase', () => {
         });
         const inspectHistoricalMetadata = vi.fn().mockResolvedValue({
             filtersBaseSha: FILTERS_BASE_SHA,
+            issueCreatedAt: '2026-07-14T06:08:12Z',
+            fixCommittedAt: '2026-07-14T09:08:12Z',
             extensionTagCommit: 'a0dba5b957bf1a93cf3c05216f75b29223dac7e4',
             humanChangedFiles: ['BaseFilter/sections/foreign.txt'],
             humanRuleCandidates: HUMAN_RULE_CANDIDATES,
@@ -256,6 +251,8 @@ describe('prepareGoldenCase', () => {
         });
         expect(loadGoldenHumanOracle(prepared.caseDirectory)).toEqual({
             humanFixCommit: HUMAN_COMMIT,
+            issueCreatedAt: '2026-07-14T06:08:12Z',
+            fixCommittedAt: '2026-07-14T09:08:12Z',
         });
         const issueSource = readFileSync(
             join(prepared.caseDirectory, 'issue', 'issue.json'),
@@ -387,6 +384,8 @@ describe('prepareGoldenCase', () => {
                 extractReport: extractReport as never,
                 inspectHistoricalMetadata: vi.fn().mockResolvedValue({
                     filtersBaseSha: 'cd93c10da43f3dd3197d854adbe1b8218fdf8353',
+                    issueCreatedAt: '2026-07-12T01:34:22Z',
+                    fixCommittedAt: '2026-07-12T12:07:05Z',
                     extensionTagCommit: '65d6adcd0a7cdae237ff3344b190568bdb944514',
                     humanChangedFiles: ['JapaneseFilter/sections/antiadblock.txt'],
                     humanRuleLines: {
@@ -536,6 +535,8 @@ describe('prepareGoldenCase', () => {
                     extractReport: extractReport as never,
                     inspectHistoricalMetadata: vi.fn().mockResolvedValue({
                         filtersBaseSha: FILTERS_BASE_SHA,
+                        issueCreatedAt: '2026-07-14T06:08:12Z',
+                        fixCommittedAt: '2026-07-14T09:08:12Z',
                         extensionTagCommit: 'a'.repeat(40),
                         humanChangedFiles: ['BaseFilter/sections/foreign.txt'],
                         humanRuleCandidates: HUMAN_RULE_CANDIDATES,

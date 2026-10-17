@@ -103,6 +103,37 @@ describe('runMainSecretBoundary', () => {
         }
     });
 
+    it('keeps CLOAKBROWSER_AUTO_UPDATE from the workspace .env and defaults it to false otherwise', async () => {
+        const workspaceEnvironments: Record<string, string>[] = [
+            {},
+            { CLOAKBROWSER_AUTO_UPDATE: 'true' },
+        ];
+        for (const declarations of workspaceEnvironments) {
+            const env: NodeJS.ProcessEnv = {};
+            let capturedContext: MainRuntimeContext | undefined;
+            await runMainSecretBoundary({
+                env,
+                workspaceRoot: process.cwd(),
+                processTarget: new EventEmitter(),
+                loadWorkspaceEnv: () => declarations,
+                loadRuntime: async () => ({
+                    runMainRuntime: async (context) => {
+                        capturedContext = context;
+                    },
+                }),
+                stdout: { write: () => undefined },
+                stderr: { write: () => undefined },
+                setExitCode: () => undefined,
+            });
+            expect(capturedContext?.env.CLOAKBROWSER_AUTO_UPDATE).toBe(
+                declarations.CLOAKBROWSER_AUTO_UPDATE ?? 'false',
+            );
+            expect(env.CLOAKBROWSER_AUTO_UPDATE).toBe(
+                declarations.CLOAKBROWSER_AUTO_UPDATE ?? 'false',
+            );
+        }
+    });
+
     it('applies workspace generic keys with exported-environment precedence', async () => {
         const env: NodeJS.ProcessEnv = { LLM_MODEL: 'exported-model' };
         let capturedContext: MainRuntimeContext | undefined;

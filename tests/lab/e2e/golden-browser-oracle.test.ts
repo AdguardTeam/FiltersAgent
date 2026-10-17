@@ -3,8 +3,7 @@ import type { CoreConfig } from '../../../src/config/config';
 import type { GoldenOracleContext } from '../../../lab/e2e/golden-runner';
 import {
     boundedGoldenOracleProfiles,
-    buildOracleRunConfig,
-    oracleExtensionBuild,
+    buildOracleFiltersConfig,
     validateHumanCandidateInHistoricalBuild,
     createGoldenBrowserOracleProbe,
     formatGoldenTargetSiteUnavailable,
@@ -15,7 +14,7 @@ import {
 import { testCoreConfig } from '../../config/test-core-config';
 
 const coreConfig: CoreConfig = testCoreConfig({
-    llm: { apiKey: 'secret', visionModel: 'gemini-3.5-flash' },
+    llm: { apiKey: 'secret', visionModel: 'example-vision-model' },
 });
 
 const context = {
@@ -210,53 +209,13 @@ const lockedContext: GoldenOracleContext = {
             autobuildCommit: historicalBuild.autobuildCommit,
         },
     },
-    extension: {
-        source: 'historical_build',
-        extensionPath: '/tmp/cache/extensions/historical/build',
-        manifestVersion: 3,
-        extensionSourceSha256: 'e'.repeat(64),
-        historicalBuild,
+    extensionBuild: {
+        version: historicalBuild.version,
+        releaseTag: historicalBuild.releaseTag,
+        autobuildCommit: historicalBuild.autobuildCommit,
     },
+    expectedReleaseSha256: historicalBuild.releaseSha256,
 };
-
-describe('oracleExtensionBuild', () => {
-    it('returns the locked historical build identity for the judge', () => {
-        expect(oracleExtensionBuild(lockedContext)).toEqual(historicalBuild);
-        expect(buildOracleRunConfig(lockedContext).filters.environment).toEqual({
-            kind: 'historical',
-            baseSha: lockedContext.run.filtersBaseSha,
-        });
-    });
-
-    it('refuses a locked run without extension provenance', () => {
-        expect(() => oracleExtensionBuild({ ...lockedContext, extension: null })).toThrow(
-            /extension provenance/i,
-        );
-    });
-
-    it('refuses a locked pinned-release provenance', () => {
-        expect(() =>
-            oracleExtensionBuild({
-                ...lockedContext,
-                extension: {
-                    source: 'pinned_release',
-                    extensionPath: '/tmp/cache/extensions/prebuilt/release',
-                    manifestVersion: 3,
-                    extensionSourceSha256: 'e'.repeat(64),
-                },
-            }),
-        ).toThrow(/historical.*build/i);
-    });
-
-    it('refuses historical provenance without its build identity', () => {
-        expect(() =>
-            oracleExtensionBuild({
-                ...lockedContext,
-                extension: { ...lockedContext.extension!, historicalBuild: undefined },
-            }),
-        ).toThrow(/historical.*build/i);
-    });
-});
 
 vi.mock('../../../lab/local/historical-extension-build', () => ({
     prepareHistoricalExtensionBuild: vi.fn(),
@@ -269,6 +228,30 @@ vi.mock('../../../src/local/filters-preparer', () => ({
 }));
 
 describe('validateHumanCandidateInHistoricalBuild', () => {
+    it('uses the locked historical filters checkout for independent validation', () => {
+        expect(buildOracleFiltersConfig(lockedContext).environment).toEqual({
+            kind: 'historical',
+            baseSha: lockedContext.run.filtersBaseSha,
+        });
+    });
+
+    it('accepts an unknown locked digest before checking browser compatibility', async () => {
+        const { prepareHistoricalExtensionBuild } =
+            await import('../../../lab/local/historical-extension-build');
+        vi.mocked(prepareHistoricalExtensionBuild).mockResolvedValue({
+            extensionDir: '/tmp/historical-extension',
+            manifestVersion: 2,
+            provenance: { ...historicalBuild, releaseSha256: 'c'.repeat(64) },
+        });
+
+        await expect(
+            validateHumanCandidateInHistoricalBuild(coreConfig, {
+                ...lockedContext,
+                expectedReleaseSha256: null,
+            }),
+        ).rejects.toThrow(/manifest_version=2/u);
+    });
+
     it('rebuilds the locked identity and refuses a changed release digest before validation', async () => {
         const { prepareHistoricalExtensionBuild } =
             await import('../../../lab/local/historical-extension-build');

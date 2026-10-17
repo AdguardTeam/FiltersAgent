@@ -82,6 +82,12 @@ any model, browser or checkout work starts.
 marked required have no default: a missing one fails the run with a
 `ConfigError` that names it.
 
+Invalid request timeouts, retry counts and reasoning efforts name their
+`LLM_*` variable in the error. Intake provider rejections are identified as
+provider rejections and retain the stop reason in the run's failure detail.
+Benchmark judge settings use the same validation under `E2E_JUDGE_*`; see
+[Configure the judge](../guides/benchmark.md#configure-the-judge).
+
 `anthropic-messages` uses adaptive thinking and targets Claude models that
 support it (Claude 5.x).
 
@@ -113,6 +119,7 @@ and Sonnet 5.5 reject this with HTTP 400; Haiku 5.5 accepts it.
 | `ADGUARD_CLI_PATH` | No | `adguard-cli/bin/adguard-cli` | Path of the official `adguard-cli` executable the AdGuard CLI module runs |
 | `ADGUARD_CLI_HOME_ARCHIVE` | No | — | Seeded CLI home archive the AdGuard CLI module restores instead of activating |
 | `HEADLESS` | No | `true` | Run the browser headless |
+| `CLOAKBROWSER_AUTO_UPDATE` | No | `false` | CloakBrowser auto-updates in the CLI and benchmark; an explicit value, including one from `.env`, is preserved |
 | `NO_SANDBOX` | No | `false` | Pass `--no-sandbox` to Chromium |
 
 The `ADGUARD_*` variables reach the AdGuard CLI module only: see

@@ -37,7 +37,7 @@ export interface UpstreamDriftObservationRequest {
  * @param stdout - Captured ref-query output.
  * @returns Lowercased 40-hex commit, or null when the output names none.
  */
-function parseUpstreamCommit(stdout: string): string | null {
+export function parseUpstreamCommit(stdout: string): string | null {
     const firstLine = stdout.split(/\r?\n/u).find((line) => line.trim() !== '');
     const firstField = firstLine?.split(/\s+/u)[0] ?? '';
     return /^[0-9a-f]{40}$/iu.test(firstField) ? firstField.toLowerCase() : null;

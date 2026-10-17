@@ -55,6 +55,8 @@ export type LegacyGoldenE2ERun = v.InferOutput<typeof LegacyGoldenE2ERunSchema>;
 
 export const GoldenHumanOracleSchema = v.strictObject({
     humanFixCommit: FullCommitSchema,
+    issueCreatedAt: v.pipe(v.string(), v.isoTimestamp()),
+    fixCommittedAt: v.pipe(v.string(), v.isoTimestamp()),
 });
 
 /**
@@ -63,7 +65,7 @@ export const GoldenHumanOracleSchema = v.strictObject({
 export type GoldenE2ERun = v.InferOutput<typeof GoldenE2ERunSchema>;
 
 /**
- * Full human fix commit loaded only after a locked result passes schema validation.
+ * Human fix identity and timestamps loaded only after a locked result passes schema validation.
  */
 export type GoldenHumanOracle = v.InferOutput<typeof GoldenHumanOracleSchema>;
 
@@ -205,7 +207,7 @@ export function loadGoldenRunCase(caseDirectory: string): LoadedGoldenRunCase {
  * Load the closed human commit oracle after the local result has been persisted and validated.
  *
  * @param caseDirectory - Directory containing oracle.json.
- * @returns Validated full human fix commit.
+ * @returns Validated human fix commit and issue-to-fix timestamps.
  */
 export function loadGoldenHumanOracle(caseDirectory: string): GoldenHumanOracle {
     const oraclePath = join(resolve(caseDirectory), 'oracle.json');

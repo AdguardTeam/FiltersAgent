@@ -164,7 +164,7 @@ describe('golden E2E case loading', () => {
         expect(() => loadGoldenRunCase(caseDir)).toThrow();
     });
 
-    it('loads only one full human fix commit from oracle.json', () => {
+    it('loads the human fix commit and both human timestamps from oracle.json', () => {
         const caseDir = mkdtempSync(join(tmpdir(), 'golden-case-oracle-'));
         writeIssueDocument(caseDir);
         writeFileSync(join(caseDir, 'run.json'), JSON.stringify(runDocument()), 'utf8');
@@ -172,13 +172,27 @@ describe('golden E2E case loading', () => {
             join(caseDir, 'oracle.json'),
             JSON.stringify({
                 humanFixCommit: '8e9ba459a4552df35b3edb1a4e4d8dd240095ce8',
+                issueCreatedAt: '2026-07-14T06:08:12Z',
+                fixCommittedAt: '2026-07-14T09:08:12Z',
             }),
             'utf8',
         );
 
         expect(loadGoldenHumanOracle(caseDir)).toEqual({
             humanFixCommit: '8e9ba459a4552df35b3edb1a4e4d8dd240095ce8',
+            issueCreatedAt: '2026-07-14T06:08:12Z',
+            fixCommittedAt: '2026-07-14T09:08:12Z',
         });
+    });
+
+    it('rejects an oracle.json without the human timestamps', () => {
+        const caseDir = mkdtempSync(join(tmpdir(), 'golden-case-oracle-dates-'));
+        writeFileSync(
+            join(caseDir, 'oracle.json'),
+            JSON.stringify({ humanFixCommit: 'a'.repeat(40) }),
+        );
+
+        expect(() => loadGoldenHumanOracle(caseDir)).toThrow();
     });
 
     it.each(['short', 'g'.repeat(40), 'a'.repeat(39)])(
@@ -187,7 +201,15 @@ describe('golden E2E case loading', () => {
             const caseDir = mkdtempSync(join(tmpdir(), 'golden-case-oracle-sha-'));
             writeIssueDocument(caseDir);
             writeFileSync(join(caseDir, 'run.json'), JSON.stringify(runDocument()), 'utf8');
-            writeFileSync(join(caseDir, 'oracle.json'), JSON.stringify({ humanFixCommit }), 'utf8');
+            writeFileSync(
+                join(caseDir, 'oracle.json'),
+                JSON.stringify({
+                    humanFixCommit,
+                    issueCreatedAt: '2026-07-14T06:08:12Z',
+                    fixCommittedAt: '2026-07-14T09:08:12Z',
+                }),
+                'utf8',
+            );
 
             expect(() => loadGoldenHumanOracle(caseDir)).toThrow();
         },
@@ -215,6 +237,15 @@ describe('golden E2E case loading', () => {
         writeFileSync(join(caseDir, 'run.json'), JSON.stringify(runDocument()), 'utf8');
 
         expect(() => loadGoldenRunCase(caseDir)).toThrow(/attachment path/i);
+    });
+
+    it('loads ISO human timestamps from every tracked case', () => {
+        const casesRoot = join(process.cwd(), 'lab', 'benchmark', 'e2e', 'cases');
+        for (const caseName of readdirSync(casesRoot)) {
+            const oracle = loadGoldenHumanOracle(join(casesRoot, caseName));
+            expect(Number.isFinite(Date.parse(oracle.issueCreatedAt))).toBe(true);
+            expect(Number.isFinite(Date.parse(oracle.fixCommittedAt))).toBe(true);
+        }
     });
 
     it.each([
@@ -260,7 +291,13 @@ describe('golden E2E case loading', () => {
             });
             expect(snapshot.rawIssue.number).toBe(issueNumber);
             expect(snapshot.attachments[0]?.sha256).toBe(screenshotSha);
-            expect(oracle).toEqual({ humanFixCommit });
+            expect(oracle).toEqual({
+                humanFixCommit,
+                issueCreatedAt: expect.any(String),
+                fixCommittedAt: expect.any(String),
+            });
+            expect(Number.isFinite(Date.parse(oracle.issueCreatedAt))).toBe(true);
+            expect(Number.isFinite(Date.parse(oracle.fixCommittedAt))).toBe(true);
         },
     );
 });

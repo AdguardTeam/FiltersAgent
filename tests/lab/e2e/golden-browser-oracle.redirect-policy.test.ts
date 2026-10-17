@@ -81,20 +81,28 @@ describe('historical human-candidate browser configuration', () => {
     it('keeps only related redirect origins for the independent human validation', async () => {
         const outputDirectory = mkdtempSync(join(tmpdir(), 'oracle-redirect-policy-'));
         temporaryDirectories.push(outputDirectory);
-        const context = {
+        const context: GoldenOracleContext = {
+            caseName: 'example-case',
+            runConfigPath: 'run.json',
             issueFile: 'issue.json',
             outputDirectory,
-            run: { issueNumber: 1, filtersBaseSha: 'c'.repeat(40) },
+            run: {
+                schemaVersion: 3,
+                issueNumber: 1,
+                issueFile: 'issue.json',
+                filtersBaseSha: 'c'.repeat(40),
+                extensionBuild: historicalBuild,
+            },
             candidate: {
                 filePath: 'BaseFilter/sections/specific.txt',
                 rule: 'example.com##.ad',
+                sourceRule: 'example.com##.ad',
+                syntaxKind: 'element_hiding',
                 repositoryEdit: 'insert',
             },
-            extension: {
-                source: 'historical_build',
-                historicalBuild,
-            },
-        } as GoldenOracleContext;
+            extensionBuild: historicalBuild,
+            expectedReleaseSha256: null,
+        };
 
         await expect(
             validateHumanCandidateInHistoricalBuild(testCoreConfig(), context),

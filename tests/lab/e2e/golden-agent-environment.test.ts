@@ -1,10 +1,21 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import type { Report } from '../../../src/intake/report';
 import type { LocalRunRecord } from '../../../src/local/run-output';
-import { assessGoldenAgentEnvironment } from '../../../lab/e2e/golden-agent-environment';
+import {
+    assessGoldenAgentEnvironment,
+    extractGoldenReporterEnvironment,
+} from '../../../lab/e2e/golden-agent-environment';
+
+const temporaryRoots: string[] = [];
+
+afterEach(() => {
+    for (const root of temporaryRoots.splice(0)) {
+        rmSync(root, { recursive: true, force: true });
+    }
+});
 
 const REPORT_URL =
     'https://reports.adguard.com/settings/import.html?' +
@@ -37,7 +48,12 @@ function reportWithImport(importUrl: string): Report {
  * @returns The dependencies carrying the scripted seam.
  */
 function dependencies(importUrl: string) {
-    return { extractReport: async () => reportWithImport(importUrl) };
+    return {
+        readReporterEnvironment: () =>
+            extractGoldenReporterEnvironment(writeIssue('Reporter environment'), async () =>
+                reportWithImport(importUrl),
+            ),
+    };
 }
 
 /**
@@ -48,6 +64,7 @@ function dependencies(importUrl: string) {
  */
 function writeIssue(body: string): string {
     const directory = mkdtempSync(join(tmpdir(), 'golden-agent-environment-'));
+    temporaryRoots.push(directory);
     const issueFile = join(directory, 'issue.json');
     mkdirSync(directory, { recursive: true });
     writeFileSync(
@@ -204,13 +221,8 @@ const TRACKED_CASE_IMPORTS = {
 
 describe('assessGoldenAgentEnvironment', () => {
     it('accepts exact reporter extension, filter IDs, active rulesets, and stealth evidence', async () => {
-        const issueFile = writeIssue(
-            `AdGuard product: | AdGuard Browser Extension v5.4.3.99 MV3\n\n` +
-                `### Issue configuration\n[Import](${REPORT_URL})`,
-        );
-
         expect(
-            await assessGoldenAgentEnvironment(lockedRecord(), issueFile, dependencies(REPORT_URL)),
+            await assessGoldenAgentEnvironment(lockedRecord(), dependencies(REPORT_URL)),
         ).toMatchObject({
             status: 'matched',
             extension: { manifestVersion: 3 },
@@ -220,7 +232,6 @@ describe('assessGoldenAgentEnvironment', () => {
     it.each(Object.entries(TRACKED_CASE_IMPORTS))(
         'matches exact reporter filter selection recorded for tracked case %s',
         async (_caseName, tracked) => {
-            const issueFile = writeIssue('Historical root body; the seam carries the import.');
             const record = trackedCaseRecord(
                 [...tracked.filterIds],
                 tracked.version,
@@ -228,11 +239,7 @@ describe('assessGoldenAgentEnvironment', () => {
             );
 
             expect(
-                await assessGoldenAgentEnvironment(
-                    record,
-                    issueFile,
-                    dependencies(tracked.importUrl),
-                ),
+                await assessGoldenAgentEnvironment(record, dependencies(tracked.importUrl)),
             ).toMatchObject({ status: 'matched' });
         },
     );
@@ -284,15 +291,10 @@ describe('assessGoldenAgentEnvironment', () => {
     ] as const)(
         'classifies %s as an agent mismatch rather than infrastructure',
         async (_name, mutate, detailPattern) => {
-            const issueFile = writeIssue(`### Issue configuration\n[Import](${REPORT_URL})`);
             const record = lockedRecord();
             mutate(record);
 
-            const assessment = await assessGoldenAgentEnvironment(
-                record,
-                issueFile,
-                dependencies(REPORT_URL),
-            );
+            const assessment = await assessGoldenAgentEnvironment(record, dependencies(REPORT_URL));
 
             expect(assessment).toMatchObject({ status: 'agent_mismatch' });
             expect(assessment.detail).toMatch(detailPattern);
@@ -300,15 +302,10 @@ describe('assessGoldenAgentEnvironment', () => {
     );
 
     it("treats a build version different from the reporter's as case infrastructure failure", async () => {
-        const issueFile = writeIssue('Reporter settings are extracted independently.');
         const record = lockedRecord();
         record.result.extensionProvenance!.historicalBuild!.version = '5.4.3.98';
 
-        const assessment = await assessGoldenAgentEnvironment(
-            record,
-            issueFile,
-            dependencies(REPORT_URL),
-        );
+        const assessment = await assessGoldenAgentEnvironment(record, dependencies(REPORT_URL));
 
         expect(assessment.status).toBe('infrastructure_failure');
         expect(assessment.detail).toContain('5.4.3.98');
@@ -318,7 +315,6 @@ describe('assessGoldenAgentEnvironment', () => {
     it.each(['missing provenance', 'pinned release', 'missing build identity'])(
         'treats a locked run without a historical build as case infrastructure failure: %s',
         async (scenario) => {
-            const issueFile = writeIssue('Reporter settings are extracted independently.');
             const record = lockedRecord();
             if (scenario === 'missing provenance') {
                 delete record.result.extensionProvenance;
@@ -330,11 +326,7 @@ describe('assessGoldenAgentEnvironment', () => {
                 delete record.result.extensionProvenance!.historicalBuild;
             }
 
-            const assessment = await assessGoldenAgentEnvironment(
-                record,
-                issueFile,
-                dependencies(REPORT_URL),
-            );
+            const assessment = await assessGoldenAgentEnvironment(record, dependencies(REPORT_URL));
 
             expect(assessment).toMatchObject({
                 status: 'infrastructure_failure',
@@ -347,16 +339,17 @@ describe('assessGoldenAgentEnvironment', () => {
         const issueFile = writeIssue('AdGuard product: | AdGuard Browser Extension v5.4.3.99 MV3');
 
         expect(
-            await assessGoldenAgentEnvironment(lockedRecord(), issueFile, {
-                extractReport: async () => ({
-                    siteUrls: ['https://www.nettg.pl/'],
-                    problemType: 'ads',
-                    screenshots: [],
-                    environment: { product: 'AdGuard Browser Extension v5.4.3.99 MV3' },
-                    enabledLists: [],
-                    userRules: [],
-                    reproductionSteps: [],
-                }),
+            await assessGoldenAgentEnvironment(lockedRecord(), {
+                readReporterEnvironment: () =>
+                    extractGoldenReporterEnvironment(issueFile, async () => ({
+                        siteUrls: ['https://www.nettg.pl/'],
+                        problemType: 'ads',
+                        screenshots: [],
+                        environment: { product: 'AdGuard Browser Extension v5.4.3.99 MV3' },
+                        enabledLists: [],
+                        userRules: [],
+                        reproductionSteps: [],
+                    })),
             }),
         ).toMatchObject({
             status: 'infrastructure_failure',
@@ -365,7 +358,6 @@ describe('assessGoldenAgentEnvironment', () => {
     });
 
     it('rejects disagreement between result-bound and wrapper extension provenance', async () => {
-        const issueFile = writeIssue(`### Issue configuration\n[Import](${REPORT_URL})`);
         const record = lockedRecord();
         // The two views may share the serialized object; a full replacement makes the wrapper
         // view diverge from the result-bound one instead of mutating both in place.
@@ -374,9 +366,7 @@ describe('assessGoldenAgentEnvironment', () => {
             extensionSourceSha256: 'a'.repeat(64),
         };
 
-        expect(
-            await assessGoldenAgentEnvironment(record, issueFile, dependencies(REPORT_URL)),
-        ).toMatchObject({
+        expect(await assessGoldenAgentEnvironment(record, dependencies(REPORT_URL))).toMatchObject({
             status: 'infrastructure_failure',
             detail: expect.stringMatching(/provenance disagree/i),
         });

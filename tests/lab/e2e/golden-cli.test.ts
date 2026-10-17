@@ -7,8 +7,19 @@ describe('parseGoldenE2EArgs', () => {
             selection: 'case',
             caseName: 'nettg-pl-235988',
             blockerModules: [],
+            refresh: false,
+            oracleOnly: false,
+            outputRoot: null,
+            knowledgeBaseSha: null,
         });
-        expect(parseGoldenE2EArgs(['--all'])).toEqual({ selection: 'all', blockerModules: [] });
+        expect(parseGoldenE2EArgs(['--all'])).toEqual({
+            selection: 'all',
+            blockerModules: [],
+            refresh: false,
+            oracleOnly: false,
+            outputRoot: null,
+            knowledgeBaseSha: null,
+        });
         expect(() => parseGoldenE2EArgs([])).toThrow(/--case.*--all/i);
         expect(() => parseGoldenE2EArgs(['--case', 'one', '--all'])).toThrow(/exactly one/i);
     });
@@ -24,12 +35,66 @@ describe('parseGoldenE2EArgs', () => {
             ]),
         ).toEqual({
             selection: 'all',
+            refresh: false,
+            oracleOnly: false,
+            outputRoot: null,
+            knowledgeBaseSha: null,
             blockerModules: [
                 'adguard-cli/blocker-module.json',
                 '/opt/demo-module/blocker-module.json',
             ],
         });
         expect(() => parseGoldenE2EArgs(['--all', '--blocker-module'])).toThrow(/value/i);
+    });
+
+    it('parses --oracle-only', () => {
+        expect(parseGoldenE2EArgs(['--all', '--oracle-only']).oracleOnly).toBe(true);
+    });
+
+    it('parses --output-root', () => {
+        expect(parseGoldenE2EArgs(['--all', '--output-root', 'tmp/comparison']).outputRoot).toBe(
+            'tmp/comparison',
+        );
+        expect(() => parseGoldenE2EArgs(['--all', '--output-root'])).toThrow(/value/i);
+    });
+
+    it('refuses --output-root together with --oracle-only', () => {
+        for (const options of [
+            ['--output-root', 'tmp/comparison', '--oracle-only'],
+            ['--oracle-only', '--output-root', 'tmp/comparison'],
+        ]) {
+            expect(() => parseGoldenE2EArgs(['--all', ...options])).toThrow(
+                /--output-root.*--oracle-only|--oracle-only.*--output-root/i,
+            );
+        }
+    });
+
+    it('parses --knowledge-base-sha and refuses a short one', () => {
+        const sha = 'abcdef0123456789abcdef0123456789abcdef01';
+        expect(
+            parseGoldenE2EArgs(['--all', '--knowledge-base-sha', sha.toUpperCase()])
+                .knowledgeBaseSha,
+        ).toBe(sha);
+        for (const invalid of ['abcdef0', 'g'.repeat(40)]) {
+            expect(() => parseGoldenE2EArgs(['--all', '--knowledge-base-sha', invalid])).toThrow(
+                '--knowledge-base-sha must be a full 40-character commit.',
+            );
+        }
+    });
+
+    it('refuses --knowledge-base-sha together with --oracle-only', () => {
+        for (const options of [
+            ['--knowledge-base-sha', 'a'.repeat(40), '--oracle-only'],
+            ['--oracle-only', '--knowledge-base-sha', 'a'.repeat(40)],
+        ]) {
+            expect(() => parseGoldenE2EArgs(['--all', ...options])).toThrow(
+                '--knowledge-base-sha pins agent runs only; --oracle-only runs no agent.',
+            );
+        }
+    });
+
+    it('parses --refresh', () => {
+        expect(parseGoldenE2EArgs(['--all', '--refresh']).refresh).toBe(true);
     });
 
     it('rejects unsafe or unknown arguments', () => {

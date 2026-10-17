@@ -10,6 +10,28 @@ import type { Logger } from '../../src/logger/logger';
 import type { LocalCoreExecution } from './local-run-record';
 import { collectKnowledgeGuidanceCitations } from './local-run-record';
 import type { LocalInstructionProvenance } from '../../src/local/run-record-guidance-schemas';
+import { RepositoryInstructionRefusalError } from './local-failure-stage';
+
+/**
+ * Refuse repository-provided guidance when a run requires the built-in preparation path.
+ *
+ * @param instruction - Loaded repository instruction, or null for built-in mode.
+ * @param logger - Run logger preserving the refusal path for diagnosis.
+ * @returns Nothing when the run has no repository instruction.
+ */
+export function refuseLoadedRunInstruction(
+    instruction: LoadedInstruction | null,
+    logger: Logger,
+): void {
+    if (instruction === null) {
+        return;
+    }
+    logger.warn(
+        { instructionPath: instruction.path },
+        'repository instruction is forbidden for this run; refusing before the investigation',
+    );
+    throw new RepositoryInstructionRefusalError(instruction.path);
+}
 
 /**
  * Load the run instruction from the prepared checkout, or null for built-in mode.

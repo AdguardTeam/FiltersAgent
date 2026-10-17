@@ -425,6 +425,8 @@ export async function prepareGoldenCase(
         });
         writeJson(join(stagingDirectory, 'oracle.json'), {
             humanFixCommit: options.humanFixCommit.toLowerCase(),
+            issueCreatedAt: metadata.issueCreatedAt,
+            fixCommittedAt: metadata.fixCommittedAt,
         });
 
         loadGoldenRunCase(stagingDirectory);

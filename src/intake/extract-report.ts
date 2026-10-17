@@ -4,6 +4,7 @@ import { selectPromptSafeReporterComments } from '../github/prompt-safety';
 import { DEFAULT_TRUSTED_ROLES, type TrustedRole } from '../queue/queue-inputs';
 import type { Logger } from '../logger/logger';
 import { SingleShotResultKind, type SingleShotClient } from '../pi/single-shot-types';
+import { describeProviderFailure } from '../pi/single-shot';
 import {
     createPromptDocumentLoader,
     PromptDocumentName,
@@ -197,5 +198,7 @@ export async function extractReport(
     if (result.kind === SingleShotResultKind.InvalidResult) {
         throw new Error(`Report extraction failed schema validation: ${result.detail}`);
     }
-    throw new Error(`Report extraction failed: ${result.stopReason}: ${result.message}`);
+    throw new Error(
+        `Report extraction ${describeProviderFailure(result)} (stop reason ${result.stopReason})`,
+    );
 }

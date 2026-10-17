@@ -68,7 +68,7 @@ filters-agent/
 │   ├── cli/                   # CLI commands (commander); entry point lab/main.ts
 │   ├── local/                 # Local fix cycle, run configuration, issue export
 │   ├── e2e/                   # Golden end-to-end runner and case tooling (the benchmark)
-│   ├── benchmark/             # Golden case data, run verification, diagnostics redaction
+│   ├── benchmark/             # Golden cases, run verification, model summaries, diagnostics
 │   └── ...                    # pricing, repo
 ├── adguard-cli/               # Built AdGuard CLI module, committed (`pnpm build:adguard-cli`)
 ├── modules/adguard-cli/       # Setup action of the AdGuard CLI module

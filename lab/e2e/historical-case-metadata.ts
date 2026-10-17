@@ -33,6 +33,16 @@ export const EXTENSION_REPOSITORY = {
  */
 export interface HistoricalCaseMetadata {
     /**
+     * Original GitHub issue creation timestamp used to measure human turnaround.
+     */
+    issueCreatedAt: string;
+
+    /**
+     * Human fix committer timestamp, independent of the commit author date.
+     */
+    fixCommittedAt: string;
+
+    /**
      * Last AdguardFilters master commit at or before issue creation.
      */
     filtersBaseSha: string;
@@ -247,6 +257,10 @@ export async function inspectHistoricalCaseMetadata(
         if (resolvedHumanCommit !== input.humanFixCommit.toLowerCase()) {
             throw new Error('GitHub resolved the human fix to an unexpected commit.');
         }
+        const fixCommittedAt = humanResponse.data.commit.committer?.date;
+        if (!fixCommittedAt) {
+            throw new Error('Human fix commit has no committer date.');
+        }
         const humanMessage = humanResponse.data.commit.message;
         if (!new RegExp(`#${input.issueNumber}(?:\\D|$)`, 'u').test(humanMessage)) {
             throw new Error(`Human fix commit does not reference issue #${input.issueNumber}.`);
@@ -265,6 +279,8 @@ export async function inspectHistoricalCaseMetadata(
         const humanRuleCandidates = extractHumanRuleCandidates(diff);
         const humanRuleLines = parseHumanCommitRuleLines(diff);
         return {
+            issueCreatedAt: createdAt,
+            fixCommittedAt,
             filtersBaseSha,
             extensionTagCommit,
             humanChangedFiles,

@@ -1,8 +1,31 @@
-import { randomUUID } from 'node:crypto';
+import {
+    collectBenchmarkRecord,
+    writeBenchmarkRecord,
+    type BenchmarkRunEnvironment,
+    type CollectBenchmarkRecordInput,
+} from './benchmark-record';
+import { writeAtomicJson } from '../atomic-json';
+import {
+    benchmarkCachedJudgement,
+    judgeReporterEnvironment,
+    judgeHumanFix,
+    replayHumanFixJudgement,
+    type GoldenJudgeCaseContext,
+    HumanFixVerdict,
+} from './golden-judge';
 import { BrowserMode } from '../../src/types/browser-mode';
-import { existsSync, mkdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
-import type { CoreConfig } from '../../src/config/config';
+import { realpathSync, rmSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import {
+    canonicalProspectiveDirectory,
+    goldenDirectoriesOverlap,
+} from './golden-output-directories';
+import type { ExtensionBuildPin } from '../local/run-config';
+import { oracleExtensionBuild } from './golden-oracle-extension';
+import { GoldenE2EExitCode } from './golden-exit-code';
+import type { CoreConfig, LlmConfig } from '../../src/config/config';
+import type { RawIssue } from '../../src/github/fetch-issue';
+import type { Report } from '../../src/intake/report';
 import type { UsageRatesTable } from '../../src/types/usage-summary';
 import { runLocalFix } from '../local/local-fix-runner';
 import { labFilterCacheDir } from '../local/blocker-modules';
@@ -16,11 +39,7 @@ import {
     materializeLocalRunOutputDir,
 } from '../../src/local/output-directory';
 import { verifyLocalRunManifest } from '../../src/local/run-manifest';
-import {
-    readLocalRunOutput,
-    type LocalExtensionProvenance,
-    type LocalRunRecord,
-} from '../../src/local/run-output';
+import { readLocalRunOutput, type LocalRunRecord } from '../../src/local/run-output';
 import {
     loadGoldenHumanOracle,
     loadGoldenRunCase,
@@ -28,6 +47,7 @@ import {
     type GoldenHumanOracle,
 } from './golden-case';
 import {
+    GoldenAgentEnvironmentStatus,
     assessGoldenAgentEnvironment,
     type GoldenAgentEnvironmentAssessment,
 } from './golden-agent-environment';
@@ -35,6 +55,7 @@ import { bindExtractReport } from '../../src/intake/extract-issue-facts';
 import { type ExtractedHumanFix, type HumanFixCandidate } from './human-commit-oracle';
 import { extractHumanCommitFix } from './human-commit-reader';
 import {
+    GoldenE2EStatus,
     classifyGoldenPreOracleResult,
     classifyGoldenResult,
     unavailableGoldenOracleProbe,
@@ -43,39 +64,71 @@ import {
 } from './golden-comparator';
 
 /**
+ * Configuration shared by every case in one golden benchmark invocation.
+ */
+export interface GoldenSeries {
+    /**
+     * Source and browser provenance captured once before ordinary model runs.
+     */
+    runEnvironment: BenchmarkRunEnvironment;
+    /**
+     * Independent judge provider and browser configuration used for evaluation.
+     */
+    judgeConfig: CoreConfig;
+    /**
+     * Shared independent judge cache directory; null disables persistence.
+     */
+    judgeCacheRoot: string | null;
+    /**
+     * Recompute both judge records when their evaluation is needed.
+     */
+    refreshJudgeCache: boolean;
+}
+
+/**
+ * Judge-only series settings shared by model runs and independent oracle evaluation.
+ */
+export type GoldenJudgeSeries = Pick<
+    GoldenSeries,
+    'judgeConfig' | 'judgeCacheRoot' | 'refreshJudgeCache'
+>;
+
+/**
  * Caller-selected paths and identity for one manual golden case.
  */
 export interface RunGoldenE2ECaseOptions {
     /**
+     * Shared judge configuration for the benchmark invocation.
+     */
+    series: GoldenSeries;
+    /**
+     * Immutable KnowledgeBase commit shared by every agent run in the suite.
+     */
+    knowledgeBaseSha: string;
+    /**
      * Stable case directory name used in diagnostics.
      */
     caseName: string;
-
     /**
      * Directory containing run.json, oracle.json, and issue bundle.
      */
     caseDirectory: string;
-
     /**
      * Ignored local directory receiving only canonical fix-agent artifacts.
      */
     outputDirectory: string;
-
     /**
      * Separate ignored directory receiving the E2E classification and human-oracle evidence.
      */
     evaluationDirectory: string;
-
     /**
      * Whether the underlying local agent should emit verbose operational logs.
      */
     verbose?: boolean;
-
     /**
      * The user's price table the run is priced from; absent, the run computes no cost.
      */
     pricingSnapshot?: UsageRatesTable;
-
     /**
      * The blocker modules the case plugs in; absent plugs in none.
      */
@@ -83,39 +136,37 @@ export interface RunGoldenE2ECaseOptions {
 }
 
 /**
- * Post-run context supplied only to an independent human-candidate browser probe.
+ * Closed case context supplied only to an independent human-candidate browser probe.
  */
 export interface GoldenOracleContext {
     /**
      * Case name being classified.
      */
     caseName: string;
-
     /**
      * Historical issue identity and pre-fix filters SHA exposed to the normal core run.
      */
     run: GoldenE2ERun;
-
     /**
-     * Absolute portable issue snapshot path used by the completed agent run.
+     * Absolute portable issue snapshot path used for independent evaluation.
      */
     issueFile: string;
-
     /**
      * Absolute run.json path containing only non-oracle environment pins.
      */
     runConfigPath: string;
-
     /**
-     * Locked extension build provenance reused without exposing the human commit to the agent.
+     * Historical extension build identity reconstructed for independent browser evaluation.
      */
-    extension: LocalExtensionProvenance | null;
-
+    extensionBuild: ExtensionBuildPin;
     /**
-     * Human rule candidate extracted only after the agent output was locked.
+     * Locked release digest, or null when no completed agent run supplied one.
+     */
+    expectedReleaseSha256: string | null;
+    /**
+     * Human rule candidate kept outside every agent input.
      */
     candidate: HumanFixCandidate;
-
     /**
      * Local directory containing reusable browser artifacts and provenance.
      */
@@ -137,30 +188,31 @@ export interface GoldenE2ERunnerDependencies {
      * Standard GitHub-independent local fix lifecycle.
      */
     runLocalFix?: typeof runLocalFix;
-
     /**
      * Independent post-lock reporter-environment assessment; defaults to the intake-extraction
-     * based assessment bound to the case run's LLM configuration.
+     * based assessment bound to the judge's LLM configuration.
      */
-    assessAgentEnvironment?: (
-        record: LocalRunRecord,
-        issueFile: string,
-    ) => Promise<GoldenAgentEnvironmentAssessment>;
-
+    assessAgentEnvironment?: (record: LocalRunRecord) => Promise<GoldenAgentEnvironmentAssessment>;
     /**
-     * Closed oracle.json loader invoked only after result validation.
+     * Closed oracle loader used after validation, or after classification for timing metadata.
      */
     loadHumanOracle?: (caseDirectory: string) => GoldenHumanOracle;
-
     /**
      * Read-only first-parent human commit extraction.
      */
     extractHumanFix?: (humanFixCommit: string) => Promise<ExtractedHumanFix>;
-
     /**
-     * Independent human-candidate browser/vision validation.
+     * Bind independent reporter-environment extraction to the judge's LLM configuration.
      */
-    probeHumanCandidate?: GoldenCaseOracleProbe;
+    bindJudgeExtractReport?: (llm: LlmConfig) => (raw: RawIssue) => Promise<Report | null>;
+    /**
+     * Build independent human-candidate browser/vision validation from the judge configuration.
+     */
+    createJudgeProbe?: (judgeConfig: CoreConfig) => GoldenCaseOracleProbe;
+    /**
+     * Wall-clock source for case stages and independent judge verdict timestamps.
+     */
+    now?: () => number;
 }
 
 /**
@@ -170,18 +222,7 @@ export interface GoldenE2ERunnerDependencies {
  * @param result - Final golden comparison result.
  */
 function writeGoldenE2EResult(outputDirectory: string, result: GoldenE2EResult): void {
-    mkdirSync(outputDirectory, { recursive: true });
-    const outputPath = join(outputDirectory, 'e2e-result.json');
-    const temporaryPath = `${outputPath}.tmp-${process.pid}-${randomUUID()}`;
-    try {
-        writeFileSync(temporaryPath, `${JSON.stringify(result, null, 2)}\n`, {
-            encoding: 'utf8',
-            mode: 0o600,
-        });
-        renameSync(temporaryPath, outputPath);
-    } finally {
-        rmSync(temporaryPath, { force: true });
-    }
+    writeAtomicJson(join(outputDirectory, 'e2e-result.json'), result);
 }
 
 /**
@@ -192,8 +233,8 @@ function writeGoldenE2EResult(outputDirectory: string, result: GoldenE2EResult):
  */
 function infrastructureFailure(error: unknown): GoldenE2EResult {
     return {
-        status: 'infrastructure_failure',
-        exitCode: 3,
+        status: GoldenE2EStatus.InfrastructureFailure,
+        exitCode: GoldenE2EExitCode.InfrastructureFailure,
         detail: error instanceof Error ? error.message : String(error),
         actualRule: null,
         expectedRule: null,
@@ -201,43 +242,6 @@ function infrastructureFailure(error: unknown): GoldenE2EResult {
         humanFixFirstParent: null,
         humanCandidate: null,
     };
-}
-
-/**
- * Determine whether two real directories are equal or nested in either direction.
- *
- * @param first - First canonical real directory.
- * @param second - Second canonical real directory.
- * @returns True when the directories overlap.
- */
-function goldenDirectoriesOverlap(first: string, second: string): boolean {
-    const firstToSecond = relative(first, second);
-    const secondToFirst = relative(second, first);
-    const firstContainsSecond =
-        firstToSecond === '' || (!firstToSecond.startsWith('..') && !isAbsolute(firstToSecond));
-    const secondContainsFirst =
-        secondToFirst === '' || (!secondToFirst.startsWith('..') && !isAbsolute(secondToFirst));
-    return firstContainsSecond || secondContainsFirst;
-}
-
-/**
- * Resolve an existing path or its nearest existing ancestor without creating the destination.
- *
- * @param path - Absolute prospective directory path.
- * @returns Canonical prospective path with existing symlink components resolved.
- */
-function canonicalProspectiveDirectory(path: string): string {
-    let ancestor = resolve(path);
-    const missingComponents: string[] = [];
-    while (!existsSync(ancestor)) {
-        const parent = dirname(ancestor);
-        if (parent === ancestor) {
-            break;
-        }
-        missingComponents.unshift(basename(ancestor));
-        ancestor = parent;
-    }
-    return resolve(realpathSync(ancestor), ...missingComponents);
 }
 
 /**
@@ -253,15 +257,24 @@ export async function runGoldenE2ECase(
     options: RunGoldenE2ECaseOptions,
     dependencies: GoldenE2ERunnerDependencies = {},
 ): Promise<GoldenE2EResult> {
+    const now = dependencies.now ?? Date.now;
+    const workspaceRoot = process.cwd();
+    const startedAt = now();
+    let runReturnedAt = startedAt;
+    let record: LocalRunRecord | null = null;
+    let oracle: GoldenHumanOracle | null = null;
+    let loaded: ReturnType<typeof loadGoldenRunCase> | null = null;
+    let judge: CollectBenchmarkRecordInput['judge'] = {
+        verdict: HumanFixVerdict.NotChecked,
+        fromCache: false,
+    };
     const caseDirectory = realpathSync(resolve(options.caseDirectory));
-    const prospectiveOutputDirectory = canonicalProspectiveDirectory(options.outputDirectory);
-    const prospectiveEvaluationDirectory = canonicalProspectiveDirectory(
-        options.evaluationDirectory,
-    );
+    const prospectiveOutput = canonicalProspectiveDirectory(options.outputDirectory);
+    const prospectiveEvaluation = canonicalProspectiveDirectory(options.evaluationDirectory);
     if (
-        goldenDirectoriesOverlap(prospectiveOutputDirectory, prospectiveEvaluationDirectory) ||
-        goldenDirectoriesOverlap(prospectiveOutputDirectory, caseDirectory) ||
-        goldenDirectoriesOverlap(prospectiveEvaluationDirectory, caseDirectory)
+        goldenDirectoriesOverlap(prospectiveOutput, prospectiveEvaluation) ||
+        goldenDirectoriesOverlap(prospectiveOutput, caseDirectory) ||
+        goldenDirectoriesOverlap(prospectiveEvaluation, caseDirectory)
     ) {
         throw new Error(
             'Golden agent, evaluator, and tracked case directories must be mutually separate.',
@@ -269,11 +282,11 @@ export async function runGoldenE2ECase(
     }
     const outputDirectory = materializeLocalRunOutputDir(
         resolve(options.outputDirectory),
-        process.cwd(),
+        workspaceRoot,
     );
     const evaluationDirectory = materializeLocalRunOutputDir(
         resolve(options.evaluationDirectory),
-        process.cwd(),
+        workspaceRoot,
     );
     if (
         goldenDirectoriesOverlap(outputDirectory, evaluationDirectory) ||
@@ -284,23 +297,26 @@ export async function runGoldenE2ECase(
             'Golden agent, evaluator, and tracked case directories must be mutually separate.',
         );
     }
-    clearLocalRunOutputDir(outputDirectory, process.cwd());
-    clearLocalRunOutputDir(evaluationDirectory, process.cwd());
+    clearLocalRunOutputDir(outputDirectory, workspaceRoot);
+    clearLocalRunOutputDir(evaluationDirectory, workspaceRoot);
     let result: GoldenE2EResult;
     try {
-        const loaded = loadGoldenRunCase(caseDirectory);
+        loaded = loadGoldenRunCase(caseDirectory);
         const execute = dependencies.runLocalFix ?? runLocalFix;
         const blockerModules = options.blockerModules ?? [];
         // The modules keep their files outside every repository and output root, and only for
         // this case's run.
         const modulesWorkspace =
             blockerModules.length > 0
-                ? reservePrivateWorkspace([process.cwd(), outputDirectory, evaluationDirectory])
+                ? reservePrivateWorkspace([workspaceRoot, outputDirectory, evaluationDirectory])
                 : null;
         try {
             await execute(coreConfig, {
                 issueNumber: loaded.config.issueNumber,
+                knowledgeBaseSha: options.knowledgeBaseSha,
                 issueFile: loaded.issueFile,
+                neutralIssueInput: true,
+                refuseRepositoryInstruction: true,
                 environment: 'historical',
                 outputDir: outputDirectory,
                 runConfig: loaded.runConfigPath,
@@ -314,45 +330,63 @@ export async function runGoldenE2ECase(
                           executorDependencies: blockerModuleRunDependencies(
                               blockerModules,
                               modulesWorkspace,
-                              labFilterCacheDir(process.cwd()),
+                              labFilterCacheDir(workspaceRoot),
                           ),
                       }),
             });
         } finally {
+            runReturnedAt = now();
             if (modulesWorkspace !== null) {
                 rmSync(modulesWorkspace, { recursive: true, force: true });
             }
         }
         const initialManifest = verifyLocalRunManifest(outputDirectory);
-        const record = readLocalRunOutput(join(outputDirectory, 'run-result.json'));
+        record = readLocalRunOutput(join(outputDirectory, 'run-result.json'));
         if (record.result.issueNumber !== loaded.config.issueNumber) {
             throw new Error('Locked run issue does not match the selected golden case.');
         }
-        if (record.result.filtersBaseSha !== loaded.config.filtersBaseSha) {
+        // A null base means the run failed before checkout; classify its own sealed failure.
+        if (
+            record.result.filtersBaseSha !== null &&
+            record.result.filtersBaseSha !== loaded.config.filtersBaseSha
+        ) {
             throw new Error('Locked run filters base does not match the selected golden case.');
         }
-        const defaultAssessment = (runRecord: LocalRunRecord, issueFile: string) =>
-            assessGoldenAgentEnvironment(runRecord, issueFile, {
-                extractReport: bindExtractReport(coreConfig.llm),
+        // The closed oracle is read only after the normal run seals and its result validates.
+        oracle = (dependencies.loadHumanOracle ?? loadGoldenHumanOracle)(caseDirectory);
+        const judgeContext: GoldenJudgeCaseContext = {
+            series: options.series,
+            caseName: options.caseName,
+            humanFixCommit: oracle.humanFixCommit,
+            extensionBuild: loaded.config.extensionBuild,
+            issueFile: loaded.issueFile,
+            now,
+        };
+        const defaultAssessment = (runRecord: LocalRunRecord) =>
+            assessGoldenAgentEnvironment(runRecord, {
+                readReporterEnvironment: async () =>
+                    (
+                        await judgeReporterEnvironment(
+                            judgeContext,
+                            (dependencies.bindJudgeExtractReport ?? bindExtractReport)(
+                                options.series.judgeConfig.llm,
+                            ),
+                        )
+                    ).environment,
             });
         const agentEnvironment = await (dependencies.assessAgentEnvironment ?? defaultAssessment)(
             record,
-            loaded.issueFile,
         );
-
-        // This is the first point at which the closed oracle may be inspected. The normal run has
-        // completed, run-result.json exists, and its Host wrapper schema has been validated.
-        const oracleLoader = dependencies.loadHumanOracle ?? loadGoldenHumanOracle;
-        const oracle = oracleLoader(caseDirectory);
         const preOracle = classifyGoldenPreOracleResult(
             record.result,
             agentEnvironment,
             oracle.humanFixCommit,
         );
         if (preOracle) {
+            judge = benchmarkCachedJudgement(judgeContext);
             result = preOracle;
         } else {
-            if (agentEnvironment.status !== 'matched') {
+            if (agentEnvironment.status !== GoldenAgentEnvironmentStatus.Matched) {
                 throw new Error(
                     'Golden pre-oracle classification did not handle environment failure.',
                 );
@@ -365,24 +399,32 @@ export async function runGoldenE2ECase(
                         `${oracle.humanFixCommit}.`,
                 );
             }
-            const caseProbe = dependencies.probeHumanCandidate;
-            result = await classifyGoldenResult(
-                record.result,
+            const caseProbe = dependencies.createJudgeProbe?.(options.series.judgeConfig);
+            const { judgement, fromCache } = await judgeHumanFix(
+                judgeContext,
                 humanFix,
                 async (candidate) => {
                     if (!caseProbe) {
                         return unavailableGoldenOracleProbe();
                     }
+                    const extensionBuild = oracleExtensionBuild(agentEnvironment.extension);
                     return caseProbe({
                         caseName: options.caseName,
-                        run: loaded.config,
-                        issueFile: loaded.issueFile,
-                        runConfigPath: loaded.runConfigPath,
-                        extension: agentEnvironment.extension,
+                        run: loaded!.config,
+                        issueFile: loaded!.issueFile,
+                        runConfigPath: loaded!.runConfigPath,
+                        extensionBuild,
+                        expectedReleaseSha256: extensionBuild.releaseSha256,
                         candidate,
                         outputDirectory: evaluationDirectory,
                     });
                 },
+            );
+            judge = { verdict: judgement.status, fromCache };
+            result = await classifyGoldenResult(
+                record.result,
+                humanFix,
+                replayHumanFixJudgement(judgement),
                 agentEnvironment,
             );
         }
@@ -393,6 +435,23 @@ export async function runGoldenE2ECase(
     } catch (error) {
         result = infrastructureFailure(error);
     }
+    oracle ??= (dependencies.loadHumanOracle ?? loadGoldenHumanOracle)(caseDirectory);
     writeGoldenE2EResult(evaluationDirectory, result);
+    writeBenchmarkRecord(
+        evaluationDirectory,
+        collectBenchmarkRecord({
+            ...options,
+            startedAt,
+            runReturnedAt,
+            evaluatedAt: now(),
+            outputDirectory,
+            record,
+            result,
+            run: loaded?.config ?? null,
+            llm: coreConfig.llm,
+            judge,
+            oracle,
+        }),
+    );
     return result;
 }

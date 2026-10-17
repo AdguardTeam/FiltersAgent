@@ -21,6 +21,11 @@ import type { CompletionUsage } from './usage-reporting';
 import { formatIssues } from './valibot-issues';
 
 /**
+ * Identifies a deterministic provider rejection in consumer-facing failure details.
+ */
+export const PROVIDER_REJECTION_PREFIX = 'provider rejected the request:';
+
+/**
  * Single-shot LLM calls on the pi runtime: every out-of-loop completion (vision verdicts,
  * inventories, screenshot analysis, reviewer and oracle calls) runs through this module. One
  * structured mechanism — prompt-and-parse with one bounded repair attempt — serves them all, and
@@ -408,7 +413,7 @@ function logSingleShotCompletion(
  */
 export function describeProviderFailure(failure: SingleShotProviderFailure): string {
     return isDeterministicProviderMessage(failure.message)
-        ? `provider rejected the request: ${failure.message}`
+        ? `${PROVIDER_REJECTION_PREFIX} ${failure.message}`
         : `provider failed: ${failure.message}`;
 }
 

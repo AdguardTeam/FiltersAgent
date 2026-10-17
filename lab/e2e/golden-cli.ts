@@ -1,3 +1,4 @@
+import { FULL_COMMIT_SHA_PATTERN } from '../../src/environment/environment-proofs';
 import { GOLDEN_CASE_NAME_PATTERN } from './golden-case-name';
 
 /**
@@ -31,6 +32,22 @@ export type GoldenE2EArgs = GoldenE2ESelection & {
      * Manifest paths of the blocker modules every case plugs in, in the order given.
      */
     blockerModules: string[];
+    /**
+     * Ignore cached judge environment and verdict records for selected cases.
+     */
+    refresh: boolean;
+    /**
+     * Evaluate only the independent human oracle without starting an agent.
+     */
+    oracleOnly: boolean;
+    /**
+     * Optional isolated root for model run and evaluation artifacts.
+     */
+    outputRoot: string | null;
+    /**
+     * Explicit immutable KnowledgeBase commit for agent runs.
+     */
+    knowledgeBaseSha: string | null;
 };
 
 /**
@@ -59,15 +76,40 @@ export function parseGoldenE2EArgs(argv: readonly string[]): GoldenE2EArgs {
     const args = argv.filter((argument) => argument !== '--');
     let caseName: string | undefined;
     let all = false;
+    let refresh = false;
+    let oracleOnly = false;
+    let outputRoot: string | null = null;
+    let knowledgeBaseSha: string | null = null;
     const blockerModules: string[] = [];
     for (let index = 0; index < args.length; index += 1) {
         const argument = args[index];
+        if (argument === '--oracle-only') {
+            oracleOnly = true;
+            continue;
+        }
+        if (argument === '--refresh') {
+            refresh = true;
+            continue;
+        }
         if (argument === '--all') {
             all = true;
             continue;
         }
         if (argument === '--case') {
             caseName = optionValue(args, index);
+            index += 1;
+            continue;
+        }
+        if (argument === '--knowledge-base-sha') {
+            knowledgeBaseSha = optionValue(args, index).toLowerCase();
+            if (!FULL_COMMIT_SHA_PATTERN.test(knowledgeBaseSha)) {
+                throw new Error('--knowledge-base-sha must be a full 40-character commit.');
+            }
+            index += 1;
+            continue;
+        }
+        if (argument === '--output-root') {
+            outputRoot = optionValue(args, index);
             index += 1;
             continue;
         }
@@ -84,7 +126,21 @@ export function parseGoldenE2EArgs(argv: readonly string[]): GoldenE2EArgs {
     if (caseName && !GOLDEN_CASE_NAME_PATTERN.test(caseName)) {
         throw new Error(`Invalid golden E2E case name: ${caseName}`);
     }
+    if (outputRoot !== null && oracleOnly) {
+        throw new Error('--output-root cannot be used together with --oracle-only.');
+    }
+    if (knowledgeBaseSha !== null && oracleOnly) {
+        throw new Error('--knowledge-base-sha pins agent runs only; --oracle-only runs no agent.');
+    }
     return caseName
-        ? { selection: 'case', caseName, blockerModules }
-        : { selection: 'all', blockerModules };
+        ? {
+              selection: 'case',
+              caseName,
+              blockerModules,
+              refresh,
+              oracleOnly,
+              outputRoot,
+              knowledgeBaseSha,
+          }
+        : { selection: 'all', blockerModules, refresh, oracleOnly, outputRoot, knowledgeBaseSha };
 }

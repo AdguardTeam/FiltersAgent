@@ -24,7 +24,7 @@ const HUMAN_RULE_CANDIDATES = [
 ];
 
 describe('inspectHistoricalCaseMetadata', () => {
-    it('uses issue creation time to resolve master and validates both closed revisions', async () => {
+    it('returns the issue creation and fix committer dates', async () => {
         const getIssue = vi.fn().mockResolvedValue({
             data: { created_at: '2026-07-14T06:08:12Z' },
         });
@@ -34,7 +34,11 @@ describe('inspectHistoricalCaseMetadata', () => {
         const getCommit = vi.fn().mockResolvedValue({
             data: {
                 sha: HUMAN_COMMIT,
-                commit: { message: 'Fix #235679 money.pl' },
+                commit: {
+                    message: 'Fix #235679 money.pl',
+                    committer: { date: '2026-07-14T09:08:12Z' },
+                    author: { date: '2026-07-14T08:08:12Z' },
+                },
                 parents: [{ sha: 'a'.repeat(40) }],
                 files: [
                     {
@@ -74,6 +78,8 @@ describe('inspectHistoricalCaseMetadata', () => {
                 { createClient },
             ),
         ).resolves.toEqual({
+            issueCreatedAt: '2026-07-14T06:08:12Z',
+            fixCommittedAt: '2026-07-14T09:08:12Z',
             filtersBaseSha: FILTERS_BASE_SHA,
             extensionTagCommit: 'b'.repeat(40),
             humanChangedFiles: ['BaseFilter/sections/foreign.txt'],
@@ -100,6 +106,56 @@ describe('inspectHistoricalCaseMetadata', () => {
         });
     });
 
+    it('fails when the human fix commit has no committer date', async () => {
+        const createClient = vi.fn(
+            () =>
+                ({
+                    rest: {
+                        issues: {
+                            get: vi.fn().mockResolvedValue({
+                                data: { created_at: '2026-07-14T06:08:12Z' },
+                            }),
+                        },
+                        repos: {
+                            listCommits: vi
+                                .fn()
+                                .mockResolvedValue({ data: [{ sha: FILTERS_BASE_SHA }] }),
+                            getCommit: vi.fn().mockResolvedValue({
+                                data: {
+                                    sha: HUMAN_COMMIT,
+                                    commit: { message: 'Fix #235679 example.com', committer: null },
+                                    parents: [{ sha: 'a'.repeat(40) }],
+                                    files: [
+                                        {
+                                            filename: 'BaseFilter/sections/foreign.txt',
+                                            patch: '@@ -0,0 +1 @@\n+example.com##.ad',
+                                        },
+                                    ],
+                                },
+                            }),
+                        },
+                        git: {
+                            getRef: vi.fn().mockResolvedValue({
+                                data: { object: { type: 'commit', sha: 'b'.repeat(40) } },
+                            }),
+                        },
+                    },
+                }) as unknown as ReturnType<typeof createOctokit>,
+        );
+
+        await expect(
+            inspectHistoricalCaseMetadata(
+                { owner: 'ignored', repo: 'ignored', token: 'read-token' },
+                {
+                    issueNumber: 235679,
+                    humanFixCommit: HUMAN_COMMIT,
+                    extensionTag: 'autobuild-v5.4.3.96',
+                },
+                { createClient },
+            ),
+        ).rejects.toThrow(/committer date/iu);
+    });
+
     it('fails closed when no pre-issue master commit can be resolved', async () => {
         const createClient = vi.fn(
             () =>
@@ -115,7 +171,11 @@ describe('inspectHistoricalCaseMetadata', () => {
                             getCommit: vi.fn().mockResolvedValue({
                                 data: {
                                     sha: HUMAN_COMMIT,
-                                    commit: { message: 'Fix #235679 money.pl' },
+                                    commit: {
+                                        message: 'Fix #235679 money.pl',
+                                        committer: { date: '2026-07-14T09:08:12Z' },
+                                        author: { date: '2026-07-14T08:08:12Z' },
+                                    },
                                     parents: [{ sha: 'a'.repeat(40) }],
                                     files: [
                                         {
@@ -170,7 +230,11 @@ describe('inspectHistoricalCaseMetadata', () => {
                             getCommit: vi.fn().mockResolvedValue({
                                 data: {
                                     sha: HUMAN_COMMIT,
-                                    commit: { message: 'Fix #235679 money.pl' },
+                                    commit: {
+                                        message: 'Fix #235679 money.pl',
+                                        committer: { date: '2026-07-14T09:08:12Z' },
+                                        author: { date: '2026-07-14T08:08:12Z' },
+                                    },
                                     parents: [{ sha: 'a'.repeat(40) }],
                                     files: [{ filename: 'BaseFilter/sections/foreign.txt' }],
                                 },

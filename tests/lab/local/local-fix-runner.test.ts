@@ -35,13 +35,17 @@ import {
     ScriptedReplyKind,
     startHermeticProvider,
 } from '../../pi/hermetic-provider';
-import type { FixRunResult } from '../../../src/types/fix-run-result';
+import { FixRunStatus, type FixRunResult } from '../../../src/types/fix-run-result';
+import { BrowserMode } from '../../../src/types/browser-mode';
+import { ExtensionEnvironmentKind } from '../../../src/types/extension-environment-kind';
+import { InfrastructureFailureReason } from '../../../src/types/infrastructure-failure-reason';
+import { IssueState } from '../../../src/types/issue-state';
 import type { UpstreamSourceDrift } from '../../../src/types/upstream-source-drift';
 import type { RawIssue } from '../../../src/github/fetch-issue';
 import { IntakeExtractionKind, type IntakeExtraction } from '../../../src/intake/extract-report';
 import type { LocalFixRunnerDependencies } from '../../../lab/local/local-fix-runner';
 import { createRuntimeTraceRecorder } from '../../../src/tracer/runtime-recorder';
-import { buildLocalIssueSnapshot } from '../../../src/local/issue-snapshot';
+import { buildLocalIssueSnapshot, toAgentIssueInput } from '../../../src/local/issue-snapshot';
 import {
     renderLocalCandidatePatch,
     runLocalFix,
@@ -535,6 +539,67 @@ function preparedCheckoutStub(checkoutPath: string) {
 const DURABLE_PUBLICATION_TIMEOUT_MS = 30_000;
 
 describe('runLocalFix', () => {
+    it.each([
+        {
+            name: 'gives the core an open, unassigned issue without A: labels in the neutral view',
+            neutralIssueInput: true,
+        },
+        {
+            name: 'passes the snapshot issue unchanged without the neutral view',
+            neutralIssueInput: undefined,
+        },
+    ])('$name', async ({ neutralIssueInput }) => {
+        const caseDir = mkdtempSync(join(tmpdir(), 'local-issue-view-'));
+        const issueFile = join(caseDir, 'issue.json');
+        const snapshotIssue = {
+            ...rawIssue,
+            url: 'https://github.com/example-owner/example-repo/issues/4',
+            labels: ['A: Resolved', 'T: Ads', 'P: Firefox', 'N: AdGuard Browser Extension'],
+            assignee: 'example-maintainer',
+        };
+        const snapshot = buildLocalIssueSnapshot(snapshotIssue, []);
+        const snapshotBytes = JSON.stringify(snapshot);
+        writeFileSync(issueFile, snapshotBytes, 'utf8');
+        const runCore = vi.fn(async (_config: CoreConfig, _issue: FixCoreIssueInput) =>
+            coreResult(),
+        );
+
+        await runLocalFix(
+            coreConfig,
+            {
+                issueNumber: 4,
+                issueFile,
+                environment: ExtensionEnvironmentKind.Current,
+                outputDir: join(caseDir, 'output'),
+                keepTemporaryFiles: false,
+                browserMode: BrowserMode.Auto,
+                verbose: false,
+                ...(neutralIssueInput === undefined ? {} : { neutralIssueInput }),
+            },
+            {
+                ...extractionSeam,
+                runFixCore: runCore,
+                withPreparedFiltersCheckout: preparedCheckoutStub(caseDir),
+                withPreparedKnowledgeBase: prepareKnowledgeBase,
+                observeUpstreamDrift: observeNoUpstream,
+            },
+        );
+
+        expect(runCore).toHaveBeenCalledOnce();
+        const receivedIssue = runCore.mock.calls[0]?.[1];
+        expect(receivedIssue).toMatchObject({
+            ...toAgentIssueInput(snapshot),
+            ...(neutralIssueInput
+                ? {
+                      state: IssueState.Open,
+                      labels: ['T: Ads', 'P: Firefox', 'N: AdGuard Browser Extension'],
+                      assignee: null,
+                  }
+                : {}),
+        });
+        expect(readFileSync(issueFile, 'utf8')).toBe(snapshotBytes);
+    });
+
     it.each([
         {
             name: 'desktop module capability limitation',
@@ -2192,6 +2257,50 @@ describe('the instruction-driven local run', () => {
         writeFileSync(configPath, JSON.stringify(caseConfig), 'utf8');
         return { configPath, issueFile, outputDir, checkoutPath, guidanceTracePath };
     }
+
+    it('refuses a loaded repository instruction before the core when the run forbids one', async () => {
+        const bundle = instructionCase({ namesInstruction: false, linkedDocumentExists: true });
+        const instructionPath = '.github/filters-agent/AGENTS.md';
+        mkdirSync(join(bundle.checkoutPath, '.github/filters-agent'), { recursive: true });
+        writeFileSync(
+            join(bundle.checkoutPath, instructionPath),
+            '# Repository instruction\nFollow the repository filtering policy.\n',
+            'utf8',
+        );
+        const runCore = vi.fn(async () => coreResult());
+        const prepareKnowledgeBaseSpy = vi.fn(prepareKnowledgeBase);
+
+        const paths = await runLocalFix(
+            coreConfig,
+            {
+                issueNumber: 4,
+                issueFile: bundle.issueFile,
+                environment: ExtensionEnvironmentKind.Current,
+                outputDir: bundle.outputDir,
+                runConfig: bundle.configPath,
+                keepTemporaryFiles: false,
+                browserMode: BrowserMode.Auto,
+                verbose: false,
+                refuseRepositoryInstruction: true,
+            },
+            {
+                ...extractionSeam,
+                runFixCore: runCore,
+                withPreparedKnowledgeBase:
+                    prepareKnowledgeBaseSpy as LocalFixRunnerDependencies['withPreparedKnowledgeBase'],
+                withPreparedFiltersCheckout: preparedCheckoutStub(bundle.checkoutPath),
+                observeUpstreamDrift: observeNoUpstream,
+            },
+        );
+
+        expect(runCore).not.toHaveBeenCalled();
+        expect(prepareKnowledgeBaseSpy).not.toHaveBeenCalled();
+        expect(readLocalRunOutput(paths.runResultPath).result).toMatchObject({
+            runStatus: FixRunStatus.Failed,
+            infrastructureFailureReason: InfrastructureFailureReason.InputUnavailable,
+            reasoning: expect.stringContaining(instructionPath),
+        });
+    });
 
     it('threads the loaded instruction into the core and skips the KnowledgeBase preparer', async () => {
         const bundle = instructionCase({ namesInstruction: true, linkedDocumentExists: true });

@@ -2,13 +2,13 @@
  * The reasoning-effort vocabulary: the one declaration of the thinking levels this deployment may
  * ask the gateway for.
  *
- * It is a leaf module on purpose — it imports nothing. `config.ts` needs the value set to build its
- * `picklist`, and a `src/config` module must not reach into the harness, so the vocabulary cannot
- * live next to the pi wiring that consumes it. The literals are chosen to match pi's own spellings
- * exactly, in both places the value lands: `createAgentSession({ thinkingLevel })` for a loop
- * session and `streamSimple`'s `reasoning` field for a single-shot call. That is why no mapping
- * table exists here — there is nothing for a pi upgrade to silently desynchronize, and a renamed pi
- * level would surface as a type error at the boundary instead of as a wrong request.
+ * It is a leaf module on purpose — it imports nothing. `config-value-schemas.ts` needs the value
+ * set to build its `picklist`, and a `src/config` module must not reach into the harness, so the
+ * vocabulary cannot live next to the pi wiring that consumes it. The literals are chosen to match
+ * pi's own spellings exactly, in both places the value lands: `createAgentSession({ thinkingLevel
+ * })` for a loop session and `streamSimple`'s `reasoning` field for a single-shot call. That is why
+ * no mapping table exists here — there is nothing for a pi upgrade to silently desynchronize, and a
+ * renamed pi level would surface as a type error at the boundary instead of as a wrong request.
  */
 
 /**

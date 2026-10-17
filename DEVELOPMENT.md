@@ -101,6 +101,14 @@ with a `ConfigError` that names it. The
 [benchmark guide](docs/guides/benchmark.md#configure-the-provider) shows a
 complete `.env` and what each value must be.
 
+`pnpm test:e2e` also needs the `E2E_JUDGE_*` settings described in
+[Configure the judge](docs/guides/benchmark.md#configure-the-judge).
+
+Keep both judge model roles and reasoning efforts fixed across model
+comparisons. They are recorded and included in the judge cache identity.
+`pnpm benchmark:summarize` warns with `mixed pins:` when judge settings,
+agent revisions, KnowledgeBase commits or browser builds differ.
+
 Set `GITHUB_TOKEN` only for commands that read a live GitHub issue; a run from
 an exported issue file does not need it.
 
@@ -243,6 +251,7 @@ every pull request.
 | `pnpm benchmark:case:add` | Adds a golden case (`lab/e2e/case-add.ts`) |
 | `pnpm benchmark:case:check` | Checks or migrates historical cases without an LLM (`lab/e2e/case-check.ts`) |
 | `pnpm benchmark:verify-run` | Verifies one benchmark run's output (`lab/benchmark/verify-run.ts`) |
+| `pnpm benchmark:summarize` | Compares saved model series without a provider or browser (`lab/benchmark/summarize.ts`) |
 | `pnpm lint` | oxlint plus the prompt-document scan |
 | `pnpm fmt` | oxfmt plus `eslint --fix` on `src/` and `lab/` |
 | `pnpm fmt:check` | The formatter checks without writing |

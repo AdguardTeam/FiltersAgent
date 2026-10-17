@@ -19,6 +19,7 @@
         "benchmark:case:add": "tsx lab/e2e/case-add.ts",
         "benchmark:case:check": "tsx lab/e2e/case-check.ts",
         "benchmark:verify-run": "tsx lab/benchmark/verify-run.ts",
+        "benchmark:summarize": "tsx lab/benchmark/summarize.ts",
         "start": "tsx lab/main.ts",
         "test:e2e": "tsx lab/e2e/run.ts",
         "lint": "oxlint && node lint/scan-prompt-documents.mjs",

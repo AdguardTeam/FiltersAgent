@@ -10,7 +10,17 @@ import {
     type RepositoryIdentitySources,
     type RepositorySlug,
 } from './repository-identity';
-import { REASONING_EFFORT_VALUES, ReasoningEffort } from './reasoning-effort';
+import { ReasoningEffort } from './reasoning-effort';
+import {
+    boundedIntegerSchema,
+    MAX_REQUEST_MAX_ATTEMPTS,
+    MAX_REQUEST_TIMEOUT_MS,
+    MIN_REQUEST_MAX_ATTEMPTS,
+    MIN_REQUEST_TIMEOUT_MS,
+    providerValueSchema,
+    reasoningEffortSchema,
+    tokenLimitSchema,
+} from './config-value-schemas';
 
 export { ConfigError };
 
@@ -103,7 +113,7 @@ const DEFAULT_REQUEST_MAX_ATTEMPTS = 2;
  * report can only mark unreported. The ceiling is the honest default until the gateway reports a
  * per-request maximum of its own.
  */
-const DEFAULT_REQUEST_TIMEOUT_MS = 300_000;
+const DEFAULT_REQUEST_TIMEOUT_MS = MAX_REQUEST_TIMEOUT_MS;
 
 /**
  * Reasoning effort every loop request carries when `LLM_REASONING_EFFORT` names none.
@@ -139,28 +149,6 @@ const DEFAULT_REASONING_EFFORT = ReasoningEffort.High;
  */
 const DEFAULT_SINGLE_SHOT_REASONING_EFFORT = ReasoningEffort.Low;
 
-/**
- * Schema of one model limit in tokens, failing with a message that names the variable to set.
- *
- * @param envVar - The environment variable the limit is read from.
- * @returns The limit's schema.
- */
-function tokenLimitSchema(envVar: string) {
-    const message = `${envVar} must name the model's limit in tokens`;
-    return v.pipe(v.number(message), v.integer(message), v.minValue(1, message));
-}
-
-/**
- * Schema of one required provider value, failing with a message that names the variable to set.
- *
- * @param envVar - The environment variable the value is read from.
- * @returns The value's schema.
- */
-function providerValueSchema(envVar: string) {
-    const message = `${envVar} is required`;
-    return v.pipe(v.string(message), v.minLength(1, message));
-}
-
 const CoreConfigSchema = v.object({
     llm: v.pipe(
         v.object({
@@ -173,15 +161,18 @@ const CoreConfigSchema = v.object({
             model: providerValueSchema(LLM_MODEL_VAR),
             // Preserve absence so runtime model overrides can apply to both roles.
             visionModel: v.optional(providerValueSchema(LLM_VISION_MODEL_VAR)),
-            requestTimeoutMs: v.pipe(
-                v.number(),
-                v.integer(),
-                v.minValue(30_000),
-                v.maxValue(300_000),
+            requestTimeoutMs: boundedIntegerSchema(
+                LLM_REQUEST_TIMEOUT_MS_VAR,
+                MIN_REQUEST_TIMEOUT_MS,
+                MAX_REQUEST_TIMEOUT_MS,
             ),
-            requestMaxAttempts: v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(3)),
-            reasoningEffort: v.picklist(REASONING_EFFORT_VALUES),
-            singleShotReasoningEffort: v.picklist(REASONING_EFFORT_VALUES),
+            requestMaxAttempts: boundedIntegerSchema(
+                LLM_REQUEST_MAX_ATTEMPTS_VAR,
+                MIN_REQUEST_MAX_ATTEMPTS,
+                MAX_REQUEST_MAX_ATTEMPTS,
+            ),
+            reasoningEffort: reasoningEffortSchema(LLM_REASONING_EFFORT_VAR),
+            singleShotReasoningEffort: reasoningEffortSchema(LLM_SINGLE_SHOT_REASONING_EFFORT_VAR),
             // The three model limits have no default: they belong to the model the deployment names,
             // and a limit above the provider's own fails every request with HTTP 400. See
             // `buildRawLlmLimits` for the one derived value.

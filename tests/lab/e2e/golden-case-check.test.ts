@@ -56,7 +56,11 @@ function fixture(current = false, list = '! Clean pre-fix list') {
     );
     writeFileSync(
         join(caseDirectory, 'oracle.json'),
-        JSON.stringify({ humanFixCommit: 'c'.repeat(40) }),
+        JSON.stringify({
+            humanFixCommit: 'c'.repeat(40),
+            issueCreatedAt: '2026-07-14T06:08:12Z',
+            fixCommittedAt: '2026-07-14T09:08:12Z',
+        }),
     );
     const ruleset = join(root, 'extension', 'filters', 'declarative', 'ruleset_2');
     mkdirSync(ruleset, { recursive: true });

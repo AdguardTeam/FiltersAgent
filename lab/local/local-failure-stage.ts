@@ -6,6 +6,11 @@ import {
 } from './cycle-outcome';
 
 /**
+ * Marks a model's explicit decision that the issue is not a filter report.
+ */
+export const INTAKE_SKIPPED_PREFIX = 'Intake skipped:';
+
+/**
  * Lifecycle stage active when a local run fails before producing a complete result.
  *
  * The runner advances this cursor at each boundary to classify failures before a result exists.
@@ -48,6 +53,19 @@ export class FileBackedApplicationRefusalError extends Error {
     constructor(detail: string) {
         super(detail);
         this.name = 'FileBackedApplicationRefusalError';
+    }
+}
+
+/**
+ * A repository instruction was loaded for a run that requires built-in guidance only.
+ */
+export class RepositoryInstructionRefusalError extends Error {
+    /**
+     * @param path - Checkout-relative path of the loaded repository instruction.
+     */
+    constructor(path: string) {
+        super(`Repository instruction is forbidden for this run: ${path}`);
+        this.name = 'RepositoryInstructionRefusalError';
     }
 }
 

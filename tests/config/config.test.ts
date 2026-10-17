@@ -14,8 +14,8 @@ const validEnv = {
     GITHUB_REPO_NAME: 'example-repo',
     LLM_API_KEY: 'sk-test',
     LLM_BASE_URL: 'https://llm.example.com/v1',
-    LLM_MODEL: 'deepseek-v4-flash',
-    LLM_VISION_MODEL: 'gemini-3.5-flash',
+    LLM_MODEL: 'example-reasoning-model',
+    LLM_VISION_MODEL: 'example-vision-model',
     LLM_CONTEXT_WINDOW_TOKENS: '1048576',
     LLM_MAX_OUTPUT_TOKENS: '384000',
     LLM_VISION_MAX_OUTPUT_TOKENS: '65536',
@@ -146,8 +146,8 @@ describe('loadConfig', () => {
         expect(config.github.repo).toBe('example-repo');
         expect(config.llm.baseUrl).toBe('https://llm.example.com/v1');
         expect(config.llm.apiKey).toBe(validEnv.LLM_API_KEY);
-        expect(config.llm.model).toBe('deepseek-v4-flash');
-        expect(config.llm.visionModel).toBe('gemini-3.5-flash');
+        expect(config.llm.model).toBe('example-reasoning-model');
+        expect(config.llm.visionModel).toBe('example-vision-model');
         expect(config.llm.requestTimeoutMs).toBe(300_000);
         expect(config.llm.requestMaxAttempts).toBe(2);
         expect(config.headless).toBe(true);
@@ -250,8 +250,8 @@ describe('loadConfig', () => {
         const config = loadCoreConfig({
             LLM_API_KEY: 'local-token',
             LLM_BASE_URL: 'https://llm.example.com/api/v1',
-            LLM_MODEL: 'deepseek-v4-flash',
-            LLM_VISION_MODEL: 'gemini-3.5-flash',
+            LLM_MODEL: 'example-reasoning-model',
+            LLM_VISION_MODEL: 'example-vision-model',
             LLM_CONTEXT_WINDOW_TOKENS: '1048576',
             LLM_MAX_OUTPUT_TOKENS: '384000',
             LLM_VISION_MAX_OUTPUT_TOKENS: '65536',
@@ -261,10 +261,10 @@ describe('loadConfig', () => {
             api: LlmApi.OpenAiCompletions,
             apiKey: 'local-token',
             baseUrl: 'https://llm.example.com/api/v1',
-            model: 'deepseek-v4-flash',
+            model: 'example-reasoning-model',
             requestMaxAttempts: 2,
             requestTimeoutMs: 300_000,
-            visionModel: 'gemini-3.5-flash',
+            visionModel: 'example-vision-model',
             reasoningEffort: ReasoningEffort.High,
             singleShotReasoningEffort: ReasoningEffort.Low,
             // The catalog limits pi acts on for every request: the window its auto-compaction
@@ -411,8 +411,11 @@ describe('loadConfig', () => {
         ['LLM_REQUEST_TIMEOUT_MS', 'not-a-number'],
         ['LLM_REQUEST_MAX_ATTEMPTS', '0'],
         ['LLM_REQUEST_MAX_ATTEMPTS', '4'],
-    ])('rejects unsafe compatible-provider retry setting %s=%s', (key, value) => {
+        ['LLM_REASONING_EFFORT', 'unsupported'],
+        ['LLM_SINGLE_SHOT_REASONING_EFFORT', 'unsupported'],
+    ])('names the invalid provider tuning variable %s=%s', (key, value) => {
         expect(() => loadCoreConfig({ ...validEnv, [key]: value })).toThrow(ConfigError);
+        expect(() => loadCoreConfig({ ...validEnv, [key]: value })).toThrow(key);
     });
 
     it('does not disable the Chromium sandbox merely because CI is set', () => {

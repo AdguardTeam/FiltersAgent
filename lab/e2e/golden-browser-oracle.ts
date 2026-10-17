@@ -26,13 +26,10 @@ import {
 } from '../../src/types/candidate-visual-review';
 import type { IssueFacts } from '../../src/types/issue-facts';
 import type { ReproProfile } from '../../src/types/repro-profile';
-import {
-    ExtensionManifestVersion,
-    PreparedExtensionSource,
-} from '../../src/environment/extension-preparation';
+import { ExtensionManifestVersion } from '../../src/environment/extension-preparation';
 import { withPreparedFiltersCheckout } from '../../src/local/filters-preparer';
 import { loadLocalIssueSnapshot, toAgentIssueInput } from '../../src/local/issue-snapshot';
-import type { LocalRunConfig } from '../../src/local/run-config-types';
+import type { FiltersPreparationConfig } from '../../src/local/run-config-types';
 import { resolveCandidateVisualEvidence } from '../../src/validator/candidate-evidence-resolver';
 import { reviewCandidateVisually } from '../../src/validator/candidate-visual-verifier';
 import { runValidation } from '../../src/validator/phase-orchestrator';
@@ -40,8 +37,6 @@ import { createTrustedValidationContext } from '../../src/validator/trusted-vali
 import type { GoldenOracleProbeResult } from './golden-comparator';
 import type { GoldenOracleContext, GoldenCaseOracleProbe } from './golden-runner';
 import { ExtensionEnvironmentKind } from '../../src/types/extension-environment-kind';
-import { guidanceRepositorySlugFromRemote } from '../local/knowledge-base-preparer';
-import type { HistoricalExtensionBuildProvenance } from '../../src/environment/environment-proofs';
 import {
     labExtensionCacheRoot,
     prepareHistoricalExtensionBuild,
@@ -52,12 +47,6 @@ import {
 } from './golden-reporter-defect';
 
 const DEFAULT_FILTERS_REMOTE = 'https://github.com/AdguardTeam/AdguardFilters.git';
-const DEFAULT_KNOWLEDGE_BASE_REMOTE = 'https://github.com/AdguardTeam/KnowledgeBase.git';
-
-/**
- * Post-run browser configuration with exact filter and KnowledgeBase provenance.
- */
-type GoldenOracleRunConfig = Pick<LocalRunConfig, 'environment' | 'filters' | 'knowledgeBase'>;
 
 /**
  * Bounded semantic result returned by the independent human-candidate validation lifecycle.
@@ -390,59 +379,20 @@ async function validatePreparedHumanCandidate(
 }
 
 /**
- * Read the reporter build identity fixed by the locked agent run.
- *
- * @param context - Post-run oracle context containing the verified-session provenance.
- * @returns Exact release and autobuild identities the judge must reuse.
- */
-export function oracleExtensionBuild(
-    context: GoldenOracleContext,
-): HistoricalExtensionBuildProvenance {
-    const extension = context.extension;
-    if (!extension) {
-        throw new Error('Golden human oracle requires locked extension provenance.');
-    }
-    if (
-        extension.source !== PreparedExtensionSource.HistoricalBuild ||
-        !extension.historicalBuild
-    ) {
-        throw new Error(
-            'Golden human oracle requires a locked historical build with its reporter build identity; ' +
-                `locked provenance source=${extension.source}.`,
-        );
-    }
-    return extension.historicalBuild;
-}
-
-/**
- * Rebuild historical filter and KnowledgeBase configuration from the locked public case.
+ * Rebuild the historical filter checkout configuration from the locked public case.
  *
  * @param context - Post-run context that excludes the human commit identity.
- * @returns Exact repository configuration for an independent browser and vision probe.
+ * @returns Exact filter checkout configuration for an independent browser and vision probe.
  */
-export function buildOracleRunConfig(context: GoldenOracleContext): GoldenOracleRunConfig {
+export function buildOracleFiltersConfig(context: GoldenOracleContext): FiltersPreparationConfig {
     return {
-        environment: ExtensionEnvironmentKind.Historical,
-        filters: {
-            environment: {
-                kind: ExtensionEnvironmentKind.Historical,
-                baseSha: context.run.filtersBaseSha,
-            },
-            remoteUrl: DEFAULT_FILTERS_REMOTE,
-            currentRef: 'master',
-            keepTemporaryFiles: false,
+        environment: {
+            kind: ExtensionEnvironmentKind.Historical,
+            baseSha: context.run.filtersBaseSha,
         },
-        knowledgeBase: {
-            environment: { kind: ExtensionEnvironmentKind.Current },
-            remoteUrl: DEFAULT_KNOWLEDGE_BASE_REMOTE,
-            knowledgeBaseRepository: guidanceRepositorySlugFromRemote(
-                DEFAULT_KNOWLEDGE_BASE_REMOTE,
-                'KnowledgeBase',
-            ),
-            filtersRepository: guidanceRepositorySlugFromRemote(DEFAULT_FILTERS_REMOTE, 'Filters'),
-            currentRef: 'master',
-            keepTemporaryFiles: false,
-        },
+        remoteUrl: DEFAULT_FILTERS_REMOTE,
+        currentRef: 'master',
+        keepTemporaryFiles: false,
     };
 }
 
@@ -457,38 +407,43 @@ export async function validateHumanCandidateInHistoricalBuild(
     coreConfig: CoreConfig,
     context: GoldenOracleContext,
 ): Promise<GoldenHumanCandidateReview> {
-    const build = oracleExtensionBuild(context);
-    const runConfig = buildOracleRunConfig(context);
-    return withPreparedFiltersCheckout(runConfig.filters, async (preparedFilters) => {
-        const release = await prepareHistoricalExtensionBuild({
-            build: {
-                version: build.version,
-                releaseTag: build.releaseTag,
-                autobuildCommit: build.autobuildCommit,
-            },
-            cacheRoot: labExtensionCacheRoot(process.cwd()),
-            logger: createLogger(),
-        });
-        if (release.provenance.releaseSha256 !== build.releaseSha256) {
-            throw new Error(
-                `Golden reporter build release digest changed: locked ${build.releaseSha256}, ` +
-                    `prepared ${release.provenance.releaseSha256}.`,
+    const build = context.extensionBuild;
+    return withPreparedFiltersCheckout(
+        buildOracleFiltersConfig(context),
+        async (preparedFilters) => {
+            const release = await prepareHistoricalExtensionBuild({
+                build: {
+                    version: build.version,
+                    releaseTag: build.releaseTag,
+                    autobuildCommit: build.autobuildCommit,
+                },
+                cacheRoot: labExtensionCacheRoot(process.cwd()),
+                logger: createLogger(),
+            });
+            if (
+                context.expectedReleaseSha256 !== null &&
+                release.provenance.releaseSha256 !== context.expectedReleaseSha256
+            ) {
+                throw new Error(
+                    `Golden reporter build release digest changed: locked ${context.expectedReleaseSha256}, ` +
+                        `prepared ${release.provenance.releaseSha256}.`,
+                );
+            }
+            if (release.manifestVersion !== ExtensionManifestVersion.Mv3) {
+                throw new Error(
+                    'Local browser runs currently support only Chromium with an MV3 extension; ' +
+                        `the reporter build declares manifest_version=${release.manifestVersion}.`,
+                );
+            }
+            return validatePreparedHumanCandidate(
+                coreConfig,
+                context,
+                release.extensionDir,
+                release.manifestVersion,
+                preparedFilters.filtersPath,
             );
-        }
-        if (release.manifestVersion !== ExtensionManifestVersion.Mv3) {
-            throw new Error(
-                'Local browser runs currently support only Chromium with an MV3 extension; ' +
-                    `the reporter build declares manifest_version=${release.manifestVersion}.`,
-            );
-        }
-        return validatePreparedHumanCandidate(
-            coreConfig,
-            context,
-            release.extensionDir,
-            release.manifestVersion,
-            preparedFilters.filtersPath,
-        );
-    });
+        },
+    );
 }
 
 /**

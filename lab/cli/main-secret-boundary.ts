@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parse as parseDotenv } from 'dotenv';
+import { CLOAKBROWSER_AUTO_UPDATE_VAR } from '../../src/browser/cloakbrowser-auto-update';
+import { resolveCloakBrowserAutoUpdate } from '../local/cloakbrowser-auto-update';
 import { createHandledInterruptScope } from '../local/handled-interrupt';
 import type { HandledInterruptProcessTarget } from '../local/handled-interrupt';
 import { redactText } from '../../src/tracer/redact-text';
@@ -181,6 +183,7 @@ export function runMainSecretBoundary(options: MainSecretBoundaryOptions = {}): 
         }
     }
 
+    env[CLOAKBROWSER_AUTO_UPDATE_VAR] = resolveCloakBrowserAutoUpdate(env);
     const frozenEnvironment = Object.freeze({ ...env });
     const interruptScope = createHandledInterruptScope({
         processTarget: options.processTarget,

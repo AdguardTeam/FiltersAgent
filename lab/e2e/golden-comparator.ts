@@ -1,19 +1,23 @@
-import { createHash } from 'node:crypto';
-import { RuleKind, normalizeRule } from '../../src/repo/rule-normalizer';
+import { GoldenE2EExitCode } from './golden-exit-code';
 import {
-    EffectiveMode,
+    candidateMatches,
+    compareCandidates,
+    renderCandidateComparison,
+} from './golden-candidate-comparison';
+import { normalizeRule } from '../../src/repo/rule-normalizer';
+import {
     FixRunStatus,
+    SymptomObservation,
     VerificationStatus,
     type FixRunResult,
 } from '../../src/types/fix-run-result';
 import { VISUAL_REVIEW_UNAVAILABLE_PREFIX } from '../../src/validator/candidate-visual-synthesis';
-import type { GoldenAgentEnvironmentAssessment } from './golden-agent-environment';
-import type { ExtractedHumanFix, HumanFixCandidate } from './human-commit-oracle';
 import {
-    CandidateVisualVerdict,
-    CandidateVisualSymptom,
-    isCandidateVisualPageUsable,
-} from '../../src/types/candidate-visual-review';
+    GoldenAgentEnvironmentStatus,
+    type GoldenAgentEnvironmentAssessment,
+} from './golden-agent-environment';
+import type { ExtractedHumanFix, HumanFixCandidate } from './human-commit-oracle';
+import { CandidateVisualVerdict } from '../../src/types/candidate-visual-review';
 import {
     isInfrastructureFallbackReason,
     isTargetEnvironmentFallbackReason,
@@ -107,7 +111,7 @@ export interface GoldenE2EResult {
     /**
      * Process exit code defined by the manual E2E contract.
      */
-    exitCode: 0 | 1 | 2 | 3;
+    exitCode: GoldenE2EExitCode;
 
     /**
      * Concise comparison or infrastructure detail.
@@ -141,59 +145,6 @@ export interface GoldenE2EResult {
 }
 
 /**
- * E2E-only view of runner-derived candidate metadata.
- */
-interface GoldenActualCandidateMetadata {
-    /**
-     * AdGuard syntax family derived by the runner.
-     */
-    syntaxKind?: unknown;
-
-    /**
-     * Concrete repository edit derived by placement logic.
-     */
-    repositoryEdit?: unknown;
-}
-
-/**
- * Exact and compatibility dimensions retained for one agent/human candidate comparison.
- */
-interface GoldenCandidateComparison {
-    /**
-     * Whether both rules have the same canonical filter text.
-     */
-    exactRule: boolean;
-
-    /**
-     * Whether both rules have the same non-generic reporter-compatible domain scope.
-     */
-    domainCompatible: boolean;
-
-    /**
-     * Whether runner metadata and parsed syntax agree with the human syntax family.
-     */
-    syntaxKindCompatible: boolean;
-
-    /**
-     * Whether both changes belong to the same normalized filter file.
-     */
-    fileCompatible: boolean;
-
-    /**
-     * Whether both repository changes use the same insert/extend/replace operation.
-     */
-    repositoryEditExact: boolean;
-
-    /**
-     * Whether the locked agent candidate carries its own complete bound browser/vision proof.
-     *
-     * This is diagnostic only: it is not independent evaluator evidence and cannot turn a
-     * human-candidate mismatch into a golden pass.
-     */
-    boundVisionVerified: boolean;
-}
-
-/**
  * Browser-confirmed human candidate paired with its oracle rationale.
  */
 interface RelevantHumanCandidate {
@@ -206,196 +157,6 @@ interface RelevantHumanCandidate {
      * Independent browser/vision verification detail.
      */
     detail: string;
-}
-
-/**
- * Extract the edit discriminator without coupling the oracle to edit-specific payload fields.
- *
- * @param edit - Runner-derived repository edit value.
- * @returns Edit kind, or undefined for missing/malformed metadata.
- */
-function repositoryEditKind(edit: unknown): string | undefined {
-    if (typeof edit !== 'object' || edit === null || !('kind' in edit)) {
-        return undefined;
-    }
-    return typeof edit.kind === 'string' ? edit.kind : undefined;
-}
-
-/**
- * Normalize one repository path for cross-platform comparison.
- *
- * @param value - Candidate file path.
- * @returns Slash-normalized path.
- */
-function normalizeFilePath(value: string): string {
-    return value.replaceAll('\\', '/');
-}
-
-/**
- * Derive an explicit first-party scope from one normalized rule.
- *
- * Cosmetic and scriptlet rules expose domains directly. A host-anchored network pattern supplies
- * its host only when no explicit domain prefix is present. Generic or ambiguous rules return no
- * scope and cannot qualify as semantic golden alternatives.
- *
- * @param rule - Normalized candidate rule.
- * @returns Sorted explicit non-exception domain scopes.
- */
-function explicitRuleScopes(rule: ReturnType<typeof normalizeRule>): string[] {
-    if (rule.domains.length > 0) {
-        return rule.domains.filter((domain) => !domain.startsWith('~'));
-    }
-    if (rule.kind !== RuleKind.Network || !rule.urlPattern) {
-        return [];
-    }
-    const host = /^\|\|([^/*^|]+)(?:[/*^|]|$)/u.exec(rule.urlPattern)?.[1]?.toLowerCase();
-    return host ? [host.replace(/\.$/u, '')] : [];
-}
-
-/**
- * Check whether one explicit rule scope includes the locked reporter domain.
- *
- * @param scope - Normalized rule domain.
- * @param reportedDomain - Locked issue domain.
- * @returns Whether the rule domain covers the reporter hostname or one of its subdomains.
- */
-function scopeIncludesReportedDomain(scope: string, reportedDomain: string): boolean {
-    const normalizedScope = scope
-        .toLowerCase()
-        .replace(/^www\./u, '')
-        .replace(/\.$/u, '');
-    const normalizedReported = reportedDomain
-        .toLowerCase()
-        .replace(/^www\./u, '')
-        .replace(/\.$/u, '');
-    return (
-        normalizedScope.length > 0 &&
-        (normalizedReported === normalizedScope ||
-            normalizedReported.endsWith(`.${normalizedScope}`))
-    );
-}
-
-/**
- * Prove that one locked candidate was verified by the bound browser/vision lifecycle.
- *
- * @param result - Locked core result containing the agent candidate and evidence paths.
- * @returns Whether the candidate hash, validation identity, semantic review, and screenshots bind.
- */
-function hasBoundVerifiedAgentVision(result: FixRunResult): boolean {
-    const candidate = result.candidatePatch;
-    const review = result.candidateVisualReview;
-    const screenshots = result.artifactPaths.verifiedCandidateScreenshots;
-    if (!candidate || !review || !screenshots) {
-        return false;
-    }
-    const candidateRuleHash = createHash('sha256').update(candidate.rule).digest('hex');
-    return (
-        result.effectiveMode === EffectiveMode.Browser &&
-        result.fallbackReason === null &&
-        result.runStatus === 'patch_proposed' &&
-        result.verificationStatus === VerificationStatus.Verified &&
-        result.symptomObservation === 'reproduced' &&
-        review.verdict === CandidateVisualVerdict.Verified &&
-        review.symptom === CandidateVisualSymptom.Resolved &&
-        review.coverageComplete &&
-        review.beforeInstances.length > 0 &&
-        review.remainingInstances.length === 0 &&
-        isCandidateVisualPageUsable(review) &&
-        review.observedDamage.length === 0 &&
-        review.candidateRuleHash === candidateRuleHash &&
-        review.validationArtifactId === `validation-${candidateRuleHash.slice(0, 12)}` &&
-        typeof result.artifactPaths.candidateVisualReview === 'string' &&
-        screenshots.before.length > 0 &&
-        screenshots.after.length > 0 &&
-        screenshots.beforeFullPage.length > 0 &&
-        screenshots.afterFullPage.length > 0
-    );
-}
-
-/**
- * Compare exact and diagnostic compatibility dimensions for one locked agent/human pair.
- *
- * @param result - Locked core result.
- * @param human - Independently reporter-relevant human candidate.
- * @returns Auditable comparison dimensions without making the final classification.
- */
-function compareCandidates(
-    result: FixRunResult,
-    human: HumanFixCandidate,
-): GoldenCandidateComparison {
-    const candidate = result.candidatePatch as
-        | (NonNullable<FixRunResult['candidatePatch']> & GoldenActualCandidateMetadata)
-        | null;
-    if (!candidate) {
-        return {
-            exactRule: false,
-            domainCompatible: false,
-            syntaxKindCompatible: false,
-            fileCompatible: false,
-            repositoryEditExact: false,
-            boundVisionVerified: false,
-        };
-    }
-    const agentRule = normalizeRule(candidate.rule);
-    const humanRule = normalizeRule(human.rule);
-    const agentScopes = explicitRuleScopes(agentRule);
-    const humanScopes = explicitRuleScopes(humanRule);
-    const explicitDomainsMatch =
-        agentRule.domains.length === 0 && humanRule.domains.length === 0
-            ? true
-            : JSON.stringify(agentRule.domains) === JSON.stringify(humanRule.domains);
-    const sameScopes =
-        !agentRule.isException &&
-        !humanRule.isException &&
-        explicitDomainsMatch &&
-        agentScopes.length > 0 &&
-        JSON.stringify(agentScopes) === JSON.stringify(humanScopes) &&
-        agentScopes.some((scope) => scopeIncludesReportedDomain(scope, result.domain));
-    return {
-        exactRule: agentRule.canonical === humanRule.canonical,
-        domainCompatible: sameScopes,
-        syntaxKindCompatible:
-            candidate.syntaxKind === human.syntaxKind &&
-            agentRule.syntaxKind === human.syntaxKind &&
-            humanRule.syntaxKind === human.syntaxKind,
-        fileCompatible: normalizeFilePath(candidate.filePath) === normalizeFilePath(human.filePath),
-        repositoryEditExact: repositoryEditKind(candidate.repositoryEdit) === human.repositoryEdit,
-        boundVisionVerified: hasBoundVerifiedAgentVision(result),
-    };
-}
-
-/**
- * Render exact candidate comparison dimensions for pass and regression diagnostics.
- *
- * @param comparison - Auditable agent/human candidate dimensions.
- * @returns Compact stable comparison detail.
- */
-function renderCandidateComparison(comparison: GoldenCandidateComparison): string {
-    return [
-        `exact rule: ${comparison.exactRule ? 'same' : 'different'}`,
-        `domain: ${comparison.domainCompatible ? 'compatible' : 'incompatible'}`,
-        `syntaxKind: ${comparison.syntaxKindCompatible ? 'compatible' : 'incompatible'}`,
-        `file: ${comparison.fileCompatible ? 'compatible' : 'incompatible'}`,
-        `repository edit: ${comparison.repositoryEditExact ? 'same' : 'different'}`,
-        `bound vision: ${comparison.boundVisionVerified ? 'verified' : 'not verified'}`,
-    ].join('; ');
-}
-
-/**
- * Compare the locked agent candidate with one browser-confirmed human rule change.
- *
- * @param result - Locked core result.
- * @param human - Candidate extracted from the human commit's first-parent diff.
- * @returns True only when rule semantics, syntax, file, and edit kind match.
- */
-function candidateMatches(result: FixRunResult, human: HumanFixCandidate): boolean {
-    const comparison = compareCandidates(result, human);
-    return (
-        comparison.exactRule &&
-        comparison.syntaxKindCompatible &&
-        comparison.fileCompatible &&
-        comparison.repositoryEditExact
-    );
 }
 
 /**
@@ -454,8 +215,8 @@ export function classifyGoldenPreOracleResult(
     const infrastructureDetail = infrastructureRunFailureDetail(result);
     if (infrastructureDetail !== null) {
         return {
-            status: 'infrastructure_failure',
-            exitCode: 3,
+            status: GoldenE2EStatus.InfrastructureFailure,
+            exitCode: GoldenE2EExitCode.InfrastructureFailure,
             detail: infrastructureDetail,
             actualRule,
             expectedRule: null,
@@ -464,10 +225,10 @@ export function classifyGoldenPreOracleResult(
             humanCandidate: null,
         };
     }
-    if (agentEnvironment.status === 'infrastructure_failure') {
+    if (agentEnvironment.status === GoldenAgentEnvironmentStatus.InfrastructureFailure) {
         return {
-            status: 'infrastructure_failure',
-            exitCode: 3,
+            status: GoldenE2EStatus.InfrastructureFailure,
+            exitCode: GoldenE2EExitCode.InfrastructureFailure,
             detail: agentEnvironment.detail,
             actualRule,
             expectedRule: null,
@@ -476,10 +237,10 @@ export function classifyGoldenPreOracleResult(
             humanCandidate: null,
         };
     }
-    if (agentEnvironment.status === 'agent_mismatch') {
+    if (agentEnvironment.status === GoldenAgentEnvironmentStatus.AgentMismatch) {
         return {
-            status: 'agent_regression',
-            exitCode: 1,
+            status: GoldenE2EStatus.AgentRegression,
+            exitCode: GoldenE2EExitCode.AgentRegression,
             detail: `Reporter environment mismatch: ${agentEnvironment.detail}`,
             actualRule,
             expectedRule: null,
@@ -500,13 +261,13 @@ export function classifyGoldenPreOracleResult(
  */
 function mismatchDetail(result: FixRunResult, human: HumanFixCandidate): string {
     const mismatches: string[] = [];
-    if (result.runStatus !== 'patch_proposed') {
+    if (result.runStatus !== FixRunStatus.PatchProposed) {
         mismatches.push('runStatus');
     }
     if (result.verificationStatus !== VerificationStatus.Verified) {
         mismatches.push('verificationStatus');
     }
-    if (result.symptomObservation !== 'reproduced') {
+    if (result.symptomObservation !== SymptomObservation.Reproduced) {
         mismatches.push('symptomObservation');
     }
     if (!candidateMatches(result, human)) {
@@ -547,8 +308,8 @@ export async function classifyGoldenResult(
         }
     } else if (infrastructureDetail !== null) {
         return {
-            status: 'infrastructure_failure',
-            exitCode: 3,
+            status: GoldenE2EStatus.InfrastructureFailure,
+            exitCode: GoldenE2EExitCode.InfrastructureFailure,
             detail: infrastructureDetail,
             actualRule,
             expectedRule: null,
@@ -559,8 +320,8 @@ export async function classifyGoldenResult(
     }
     if (humanFix.candidates.length === 0) {
         return {
-            status: 'infrastructure_failure',
-            exitCode: 3,
+            status: GoldenE2EStatus.InfrastructureFailure,
+            exitCode: GoldenE2EExitCode.InfrastructureFailure,
             detail: 'Human fix diff contains no actionable filter candidates.',
             actualRule,
             expectedRule: null,
@@ -574,10 +335,10 @@ export async function classifyGoldenResult(
     const infrastructureDetails: string[] = [];
     for (const candidate of humanFix.candidates) {
         const probe = await probeHumanCandidate(candidate);
-        if (probe.status === 'verified') {
+        if (probe.status === GoldenOracleProbeStatus.Verified) {
             relevant = { candidate, detail: probe.detail };
             break;
-        } else if (probe.status === 'infrastructure_failure') {
+        } else if (probe.status === GoldenOracleProbeStatus.InfrastructureFailure) {
             infrastructureDetails.push(probe.detail);
         }
     }
@@ -585,8 +346,8 @@ export async function classifyGoldenResult(
     if (!relevant) {
         if (infrastructureDetails.length > 0) {
             return {
-                status: 'infrastructure_failure',
-                exitCode: 3,
+                status: GoldenE2EStatus.InfrastructureFailure,
+                exitCode: GoldenE2EExitCode.InfrastructureFailure,
                 detail: `Human candidate relevance could not be established: ${infrastructureDetails.join(' | ')}`,
                 actualRule,
                 expectedRule: null,
@@ -596,8 +357,8 @@ export async function classifyGoldenResult(
             };
         }
         return {
-            status: 'environment_drift',
-            exitCode: 2,
+            status: GoldenE2EStatus.EnvironmentDrift,
+            exitCode: GoldenE2EExitCode.EnvironmentDrift,
             detail: 'No human commit candidate still fixes the reporter-visible defect.',
             actualRule,
             expectedRule: null,
@@ -609,13 +370,13 @@ export async function classifyGoldenResult(
 
     const matched = candidateMatches(result, relevant.candidate) ? relevant : undefined;
     const outcomeMatches =
-        result.runStatus === 'patch_proposed' &&
+        result.runStatus === FixRunStatus.PatchProposed &&
         result.verificationStatus === VerificationStatus.Verified &&
-        result.symptomObservation === 'reproduced';
+        result.symptomObservation === SymptomObservation.Reproduced;
     if (matched && outcomeMatches) {
         return {
-            status: 'pass',
-            exitCode: 0,
+            status: GoldenE2EStatus.Pass,
+            exitCode: GoldenE2EExitCode.Pass,
             detail: `Agent result matches a browser-confirmed human change: ${matched.detail}`,
             actualRule,
             expectedRule: normalizeRule(matched.candidate.rule).canonical,
@@ -627,8 +388,8 @@ export async function classifyGoldenResult(
 
     const primary = matched ?? relevant;
     return {
-        status: 'agent_regression',
-        exitCode: 1,
+        status: GoldenE2EStatus.AgentRegression,
+        exitCode: GoldenE2EExitCode.AgentRegression,
         detail: `${mismatchDetail(result, primary.candidate)} Human rule verification succeeded: ${primary.detail}`,
         actualRule,
         expectedRule: normalizeRule(primary.candidate.rule).canonical,
@@ -645,7 +406,7 @@ export async function classifyGoldenResult(
  */
 export async function unavailableGoldenOracleProbe(): Promise<GoldenOracleProbeResult> {
     return {
-        status: 'infrastructure_failure',
+        status: GoldenOracleProbeStatus.InfrastructureFailure,
         detail: 'No standalone human-candidate browser probe is configured.',
     };
 }

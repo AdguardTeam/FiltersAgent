@@ -16,6 +16,16 @@ The format is based on [Keep a Changelog], and this project adheres to
   your own Anthropic key, prompt caching and thinking. Its base URL has no
   `/v1`; a URL ending in `/v1` fails at startup.
 - Added `pnpm benchmark:case:check` to check or migrate historical cases.
+- Added an independent benchmark judge configured by `E2E_JUDGE_*`, with a
+  shared cache of reporter settings and human-fix verdicts that accounts
+  for issue snapshots and judge reasoning settings.
+- Added benchmark flags `--oracle-only`, `--refresh`, `--output-root` and
+  `--knowledge-base-sha` to check cases and retain comparable model runs;
+  oracle-only output marks cached verdicts, preserves existing evidence
+  when reusing a verdict and reports candidate rejection details for drift.
+- Added per-case `benchmark-record.json` results and
+  `pnpm benchmark:summarize` for model comparisons and CSV export,
+  including intake skips, judge reasoning settings and mixed-pin warnings.
 
 ### Changed
 
@@ -30,9 +40,20 @@ The format is based on [Keep a Changelog], and this project adheres to
   agent regressions.
 - Changed historical case checks to ignore rules already present in the
   base checkout and warn when removed rules are absent from the build.
+- Changed the CLI and benchmark to default `CLOAKBROWSER_AUTO_UPDATE` to
+  `false`, preserving explicit values.
+- Changed benchmark runs to show the agent each issue as open, without `A:`
+  labels or an assignee, and to refuse a case whose checkout loads a
+  repository instruction.
 
 ### Fixed
 
+- Fixed benchmark failures before the filters checkout being reported as a
+  filters-base mismatch instead of the original error.
+- Fixed intake errors reporting provider rejections as generic extraction
+  failures.
+- Fixed provider tuning validation errors omitting the environment variable
+  names.
 - Fixed full-page visual review on Claude vision models: screenshots longer
   than 8000 px are now scaled to the provider's image limits instead of being
   rejected, and a provider rejection of a vision request is reported as a

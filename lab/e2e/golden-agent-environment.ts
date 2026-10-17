@@ -21,17 +21,15 @@ import { reportToIssueFacts } from '../../src/intake/report-facts';
  */
 export interface GoldenAgentEnvironmentDependencies {
     /**
-     * The intake extraction seam bound to the evaluator's LLM configuration: one raw issue, one
-     * model-filled report, or null when the extraction skipped the issue. The reporter environment
-     * derives from the extraction's mapped facts, never from a deterministic re-parse.
+     * Independent reporter settings, read through the judge cache or freshly extracted.
      */
-    extractReport: (raw: RawIssue) => Promise<Report | null>;
+    readReporterEnvironment: () => Promise<GoldenReporterEnvironment>;
 }
 
 /**
  * Reporter environment parsed independently after the agent result is locked.
  */
-interface GoldenReporterEnvironment {
+export interface GoldenReporterEnvironment {
     /**
      * Exact browser-extension version reported by the user.
      */
@@ -54,13 +52,37 @@ interface GoldenReporterEnvironment {
 }
 
 /**
+ * Post-lock comparison of the agent environment with independently read reporter settings.
+ */
+export const GoldenAgentEnvironmentStatus = {
+    /**
+     * Locked agent settings and reporter settings agree.
+     */
+    Matched: 'matched',
+    /**
+     * The agent selected or verified different reporter settings.
+     */
+    AgentMismatch: 'agent_mismatch',
+    /**
+     * Case or record integrity prevents comparison.
+     */
+    InfrastructureFailure: 'infrastructure_failure',
+} as const;
+
+/**
+ * Value of the post-lock reporter-environment classification.
+ */
+export type GoldenAgentEnvironmentStatus =
+    (typeof GoldenAgentEnvironmentStatus)[keyof typeof GoldenAgentEnvironmentStatus];
+
+/**
  * Successful post-lock proof that the agent used the reporter environment.
  */
 export interface GoldenAgentEnvironmentMatch {
     /**
      * Stable successful assessment discriminator.
      */
-    status: 'matched';
+    status: typeof GoldenAgentEnvironmentStatus.Matched;
 
     /**
      * Human-readable exact-environment summary.
@@ -80,7 +102,7 @@ export interface GoldenAgentEnvironmentMismatch {
     /**
      * Stable agent-regression assessment discriminator.
      */
-    status: 'agent_mismatch';
+    status: typeof GoldenAgentEnvironmentStatus.AgentMismatch;
 
     /**
      * Exact provenance or settings difference.
@@ -100,7 +122,7 @@ export interface GoldenAgentEnvironmentInfrastructureFailure {
     /**
      * Stable infrastructure assessment discriminator.
      */
-    status: 'infrastructure_failure';
+    status: typeof GoldenAgentEnvironmentStatus.InfrastructureFailure;
 
     /**
      * Exact case parsing or locked-record integrity failure.
@@ -176,7 +198,7 @@ function parseStealthEnabled(source: string): boolean {
  * @param extractReport - Bound intake extraction seam.
  * @returns Exact reporter environment from the trusted settings import URL.
  */
-async function parseReporterEnvironment(
+export async function extractGoldenReporterEnvironment(
     issueFile: string,
     extractReport: (raw: RawIssue) => Promise<Report | null>,
 ): Promise<GoldenReporterEnvironment> {
@@ -279,32 +301,30 @@ function lockedProvenanceMismatch(record: LocalRunRecord): string | null {
 /**
  * Compare a locked verified-session environment with exact reporter settings after the agent stops.
  *
- * The reporter environment derives from the intake extraction's mapped facts supplied through the
- * bound `extractReport` dependency — the evaluator's LLM configuration is the caller's to bind.
+ * The reporter environment comes from `readReporterEnvironment`: the judge's cached or freshly
+ * extracted settings. The runner binds the judge's LLM configuration.
  *
  * @param record - Schema-validated local run record.
- * @param issueFile - Portable issue snapshot used by that run.
- * @param dependencies - The bound intake extraction seam.
+ * @param dependencies - The independent reporter environment reader.
  * @returns Match, agent mismatch, or case/record infrastructure failure.
  */
 export async function assessGoldenAgentEnvironment(
     record: LocalRunRecord,
-    issueFile: string,
     dependencies: GoldenAgentEnvironmentDependencies,
 ): Promise<GoldenAgentEnvironmentAssessment> {
     let reporter: GoldenReporterEnvironment;
     try {
-        reporter = await parseReporterEnvironment(issueFile, dependencies.extractReport);
+        reporter = await dependencies.readReporterEnvironment();
     } catch (error) {
         return {
-            status: 'infrastructure_failure',
+            status: GoldenAgentEnvironmentStatus.InfrastructureFailure,
             detail: error instanceof Error ? error.message : String(error),
             extension: null,
         };
     }
     if (reporter.manifestVersion !== ExtensionManifestVersion.Mv3) {
         return {
-            status: 'infrastructure_failure',
+            status: GoldenAgentEnvironmentStatus.InfrastructureFailure,
             detail:
                 `Golden reporter environment requires MV${reporter.manifestVersion}; ` +
                 'this suite supports Chromium MV3 only.',
@@ -316,7 +336,7 @@ export async function assessGoldenAgentEnvironment(
     const wrapperExtension = record.provenance.extension;
     if (!extension || !wrapperExtension) {
         return {
-            status: 'infrastructure_failure',
+            status: GoldenAgentEnvironmentStatus.InfrastructureFailure,
             detail: 'Locked result has no historical build extension provenance.',
             extension: null,
         };
@@ -324,7 +344,7 @@ export async function assessGoldenAgentEnvironment(
     const provenanceMismatch = lockedProvenanceMismatch(record);
     if (provenanceMismatch) {
         return {
-            status: 'infrastructure_failure',
+            status: GoldenAgentEnvironmentStatus.InfrastructureFailure,
             detail: provenanceMismatch,
             extension: null,
         };
@@ -334,14 +354,14 @@ export async function assessGoldenAgentEnvironment(
         !extension.historicalBuild
     ) {
         return {
-            status: 'infrastructure_failure',
+            status: GoldenAgentEnvironmentStatus.InfrastructureFailure,
             detail: 'Locked result requires a historical build with its reporter build identity.',
             extension: null,
         };
     }
     if (extension.historicalBuild.version !== reporter.extensionVersion) {
         return {
-            status: 'infrastructure_failure',
+            status: GoldenAgentEnvironmentStatus.InfrastructureFailure,
             detail:
                 `The loaded reporter build version ${extension.historicalBuild.version} does not ` +
                 `match reporter product_version=${reporter.extensionVersion}.`,
@@ -350,7 +370,7 @@ export async function assessGoldenAgentEnvironment(
     }
     if (extension.manifestVersion !== ExtensionManifestVersion.Mv3) {
         return {
-            status: 'agent_mismatch',
+            status: GoldenAgentEnvironmentStatus.AgentMismatch,
             detail:
                 `The loaded extension build declares manifest_version=${extension.manifestVersion}; ` +
                 'this suite verifies the reporter Chromium MV3 build.',
@@ -364,14 +384,14 @@ export async function assessGoldenAgentEnvironment(
         record.result.reproductionSettingsStatus !== ReproductionSettingsStatus.Applied
     ) {
         return {
-            status: 'agent_mismatch',
+            status: GoldenAgentEnvironmentStatus.AgentMismatch,
             detail: 'Locked result has no applied verified-session settings evidence.',
             extension: null,
         };
     }
     if (settings.limitsExceeded) {
         return {
-            status: 'agent_mismatch',
+            status: GoldenAgentEnvironmentStatus.AgentMismatch,
             detail: 'Reporter settings exceeded MV3 limits and were not verified exactly.',
             extension: null,
         };
@@ -382,7 +402,7 @@ export async function assessGoldenAgentEnvironment(
         settings.stealthEnabled === null
     ) {
         return {
-            status: 'agent_mismatch',
+            status: GoldenAgentEnvironmentStatus.AgentMismatch,
             detail:
                 `Locked verified session cannot be compared: its enabled filter set, its active ` +
                 `ruleset set or its Stealth state is ${NOT_OBSERVED_TEXT}.`,
@@ -392,7 +412,7 @@ export async function assessGoldenAgentEnvironment(
     const enabledKeys = sortListKeys(settings.enabledListKeys);
     if (!equalKeyLists(enabledKeys, sortListKeys(reporter.enabledFilterIds.map(adguardListKey)))) {
         return {
-            status: 'agent_mismatch',
+            status: GoldenAgentEnvironmentStatus.AgentMismatch,
             detail:
                 `Enabled filter IDs ${renderedFilterIds(enabledKeys)} do not match reporter IDs ` +
                 `${reporter.enabledFilterIds.join(',')}.`,
@@ -402,7 +422,7 @@ export async function assessGoldenAgentEnvironment(
     const activeKeys = sortListKeys(settings.activeRulesetListKeys);
     if (!equalKeyLists(activeKeys, sortListKeys(reporter.enabledFilterIds.map(adguardListKey)))) {
         return {
-            status: 'agent_mismatch',
+            status: GoldenAgentEnvironmentStatus.AgentMismatch,
             detail:
                 `Active ruleset filter IDs ${renderedFilterIds(activeKeys)} do not match reporter ` +
                 `IDs ${reporter.enabledFilterIds.join(',')}.`,
@@ -411,7 +431,7 @@ export async function assessGoldenAgentEnvironment(
     }
     if (settings.stealthEnabled !== reporter.stealthEnabled) {
         return {
-            status: 'agent_mismatch',
+            status: GoldenAgentEnvironmentStatus.AgentMismatch,
             detail:
                 `Stealth state ${settings.stealthEnabled ? 'enabled' : 'disabled'} does not match ` +
                 `reporter state ${reporter.stealthEnabled ? 'enabled' : 'disabled'}.`,
@@ -419,7 +439,7 @@ export async function assessGoldenAgentEnvironment(
         };
     }
     return {
-        status: 'matched',
+        status: GoldenAgentEnvironmentStatus.Matched,
         detail:
             `Locked verified session matches the reporter extension build (${wrapperExtension.source}), ` +
             `${reporter.enabledFilterIds.length} reporter filter IDs, and exact Stealth state.`,
