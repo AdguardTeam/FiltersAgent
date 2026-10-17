@@ -1,14 +1,40 @@
 import { readFileSync } from 'node:fs';
 import * as v from 'valibot';
 import { guidanceRepositorySlugFromRemote } from './knowledge-base-preparer';
+import {
+    EXTENSION_BUILD_VERSION_PATTERN,
+    FULL_COMMIT_SHA_PATTERN,
+} from '../../src/environment/environment-proofs';
 import type { LocalRunConfig } from '../../src/local/run-config-types';
 import { ExtensionEnvironmentKind } from '../../src/types/extension-environment-kind';
 import { KnowledgeBaseEnvironmentKind } from '../../src/types/knowledge-base-environment-kind';
 
 const FullCommitSchema = v.pipe(v.string(), v.regex(/^[0-9a-f]{40}$/iu));
 
+export const ExtensionBuildPinSchema = v.strictObject({
+    version: v.pipe(v.string(), v.regex(EXTENSION_BUILD_VERSION_PATTERN)),
+    releaseTag: v.pipe(v.string(), v.minLength(1)),
+    autobuildCommit: v.pipe(v.string(), v.regex(FULL_COMMIT_SHA_PATTERN)),
+});
+
+/**
+ * Exact reporter extension build selected for a historical run.
+ */
+export type ExtensionBuildPin = v.InferOutput<typeof ExtensionBuildPinSchema>;
+
+/**
+ * Local environment settings with an extension build present only for historical runs.
+ */
+export type LabRunConfig = LocalRunConfig & {
+    /**
+     * Reporter extension identity required by historical runs and absent from current runs.
+     */
+    extensionBuild?: ExtensionBuildPin;
+};
+
 const RawLocalRunConfigSchema = v.object({
     filtersBaseSha: v.optional(FullCommitSchema),
+    extensionBuild: v.optional(ExtensionBuildPinSchema),
     filtersLocalSourcePath: v.optional(v.string()),
     filtersRemoteUrl: v.optional(v.pipe(v.string(), v.minLength(1))),
     filtersCurrentRef: v.optional(v.pipe(v.string(), v.minLength(1))),
@@ -60,13 +86,19 @@ export function loadLocalRunConfig(
     environment: ExtensionEnvironmentKind,
     configPath: string | undefined,
     keepTemporaryFiles: boolean,
-): LocalRunConfig {
+): LabRunConfig {
     if (environment === ExtensionEnvironmentKind.Historical && !configPath) {
         throw new Error('Historical runs require --run-config with exact case provenance.');
     }
     const raw = readRawConfig(configPath);
     if (environment === ExtensionEnvironmentKind.Historical && !raw.filtersBaseSha) {
         throw new Error('Historical runs require filtersBaseSha in the local case config.');
+    }
+    if (environment === ExtensionEnvironmentKind.Historical && !raw.extensionBuild) {
+        throw new Error(
+            'Historical runs require extensionBuild. Migrate the case with ' +
+                'pnpm benchmark:case:check -- <case> --extension-version <version>.',
+        );
     }
     const filtersEnvironment =
         environment === ExtensionEnvironmentKind.Current
@@ -81,6 +113,9 @@ export function loadLocalRunConfig(
         raw.knowledgeBaseRemoteUrl ?? 'https://github.com/AdguardTeam/KnowledgeBase.git';
     return {
         environment,
+        ...(environment === ExtensionEnvironmentKind.Historical
+            ? { extensionBuild: raw.extensionBuild! }
+            : {}),
         filters: {
             environment: filtersEnvironment,
             localSourcePath: raw.filtersLocalSourcePath,

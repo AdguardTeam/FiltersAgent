@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { loadLocalIssueSnapshot, toAgentIssueInput } from '../../../src/local/issue-snapshot';
 import { normalizeRule } from '../../../src/repo/rule-normalizer';
 import { loadGoldenHumanOracle, loadGoldenRunCase } from '../../../lab/e2e/golden-case';
-import { extractHumanCommitFix } from '../../../lab/e2e/human-commit-oracle';
+import { extractHumanCommitFix } from '../../../lab/e2e/human-commit-reader';
 
 const agentInputTextFragment = (value: string): string =>
     JSON.stringify(value).slice(1, -1).toLowerCase();
@@ -87,6 +87,8 @@ describe('pilot golden e2e cases', () => {
             expect(run.config.issueNumber).toBe(snapshot.rawIssue.number);
             expect(run.config.issueNumber).toBe(expected.issueNumber);
             expect(run.config.filtersBaseSha).toBe(expected.filtersBaseSha);
+            expect(run.config.extensionBuild.version).toBe(expected.extensionVersion);
+            expect(run.config.extensionBuild.releaseTag).toBe('v5.4.3.1');
             expect(oracle.humanFixCommit).toBe(expected.humanFixCommit);
             expect(snapshot.rawIssue.state).toBe('closed');
             expect(agentInput.attachments.length).toBeGreaterThan(0);

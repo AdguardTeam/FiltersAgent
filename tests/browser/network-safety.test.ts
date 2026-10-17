@@ -60,6 +60,10 @@ describe('validatePublicHttpUrl', () => {
         'https://github.com/adguardteam/adguardfilters/commit/2373061fde',
         'https://github.com/AdguardTeam/AdguardFilters.git',
         'https://api.github.com/repos/AdguardTeam/AdguardFilters/issues/243417/comments',
+        'https://api.github.com/repositories/22637619',
+        'https://api.github.com/repositories/22637619/issues/235988',
+        'https://api.github.com/repositories/22637619/contents/README.md',
+        'https://api.github.com/repositories/%322637619/commits/2373061fde',
         'https://raw.githubusercontent.com/AdguardTeam/AdguardFilters/master/BaseFilter/sections/foreign.txt',
         'https://github.com/search?q=repo%3AAdguardTeam%2FAdguardFilters+samoletplus.ru&type=issues',
     ])('keeps the browser off the repository the reports come from: %s', async (url) => {
@@ -71,6 +75,8 @@ describe('validatePublicHttpUrl', () => {
 
     it.each([
         'https://github.com/AdguardTeam/AdguardFiltersExtra',
+        'https://api.github.com/repositories/226376190',
+        'https://api.github.com/repositories/1/issues',
         'https://github.com/AdguardTeam/AdguardBrowserExtension/issues/1',
         'https://example.com/AdguardTeam/AdguardFilters',
     ])('leaves other repositories and sites reachable: %s', async (url) => {

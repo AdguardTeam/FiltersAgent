@@ -86,7 +86,8 @@ cp .env.example .env && chmod 600 .env
 ```
 
 `.env.example` is the variable inventory. The agent CLI (`pnpm start`),
-`pnpm test:e2e` and `pnpm benchmark:case:add` load `.env` into the process
+`pnpm test:e2e`, `pnpm benchmark:case:add` and
+`pnpm benchmark:case:check` load `.env` into the process
 environment with plain dotenv; variables already exported in the shell win.
 
 Every agent run needs a provider speaking the OpenAI chat-completions or
@@ -240,6 +241,7 @@ every pull request.
 | `pnpm test` | The Vitest suite |
 | `pnpm test:e2e` | The golden end-to-end cases (`lab/e2e/run.ts`), with a real LLM provider |
 | `pnpm benchmark:case:add` | Adds a golden case (`lab/e2e/case-add.ts`) |
+| `pnpm benchmark:case:check` | Checks or migrates historical cases without an LLM (`lab/e2e/case-check.ts`) |
 | `pnpm benchmark:verify-run` | Verifies one benchmark run's output (`lab/benchmark/verify-run.ts`) |
 | `pnpm lint` | oxlint plus the prompt-document scan |
 | `pnpm fmt` | oxfmt plus `eslint --fix` on `src/` and `lab/` |
@@ -367,9 +369,11 @@ the sources and the lockfile, so two builds give byte-identical files. The
 committed copy.
 
 The action image leaves `src/adguard-cli/` out, so the action itself never
-carries the CLI code. The local CLI and the benchmark run the same bundle
-through `--blocker-module adguard-cli/blocker-module.json`; see
-[Run the AdGuard CLI executor](#run-the-adguard-cli-executor).
+carries the CLI code. Current local CLI runs load the bundle through
+`--blocker-module adguard-cli/blocker-module.json`; see
+[Run the AdGuard CLI executor](#run-the-adguard-cli-executor). Historical
+local runs and the benchmark (`pnpm test:e2e`) refuse `--blocker-module`
+because module lists cannot be pinned to the reporter's date.
 
 ### Try a change on a fork of AdguardFilters
 

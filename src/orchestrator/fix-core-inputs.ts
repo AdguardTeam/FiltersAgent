@@ -1,3 +1,5 @@
+import type { RedirectOriginPolicy } from '../browser/redirect-origin-policy';
+import type { PreparedExtension } from '../local/prepared-extension';
 import { BrowserMode } from '../types/browser-mode';
 import type { AdGuardExtensionSettingsProfile } from '../browser/adguard-extension-settings';
 import { type BrowserSession, type BrowserSessionConfig } from '../browser/browser-session';
@@ -96,6 +98,16 @@ export interface DirectFixCoreIssueInput extends RawIssue {
  * Runtime options for a GitHub-independent investigation.
  */
 export interface FixCoreOptions {
+    /**
+     * Verified historical build supplied only by a historical lab run; the action never sets it.
+     */
+    preparedExtension?: PreparedExtension;
+
+    /**
+     * Navigation policy supplied only by a historical lab run; the action never sets it.
+     */
+    redirectOriginPolicy?: RedirectOriginPolicy;
+
     /**
      * Directory where every trace and browser artifact is written.
      */

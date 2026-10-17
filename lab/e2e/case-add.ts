@@ -2,6 +2,8 @@ import 'dotenv/config';
 import { join } from 'node:path';
 import { loadCoreConfig, loadGithubReadConfig } from '../../src/config/config';
 import { bindExtractReport } from '../../src/intake/extract-issue-facts';
+import { createLogger } from '../../src/logger/logger';
+import { labExtensionCacheRoot } from '../local/historical-extension-build';
 import { parseGoldenCaseAddArgs } from './case-add-cli';
 import { prepareGoldenCase } from './golden-case-preparer';
 
@@ -32,6 +34,9 @@ async function main(): Promise<void> {
         {
             ...args,
             workspaceRoot,
+            cacheRoot: labExtensionCacheRoot(workspaceRoot),
+            logger: createLogger(),
+            onWarning: (rule) => process.stderr.write(`${rule}\n`),
             casesRoot: join(workspaceRoot, 'lab', 'benchmark', 'e2e', 'cases'),
         },
         {
@@ -44,8 +49,7 @@ async function main(): Promise<void> {
                 caseName: prepared.caseName,
                 caseDirectory: prepared.caseDirectory,
                 filtersBaseSha: prepared.filtersBaseSha,
-                extensionTag: prepared.extensionTag,
-                extensionTagCommit: prepared.extensionTagCommit,
+                extensionBuild: prepared.extensionBuild,
                 promptVisibleScreenshotCount: prepared.promptVisibleScreenshotCount,
             },
             null,

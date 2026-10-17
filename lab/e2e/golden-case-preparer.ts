@@ -1,3 +1,5 @@
+import { assertOracleIsolation } from './golden-oracle-isolation';
+import type { withPreparedFiltersCheckout } from '../../src/local/filters-preparer';
 import { randomUUID } from 'node:crypto';
 import {
     cpSync,
@@ -10,41 +12,50 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
-import { createOctokit, type GithubReadConfig, type RawIssue } from '../../src/github/fetch-issue';
+import { type GithubReadConfig, type RawIssue } from '../../src/github/fetch-issue';
 import { IssueState } from '../../src/types/issue-state';
 import { exportGithubIssue } from '../local/github-issue-exporter';
 import {
     loadLocalIssueSnapshot,
-    toAgentIssueInput,
     type ExportedLocalIssueSnapshot,
     type LocalIssueComment,
     type LocalIssueSnapshot,
 } from '../../src/local/issue-snapshot';
-import { normalizeRule } from '../../src/repo/rule-normalizer';
 import type { IssueFacts } from '../../src/types/issue-facts';
 import { reportToIssueFacts } from '../../src/intake/report-facts';
 import type { Report } from '../../src/intake/report';
-import { loadGoldenHumanOracle, loadGoldenRunCase } from './golden-case';
+import {
+    GoldenRunSchemaVersion,
+    loadGoldenHumanOracle,
+    loadGoldenRunCase,
+    writeGoldenRunDocument,
+} from './golden-case';
 import { GOLDEN_CASE_NAME_PATTERN } from './golden-case-name';
-import { parseHumanCommitDiff } from './human-commit-oracle';
-
-/**
- * Trusted upstream repository containing the human filter history.
- */
-const FILTERS_REPOSITORY = { owner: 'AdguardTeam', repo: 'AdguardFilters' } as const;
-
-/**
- * Trusted upstream repository containing historical browser-extension tags.
- */
-const EXTENSION_REPOSITORY = {
-    owner: 'AdguardTeam',
-    repo: 'AdguardBrowserExtension',
-} as const;
+import type { Logger } from '../../src/logger/logger';
+import { prepareHistoricalExtensionBuild } from '../local/historical-extension-build';
+import {
+    autobuildTagFor,
+    extensionCodeLine,
+    findHistoricalReleaseForVersion,
+} from '../local/historical-extension-releases';
+import type { ExtensionBuildPin } from '../local/run-config';
+import {
+    FILTERS_REPOSITORY,
+    inspectHistoricalCaseMetadata,
+    type HistoricalCaseInspectionInput,
+    type HistoricalCaseMetadata,
+} from './historical-case-metadata';
+import { checkHistoricalHumanFixAbsent, HumanFixPresentError } from './human-fix-build-guard';
 
 /**
  * Inputs needed to prepare one tracked historical golden case.
  */
 export interface PrepareGoldenCaseOptions {
+    /**
+     * Print one removed rule absent from the build as an advisory warning.
+     */
+    onWarning?: (rule: string) => void;
+
     /**
      * Upstream issue number.
      */
@@ -61,6 +72,16 @@ export interface PrepareGoldenCaseOptions {
     workspaceRoot: string;
 
     /**
+     * Host-only cache for verified historical reporter builds.
+     */
+    cacheRoot: string;
+
+    /**
+     * Receives build preparation diagnostics.
+     */
+    logger: Logger;
+
+    /**
      * Optional absolute golden case root used by tests or alternate corpora.
      */
     casesRoot?: string;
@@ -72,84 +93,19 @@ export interface PrepareGoldenCaseOptions {
 }
 
 /**
- * Read-only historical metadata validated before a case becomes visible in the corpus.
- */
-export interface HistoricalCaseMetadata {
-    /**
-     * Last AdguardFilters master commit at or before issue creation.
-     */
-    filtersBaseSha: string;
-
-    /**
-     * Commit targeted by the exact extension autobuild tag from the selected report.
-     */
-    extensionTagCommit: string;
-
-    /**
-     * Files changed by the trusted human fix commit.
-     */
-    humanChangedFiles: string[];
-
-    /**
-     * Transient human-answer fingerprints used only to reject contaminated agent input.
-     */
-    humanRuleCandidates: HumanRuleIsolationCandidate[];
-}
-
-/**
- * Minimal transient human-answer fingerprint retained only while a case is prepared.
- */
-export interface HumanRuleIsolationCandidate {
-    /**
-     * Canonical form of the reporter-relevant domain delta or inserted human rule.
-     */
-    canonicalRule: string;
-
-    /**
-     * Exact added repository line from the human commit.
-     */
-    sourceRule: string;
-}
-
-/**
- * GitHub commit file fields required to extract human filter-rule fingerprints.
- */
-interface HumanCommitFile {
-    /**
-     * Repository-relative path changed by the human commit.
-     */
-    filename: string;
-
-    /**
-     * GitHub-provided unified patch for the changed file.
-     */
-    patch?: string;
-}
-
-/**
- * Arguments passed to the read-only GitHub history inspector.
- */
-export interface HistoricalCaseInspectionInput {
-    /**
-     * Upstream issue number.
-     */
-    issueNumber: number;
-
-    /**
-     * Full proposed human fix commit.
-     */
-    humanFixCommit: string;
-
-    /**
-     * Exact extension autobuild tag derived from prompt-visible issue evidence.
-     */
-    extensionTag: string;
-}
-
-/**
  * Injectable effects for deterministic case-preparation tests.
  */
 export interface GoldenCasePreparationDependencies {
+    /**
+     * Existing historical filters checkout lifecycle, injectable for offline tests.
+     */
+    withPreparedFiltersCheckout?: typeof withPreparedFiltersCheckout;
+
+    /**
+     * Reporter build assembler, injectable for offline case-preparation tests.
+     */
+    prepareHistoricalExtensionBuild?: typeof prepareHistoricalExtensionBuild;
+
     /**
      * Existing read-only issue and attachment exporter.
      */
@@ -174,16 +130,6 @@ export interface GoldenCasePreparationDependencies {
 }
 
 /**
- * Injectable GitHub client factory for history-inspection unit tests.
- */
-export interface HistoricalCaseInspectionDependencies {
-    /**
-     * Build the read-only Octokit client used by the inspector.
-     */
-    createClient?: typeof createOctokit;
-}
-
-/**
  * Materialized and independently reloadable golden case.
  */
 export interface PreparedGoldenCase {
@@ -203,14 +149,9 @@ export interface PreparedGoldenCase {
     filtersBaseSha: string;
 
     /**
-     * Historical extension tag proven to exist upstream.
+     * Exact reporter build verified to exclude the human fix.
      */
-    extensionTag: string;
-
-    /**
-     * Commit targeted by the validated extension tag.
-     */
-    extensionTagCommit: string;
+    extensionBuild: ExtensionBuildPin;
 
     /**
      * Number of prompt-visible reporter screenshots retained in the portable bundle.
@@ -231,146 +172,6 @@ interface CompatibleIssueReport {
      * Exact four-component extension version.
      */
     extensionVersion: string;
-}
-
-/**
- * Normalize a GitHub API failure into a bounded preparation diagnostic.
- *
- * @param operation - Read operation that failed.
- * @param error - Unknown transport or API error.
- * @returns Error containing no credential-bearing URL.
- */
-function githubReadError(operation: string, error: unknown): Error {
-    return new Error(`${operation}: ${(error as Error).message}`, { cause: error });
-}
-
-/**
- * Extract transient canonical and source-rule fingerprints from GitHub commit patches.
- *
- * Missing patches fail closed: without the complete text diff the preparer cannot prove that the
- * prompt is independent of the answer. The returned rules are used in memory and are never written
- * into the case bundle.
- *
- * @param files - GitHub commit files containing repository paths and unified patches.
- * @returns Deduplicated human-rule fingerprints in diff order.
- */
-function extractHumanRuleCandidates(
-    files: readonly HumanCommitFile[],
-): HumanRuleIsolationCandidate[] {
-    const textFiles = files.filter((file) => file.filename.endsWith('.txt'));
-    const missingPatch = textFiles.find((file) => typeof file.patch !== 'string');
-    if (missingPatch) {
-        throw new Error(`GitHub omitted the human diff patch for ${missingPatch.filename}.`);
-    }
-    const diff = textFiles.map((file) => `+++ b/${file.filename}\n${file.patch!}`).join('\n');
-    const candidates = parseHumanCommitDiff(diff).map((candidate) => ({
-        canonicalRule: normalizeRule(candidate.rule).canonical,
-        sourceRule: candidate.sourceRule,
-    }));
-    if (candidates.length === 0) {
-        throw new Error('Human fix commit contains no extractable filter-rule candidates.');
-    }
-    return [
-        ...new Map(
-            candidates.map((candidate) => [
-                `${candidate.canonicalRule}\0${candidate.sourceRule}`,
-                candidate,
-            ]),
-        ).values(),
-    ];
-}
-
-/**
- * Encode one exact text value as it appears inside a JSON-stringified agent input.
- *
- * @param value - Unescaped title, body, comment, label, or attachment field value.
- * @returns Lower-cased escaped JSON fragment without surrounding quotes.
- */
-function agentInputTextFragment(value: string): string {
-    return JSON.stringify(value).slice(1, -1).toLowerCase();
-}
-
-/**
- * Inspect the immutable history needed to prove a historical case is reproducible.
- *
- * @param config - GitHub read credential; repository coordinates are ignored in favor of trusted
- *   upstream repositories.
- * @param input - Issue, human commit, and extension tag to validate.
- * @param dependencies - Optional deterministic GitHub client seam.
- * @returns Validated pre-issue base, extension tag commit, and human changed files.
- */
-export async function inspectHistoricalCaseMetadata(
-    config: GithubReadConfig,
-    input: HistoricalCaseInspectionInput,
-    dependencies: HistoricalCaseInspectionDependencies = {},
-): Promise<HistoricalCaseMetadata> {
-    const octokit = (dependencies.createClient ?? createOctokit)(config);
-    try {
-        const issueResponse = await octokit.rest.issues.get({
-            ...FILTERS_REPOSITORY,
-            issue_number: input.issueNumber,
-        });
-        if ('pull_request' in issueResponse.data) {
-            throw new Error(`Issue #${input.issueNumber} is a pull request.`);
-        }
-        const createdAt = issueResponse.data.created_at;
-        const [baseResponse, humanResponse, extensionResponse] = await Promise.all([
-            octokit.rest.repos.listCommits({
-                ...FILTERS_REPOSITORY,
-                sha: 'master',
-                until: createdAt,
-                per_page: 1,
-            }),
-            octokit.rest.repos.getCommit({
-                ...FILTERS_REPOSITORY,
-                ref: input.humanFixCommit,
-            }),
-            octokit.rest.git.getRef({
-                ...EXTENSION_REPOSITORY,
-                ref: `tags/${input.extensionTag}`,
-            }),
-        ]);
-        const filtersBaseSha = baseResponse.data[0]?.sha?.toLowerCase();
-        if (!filtersBaseSha || !/^[0-9a-f]{40}$/u.test(filtersBaseSha)) {
-            throw new Error(`No AdguardFilters master commit exists before ${createdAt}.`);
-        }
-        const resolvedHumanCommit = humanResponse.data.sha.toLowerCase();
-        if (resolvedHumanCommit !== input.humanFixCommit.toLowerCase()) {
-            throw new Error('GitHub resolved the human fix to an unexpected commit.');
-        }
-        const humanMessage = humanResponse.data.commit.message;
-        if (!new RegExp(`#${input.issueNumber}(?:\\D|$)`, 'u').test(humanMessage)) {
-            throw new Error(`Human fix commit does not reference issue #${input.issueNumber}.`);
-        }
-        if (humanResponse.data.parents.length !== 1) {
-            throw new Error(
-                'Human fix commit must have exactly one parent for deterministic diffing.',
-            );
-        }
-        const humanFiles = humanResponse.data.files ?? [];
-        const humanChangedFiles = humanFiles.map((file) => file.filename);
-        if (!humanChangedFiles.some((file) => file.endsWith('.txt'))) {
-            throw new Error('Human fix commit does not change an AdguardFilters text file.');
-        }
-        const humanRuleCandidates = extractHumanRuleCandidates(humanFiles);
-        if (extensionResponse.data.object.type !== 'commit') {
-            throw new Error(
-                `Extension tag ${input.extensionTag} does not point directly to a commit.`,
-            );
-        }
-        const extensionTagCommit = extensionResponse.data.object.sha.toLowerCase();
-        if (!/^[0-9a-f]{40}$/u.test(extensionTagCommit)) {
-            throw new Error(`Extension tag ${input.extensionTag} returned an invalid commit.`);
-        }
-        return {
-            filtersBaseSha,
-            extensionTagCommit,
-            humanChangedFiles,
-            humanRuleCandidates,
-        };
-    } catch (error) {
-        throw githubReadError(`Unable to validate historical case #${input.issueNumber}`, error);
-    }
 }
 
 /**
@@ -499,50 +300,6 @@ function deriveCaseName(reportedUrl: string, issueNumber: number): string {
 }
 
 /**
- * Assert that the closed human answer cannot cross the model-input boundary.
- *
- * The raw issue history deliberately remains complete for audit. Only the narrowed
- * {@link toAgentIssueInput} representation is subject to this boundary.
- *
- * @param snapshot - Complete raw issue snapshot used to derive agent-visible input.
- * @param humanFixCommit - Full closed human commit.
- * @param humanRuleCandidates - Transient answer fingerprints extracted from the human diff.
- */
-function assertOracleIsolation(
-    snapshot: LocalIssueSnapshot,
-    humanFixCommit: string,
-    humanRuleCandidates: readonly HumanRuleIsolationCandidate[] = [],
-): void {
-    const agentInput = JSON.stringify(toAgentIssueInput(snapshot));
-    const normalizedAgentInput = agentInput.toLowerCase();
-    const shortHumanCommit = humanFixCommit.slice(0, 7).toLowerCase();
-    if (normalizedAgentInput.includes(shortHumanCommit)) {
-        throw new Error('Full or abbreviated human fix commit leaked into agent-visible input.');
-    }
-    if (
-        /github\.com[\\/]adguardteam[\\/]adguardfilters[\\/](?:pull|pulls)[\\/]\d+/iu.test(
-            agentInput,
-        ) ||
-        /\b(?:pr|pull request)\s*:?[ \t]*#?\d+\b/iu.test(agentInput)
-    ) {
-        throw new Error('Human pull request reference leaked into agent-visible input.');
-    }
-    for (const candidate of humanRuleCandidates) {
-        const canonicalRule = candidate.canonicalRule.trim().toLowerCase();
-        const sourceRule = candidate.sourceRule.trim().toLowerCase();
-        if (!canonicalRule || !sourceRule) {
-            throw new Error('Human rule isolation candidate is incomplete.');
-        }
-        if (
-            normalizedAgentInput.includes(agentInputTextFragment(canonicalRule)) ||
-            normalizedAgentInput.includes(agentInputTextFragment(sourceRule))
-        ) {
-            throw new Error('Human filter rule leaked into agent-visible input.');
-        }
-    }
-}
-
-/**
  * Write one JSON document with stable formatting.
  *
  * @param path - Destination JSON path.
@@ -611,7 +368,7 @@ export async function prepareGoldenCase(
         if (!GOLDEN_CASE_NAME_PATTERN.test(caseName)) {
             throw new Error(`Invalid golden E2E case name: ${caseName}`);
         }
-        const extensionTag = `autobuild-v${compatibleReport.extensionVersion}`;
+        const extensionTag = autobuildTagFor(compatibleReport.extensionVersion);
         const metadata = await inspectMetadata(config, {
             issueNumber: options.issueNumber,
             humanFixCommit: options.humanFixCommit.toLowerCase(),
@@ -628,11 +385,43 @@ export async function prepareGoldenCase(
             options.humanFixCommit,
             metadata.humanRuleCandidates,
         );
-        writeJson(join(stagingDirectory, 'run.json'), {
-            schemaVersion: 2,
+        const version = compatibleReport.extensionVersion;
+        const release = findHistoricalReleaseForVersion(version);
+        if (!release) {
+            throw new Error(
+                `No listed release for code line ${extensionCodeLine(version)} (reporter version ${version}).`,
+            );
+        }
+        const extensionBuild: ExtensionBuildPin = {
+            version,
+            releaseTag: release.tag,
+            autobuildCommit: metadata.extensionTagCommit.toLowerCase(),
+        };
+        const build = await (
+            dependencies.prepareHistoricalExtensionBuild ?? prepareHistoricalExtensionBuild
+        )({
+            build: extensionBuild,
+            cacheRoot: options.cacheRoot,
+            logger: options.logger,
+        });
+        const { violations, warnings } = await checkHistoricalHumanFixAbsent(
+            build.extensionDir,
+            metadata.humanRuleLines,
+            metadata.filtersBaseSha,
+            dependencies.withPreparedFiltersCheckout,
+        );
+        for (const warning of warnings) {
+            options.onWarning?.(warning);
+        }
+        if (violations.length > 0) {
+            throw new HumanFixPresentError(violations);
+        }
+        writeGoldenRunDocument(stagingDirectory, {
+            schemaVersion: GoldenRunSchemaVersion.Current,
             issueNumber: options.issueNumber,
             issueFile: 'issue/issue.json',
             filtersBaseSha: metadata.filtersBaseSha.toLowerCase(),
+            extensionBuild,
         });
         writeJson(join(stagingDirectory, 'oracle.json'), {
             humanFixCommit: options.humanFixCommit.toLowerCase(),
@@ -663,8 +452,7 @@ export async function prepareGoldenCase(
             caseName,
             caseDirectory: destination,
             filtersBaseSha: metadata.filtersBaseSha.toLowerCase(),
-            extensionTag,
-            extensionTagCommit: metadata.extensionTagCommit.toLowerCase(),
+            extensionBuild,
             promptVisibleScreenshotCount: finalSnapshot.attachments.filter(
                 (attachment) => attachment.promptVisible,
             ).length,

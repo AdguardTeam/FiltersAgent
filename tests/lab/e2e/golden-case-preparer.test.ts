@@ -1,14 +1,18 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { exportLocalIssueSnapshot, toAgentIssueInput } from '../../../src/local/issue-snapshot';
 import { loadGoldenHumanOracle, loadGoldenRunCase } from '../../../lab/e2e/golden-case';
-import { createOctokit } from '../../../src/github/fetch-issue';
-import {
-    inspectHistoricalCaseMetadata,
-    prepareGoldenCase,
-} from '../../../lab/e2e/golden-case-preparer';
+import { prepareGoldenCase } from '../../../lab/e2e/golden-case-preparer';
+import { createLogger } from '../../../src/logger/logger';
+import { ExtensionManifestVersion } from '../../../src/environment/extension-preparation';
+import type { withPreparedFiltersCheckout } from '../../../src/local/filters-preparer';
+import { CheckoutSource } from '../../../src/types/checkout-source';
+import { ExtensionEnvironmentKind } from '../../../src/types/extension-environment-kind';
+import type { PrepareHistoricalExtensionBuildOptions } from '../../../lab/local/historical-extension-build';
+
+afterEach(() => vi.restoreAllMocks());
 
 const HUMAN_COMMIT = 'f'.repeat(40);
 const FILTERS_BASE_SHA = '203b5312920118056616596bc62a19318f57d6d3';
@@ -38,8 +42,105 @@ function scriptedExtraction(report: Record<string, unknown>): (raw: unknown) => 
     return vi.fn(async () => report);
 }
 
+/**
+ * Supply a readable bundled list while keeping every preparation test offline.
+ */
+function fixtureBuild(lines = '! Clean pre-fix list') {
+    return vi.fn(async ({ build }: PrepareHistoricalExtensionBuildOptions) => {
+        const extensionDir = mkdtempSync(join(tmpdir(), 'case-build-'));
+        const ruleset = join(extensionDir, 'filters', 'declarative', 'ruleset_2');
+        mkdirSync(ruleset, { recursive: true });
+        writeFileSync(
+            join(ruleset, 'ruleset_2.json'),
+            JSON.stringify([{ metadata: { rawFilterList: lines } }]),
+        );
+        writeFileSync(
+            join(extensionDir, 'manifest.json'),
+            JSON.stringify({
+                declarative_net_request: {
+                    rule_resources: [
+                        {
+                            id: 'ruleset_2',
+                            enabled: true,
+                            path: 'filters/declarative/ruleset_2/ruleset_2.json',
+                        },
+                    ],
+                },
+            }),
+        );
+        return {
+            extensionDir,
+            manifestVersion: ExtensionManifestVersion.Mv3,
+            provenance: {
+                ...build,
+                releaseSha256: '0'.repeat(64),
+                autobuildTag: `autobuild-v${build.version}`,
+            },
+        };
+    });
+}
+
+function fixtureCheckout(baseRule = ''): typeof withPreparedFiltersCheckout {
+    return async (config, callback) => {
+        const checkoutPath = mkdtempSync(join(tmpdir(), 'case-base-'));
+        mkdirSync(join(checkoutPath, 'unmapped', 'nested'), { recursive: true });
+        writeFileSync(join(checkoutPath, 'unmapped', 'nested', 'rules.txt'), baseRule);
+        try {
+            return await callback({
+                checkoutPath,
+                filtersPath: checkoutPath,
+                provenance: {
+                    environment: ExtensionEnvironmentKind.Historical,
+                    source: CheckoutSource.LocalSharedClone,
+                    sourceLocation: checkoutPath,
+                    requestedRevision:
+                        config.environment.kind === ExtensionEnvironmentKind.Historical
+                            ? config.environment.baseSha
+                            : '',
+                    commit: FILTERS_BASE_SHA,
+                },
+            });
+        } finally {
+            rmSync(checkoutPath, { recursive: true, force: true });
+        }
+    };
+}
+
 describe('prepareGoldenCase', () => {
-    it('preserves raw audit history while isolating the human answer from the agent', async () => {
+    it.each([
+        [
+            'writes the reporter extension build into a v3 run.json after the guard passes',
+            '5.4.3.96',
+            '! Clean list',
+            null,
+            '',
+            [],
+        ],
+        [
+            'ignores duplicate additions from the base and prints absent removals before saving',
+            '5.4.3.96',
+            HUMAN_SOURCE_RULE,
+            null,
+            ` ${HUMAN_SOURCE_RULE} \n`,
+            ['||example.org/old-ad^'],
+        ],
+        [
+            'refuses a case whose build already carries the human fix, naming the rule and list',
+            '5.4.3.96',
+            HUMAN_SOURCE_RULE,
+            /bankier\.pl,money\.pl##\.money-ecommerce-container.*list 2/u,
+            '',
+            [],
+        ],
+        [
+            'refuses a reporter version whose code line has no listed release',
+            '9.8.7.6',
+            '! Clean list',
+            /9\.8\.7.*9\.8\.7\.6/u,
+            '',
+            [],
+        ],
+    ])('%s', async (_name, reportVersion, listLines, expectedError, baseRule, removedRules) => {
         const workspaceRoot = mkdtempSync(join(tmpdir(), 'case-preparer-workspace-'));
         const casesRoot = join(workspaceRoot, 'benchmark', 'e2e', 'cases');
         const reportScreenshot = 'https://cdn.adguardcdn.com/sitereports/money-reporter.png?nc=1';
@@ -88,13 +189,13 @@ describe('prepareGoldenCase', () => {
             comment: 'Ads stay on the money.pl homepage.',
             screenshots: [{ url: reportScreenshot }],
             environment: {
-                product: 'AdGuard Browser Extension v5.4.3.96 MV3',
+                product: `AdGuard Browser Extension v${reportVersion} MV3`,
                 browser: 'Chrome',
             },
             enabledLists: [{ name: 'AdGuard Base filter', officialFilterId: 2 }],
             settingsImportUrl:
                 'https://reports.adguard.com/settings/import.html?' +
-                'product_type=ext&product_version=5.4.3.96&ext.manifest_version=3&' +
+                `product_type=ext&product_version=${reportVersion}&ext.manifest_version=3&` +
                 'browser=chrome&regular_filters=2&stealth.enabled=0',
             userRules: [],
             reproductionSteps: [],
@@ -104,28 +205,54 @@ describe('prepareGoldenCase', () => {
             extensionTagCommit: 'a0dba5b957bf1a93cf3c05216f75b29223dac7e4',
             humanChangedFiles: ['BaseFilter/sections/foreign.txt'],
             humanRuleCandidates: HUMAN_RULE_CANDIDATES,
+            humanRuleLines: { added: [HUMAN_SOURCE_RULE], removed: removedRules ?? [] },
         });
 
-        const prepared = await prepareGoldenCase(
+        const prepareHistoricalExtensionBuild = fixtureBuild(listLines as string);
+        const warnings = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+        const preparation = prepareGoldenCase(
             { owner: 'AdguardTeam', repo: 'AdguardFilters', token: 'read-token' },
             {
                 issueNumber: 235679,
                 humanFixCommit: HUMAN_COMMIT,
                 workspaceRoot,
+                cacheRoot: join(workspaceRoot, 'cache'),
+                logger: createLogger(),
                 casesRoot,
+                onWarning: (warning) => process.stderr.write(`${warning}\n`),
             },
-            { exportIssue, extractReport: extractReport as never, inspectHistoricalMetadata },
+            {
+                exportIssue,
+                extractReport: extractReport as never,
+                inspectHistoricalMetadata,
+                prepareHistoricalExtensionBuild,
+                withPreparedFiltersCheckout: fixtureCheckout(baseRule as string | undefined),
+            },
         );
 
+        if (expectedError) {
+            await expect(preparation).rejects.toThrow(expectedError);
+            expect(existsSync(join(casesRoot, 'money-pl-235679'))).toBe(false);
+            return;
+        }
+        const prepared = await preparation;
+        expect(warnings.mock.calls.map(([text]) => text)).toEqual(
+            (removedRules ?? []).map((rule) => `${rule}\n`),
+        );
         expect(prepared.caseName).toBe('money-pl-235679');
-        expect(prepared.extensionTag).toBe('autobuild-v5.4.3.96');
+        expect(prepared.extensionBuild).toEqual({
+            version: '5.4.3.96',
+            releaseTag: 'v5.4.3.1',
+            autobuildCommit: 'a0dba5b957bf1a93cf3c05216f75b29223dac7e4',
+        });
         expect(prepared.filtersBaseSha).toBe(FILTERS_BASE_SHA);
         expect(existsSync(join(prepared.caseDirectory, 'issue', 'attachments'))).toBe(true);
         expect(loadGoldenRunCase(prepared.caseDirectory).config).toEqual({
-            schemaVersion: 2,
+            schemaVersion: 3,
             issueNumber: 235679,
             issueFile: 'issue/issue.json',
             filtersBaseSha: FILTERS_BASE_SHA,
+            extensionBuild: prepared.extensionBuild,
         });
         expect(loadGoldenHumanOracle(prepared.caseDirectory)).toEqual({
             humanFixCommit: HUMAN_COMMIT,
@@ -249,15 +376,23 @@ describe('prepareGoldenCase', () => {
                 issueNumber: 235510,
                 humanFixCommit: 'e'.repeat(40),
                 workspaceRoot,
+                cacheRoot: join(workspaceRoot, 'cache'),
+                logger: createLogger(),
                 casesRoot,
             },
             {
                 exportIssue,
+                prepareHistoricalExtensionBuild: fixtureBuild(),
+                withPreparedFiltersCheckout: fixtureCheckout(),
                 extractReport: extractReport as never,
                 inspectHistoricalMetadata: vi.fn().mockResolvedValue({
                     filtersBaseSha: 'cd93c10da43f3dd3197d854adbe1b8218fdf8353',
                     extensionTagCommit: '65d6adcd0a7cdae237ff3344b190568bdb944514',
                     humanChangedFiles: ['JapaneseFilter/sections/antiadblock.txt'],
+                    humanRuleLines: {
+                        added: ["e-words.jp#%#//scriptlet('abort-on-property-read', 'x')"],
+                        removed: [],
+                    },
                     humanRuleCandidates: [
                         {
                             canonicalRule:
@@ -270,7 +405,7 @@ describe('prepareGoldenCase', () => {
         );
 
         expect(prepared.caseName).toBe('e-words-jp-235510');
-        expect(prepared.extensionTag).toBe('autobuild-v5.4.3.84');
+        expect(prepared.extensionBuild.version).toBe('5.4.3.84');
         const loaded = loadGoldenRunCase(prepared.caseDirectory);
         expect(
             toAgentIssueInput(JSON.parse(readFileSync(loaded.issueFile, 'utf8'))).comments,
@@ -318,6 +453,8 @@ describe('prepareGoldenCase', () => {
                     issueNumber: 4,
                     humanFixCommit: HUMAN_COMMIT,
                     workspaceRoot,
+                    cacheRoot: join(workspaceRoot, 'cache'),
+                    logger: createLogger(),
                     casesRoot,
                 },
                 {
@@ -390,6 +527,8 @@ describe('prepareGoldenCase', () => {
                     issueNumber: 235679,
                     humanFixCommit: HUMAN_COMMIT,
                     workspaceRoot,
+                    cacheRoot: join(workspaceRoot, 'cache'),
+                    logger: createLogger(),
                     casesRoot,
                 },
                 {
@@ -400,179 +539,11 @@ describe('prepareGoldenCase', () => {
                         extensionTagCommit: 'a'.repeat(40),
                         humanChangedFiles: ['BaseFilter/sections/foreign.txt'],
                         humanRuleCandidates: HUMAN_RULE_CANDIDATES,
+                        humanRuleLines: { added: [HUMAN_SOURCE_RULE], removed: [] },
                     }),
                 },
             ),
         ).rejects.toThrow(/human|oracle|pull request/iu);
         expect(existsSync(join(casesRoot, 'money-pl-235679'))).toBe(false);
-    });
-});
-
-describe('inspectHistoricalCaseMetadata', () => {
-    it('uses issue creation time to resolve master and validates both closed revisions', async () => {
-        const getIssue = vi.fn().mockResolvedValue({
-            data: { created_at: '2026-07-14T06:08:12Z' },
-        });
-        const listCommits = vi.fn().mockResolvedValue({
-            data: [{ sha: FILTERS_BASE_SHA }],
-        });
-        const getCommit = vi.fn().mockResolvedValue({
-            data: {
-                sha: HUMAN_COMMIT,
-                commit: { message: 'Fix #235679 money.pl' },
-                parents: [{ sha: 'a'.repeat(40) }],
-                files: [
-                    {
-                        filename: 'BaseFilter/sections/foreign.txt',
-                        patch:
-                            '@@ -1 +1 @@\n' +
-                            '-bankier.pl##.money-ecommerce-container\n' +
-                            `-${HUMAN_QUOTED_SOURCE_RULE.replace('bankier.pl,money.pl', 'bankier.pl')}\n` +
-                            `+${HUMAN_SOURCE_RULE}\n` +
-                            `+${HUMAN_QUOTED_SOURCE_RULE}`,
-                    },
-                ],
-            },
-        });
-        const getRef = vi.fn().mockResolvedValue({
-            data: { object: { type: 'commit', sha: 'b'.repeat(40) } },
-        });
-        const createClient = vi.fn(
-            () =>
-                ({
-                    rest: {
-                        issues: { get: getIssue },
-                        repos: { listCommits, getCommit },
-                        git: { getRef },
-                    },
-                }) as unknown as ReturnType<typeof createOctokit>,
-        );
-
-        await expect(
-            inspectHistoricalCaseMetadata(
-                { owner: 'ignored', repo: 'ignored', token: 'read-token' },
-                {
-                    issueNumber: 235679,
-                    humanFixCommit: HUMAN_COMMIT,
-                    extensionTag: 'autobuild-v5.4.3.96',
-                },
-                { createClient },
-            ),
-        ).resolves.toEqual({
-            filtersBaseSha: FILTERS_BASE_SHA,
-            extensionTagCommit: 'b'.repeat(40),
-            humanChangedFiles: ['BaseFilter/sections/foreign.txt'],
-            humanRuleCandidates: HUMAN_RULE_CANDIDATES,
-        });
-        expect(listCommits).toHaveBeenCalledWith({
-            owner: 'AdguardTeam',
-            repo: 'AdguardFilters',
-            sha: 'master',
-            until: '2026-07-14T06:08:12Z',
-            per_page: 1,
-        });
-        expect(getRef).toHaveBeenCalledWith({
-            owner: 'AdguardTeam',
-            repo: 'AdguardBrowserExtension',
-            ref: 'tags/autobuild-v5.4.3.96',
-        });
-    });
-
-    it('fails closed when no pre-issue master commit can be resolved', async () => {
-        const createClient = vi.fn(
-            () =>
-                ({
-                    rest: {
-                        issues: {
-                            get: vi.fn().mockResolvedValue({
-                                data: { created_at: '2026-07-14T06:08:12Z' },
-                            }),
-                        },
-                        repos: {
-                            listCommits: vi.fn().mockResolvedValue({ data: [] }),
-                            getCommit: vi.fn().mockResolvedValue({
-                                data: {
-                                    sha: HUMAN_COMMIT,
-                                    commit: { message: 'Fix #235679 money.pl' },
-                                    parents: [{ sha: 'a'.repeat(40) }],
-                                    files: [
-                                        {
-                                            filename: 'BaseFilter/sections/foreign.txt',
-                                            patch:
-                                                '@@ -1 +1 @@\n' +
-                                                '-bankier.pl##.money-ecommerce-container\n' +
-                                                `-${HUMAN_QUOTED_SOURCE_RULE.replace('bankier.pl,money.pl', 'bankier.pl')}\n` +
-                                                `+${HUMAN_SOURCE_RULE}\n` +
-                                                `+${HUMAN_QUOTED_SOURCE_RULE}`,
-                                        },
-                                    ],
-                                },
-                            }),
-                        },
-                        git: {
-                            getRef: vi.fn().mockResolvedValue({
-                                data: { object: { type: 'commit', sha: 'b'.repeat(40) } },
-                            }),
-                        },
-                    },
-                }) as unknown as ReturnType<typeof createOctokit>,
-        );
-
-        await expect(
-            inspectHistoricalCaseMetadata(
-                { owner: 'ignored', repo: 'ignored', token: 'read-token' },
-                {
-                    issueNumber: 235679,
-                    humanFixCommit: HUMAN_COMMIT,
-                    extensionTag: 'autobuild-v5.4.3.96',
-                },
-                { createClient },
-            ),
-        ).rejects.toThrow(/before 2026-07-14/i);
-    });
-
-    it('fails closed when GitHub omits a text-file patch needed for answer isolation', async () => {
-        const createClient = vi.fn(
-            () =>
-                ({
-                    rest: {
-                        issues: {
-                            get: vi.fn().mockResolvedValue({
-                                data: { created_at: '2026-07-14T06:08:12Z' },
-                            }),
-                        },
-                        repos: {
-                            listCommits: vi.fn().mockResolvedValue({
-                                data: [{ sha: FILTERS_BASE_SHA }],
-                            }),
-                            getCommit: vi.fn().mockResolvedValue({
-                                data: {
-                                    sha: HUMAN_COMMIT,
-                                    commit: { message: 'Fix #235679 money.pl' },
-                                    parents: [{ sha: 'a'.repeat(40) }],
-                                    files: [{ filename: 'BaseFilter/sections/foreign.txt' }],
-                                },
-                            }),
-                        },
-                        git: {
-                            getRef: vi.fn().mockResolvedValue({
-                                data: { object: { type: 'commit', sha: 'b'.repeat(40) } },
-                            }),
-                        },
-                    },
-                }) as unknown as ReturnType<typeof createOctokit>,
-        );
-
-        await expect(
-            inspectHistoricalCaseMetadata(
-                { owner: 'ignored', repo: 'ignored', token: 'read-token' },
-                {
-                    issueNumber: 235679,
-                    humanFixCommit: HUMAN_COMMIT,
-                    extensionTag: 'autobuild-v5.4.3.96',
-                },
-                { createClient },
-            ),
-        ).rejects.toThrow(/omitted.*patch/iu);
     });
 });

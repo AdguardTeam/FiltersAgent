@@ -134,6 +134,16 @@ const METADATA_HOSTNAMES = new Set([
 const WITHHELD_REPOSITORY = 'adguardteam/adguardfilters';
 
 /**
+ * GitHub's API also exposes repositories by numeric ID, bypassing checks on owner and name.
+ */
+const WITHHELD_REPOSITORY_API_HOSTNAME = 'api.github.com';
+
+/**
+ * AdguardFilters' numeric API path must be withheld along with its name-based routes.
+ */
+const WITHHELD_REPOSITORY_ID_PATH = '/repositories/22637619';
+
+/**
  * GitHub hosts that serve a repository's pages, API, raw files and archives.
  */
 const REPOSITORY_HOSTNAMES = new Set([
@@ -143,6 +153,21 @@ const REPOSITORY_HOSTNAMES = new Set([
     'raw.githubusercontent.com',
     'codeload.github.com',
 ]);
+
+/**
+ * Percent-decode one URL part the way the server reading it will.
+ *
+ * @param part - Path or query string of a parsed URL.
+ * @returns The decoded text, or the part unchanged when its escapes are malformed: a server cannot
+ *   decode them into a repository name or ID either.
+ */
+function decodeUrlPart(part: string): string {
+    try {
+        return decodeURIComponent(part);
+    } catch {
+        return part;
+    }
+}
 
 /**
  * Decide whether a URL reads the withheld filter repository.
@@ -157,12 +182,16 @@ function readsWithheldRepository(url: URL): boolean {
     if (!REPOSITORY_HOSTNAMES.has(url.hostname)) {
         return false;
     }
-    let target: string;
-    try {
-        target = decodeURIComponent(`${url.pathname}${url.search}`).toLowerCase();
-    } catch {
-        target = `${url.pathname}${url.search}`.toLowerCase();
+    // GitHub decodes the path before routing, so `%32` must not hide a digit of the ID or a letter
+    // of the name.
+    const path = decodeUrlPart(url.pathname);
+    if (
+        url.hostname === WITHHELD_REPOSITORY_API_HOSTNAME &&
+        (path === WITHHELD_REPOSITORY_ID_PATH || path.startsWith(`${WITHHELD_REPOSITORY_ID_PATH}/`))
+    ) {
+        return true;
     }
+    const target = `${path}${decodeUrlPart(url.search)}`.toLowerCase();
     const index = target.indexOf(WITHHELD_REPOSITORY);
     if (index === -1) {
         return false;

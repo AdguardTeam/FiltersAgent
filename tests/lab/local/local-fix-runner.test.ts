@@ -170,6 +170,15 @@ const coreConfig: CoreConfig = testCoreConfig({
  * runLocalFix suite injects this seam; no suite reaches the provider network.
  */
 const extractionSeam = {
+    prepareHistoricalExtensionBuild: async ({ build }) => ({
+        extensionDir: writeUnpackedExtensionFixture(mkdtempSync(join(tmpdir(), 'reporter-build-'))),
+        manifestVersion: ExtensionManifestVersion.Mv3,
+        provenance: {
+            ...build,
+            releaseSha256: 'e'.repeat(64),
+            autobuildTag: `autobuild-v${build.version}`,
+        },
+    }),
     extractReport: async (raw: RawIssue): Promise<IntakeExtraction> => {
         const siteUrl = raw.body?.match(/### Issue URL[^\n]*\n(https?:\/\/[^\s)\]]+)/)?.[1];
         return {
@@ -1513,6 +1522,11 @@ describe('runLocalFix', () => {
                     stableRef: 'stable/v5.4',
                 },
                 filtersBaseSha: '4e28093e719cbb2bab819b6d3a84c12f441343c6',
+                extensionBuild: {
+                    version: '5.4.3.95',
+                    releaseTag: 'v5.4.3.1',
+                    autobuildCommit: 'a'.repeat(40),
+                },
             }),
             'utf8',
         );
@@ -1674,10 +1688,6 @@ describe('runLocalFix', () => {
             expect.objectContaining({
                 filtersRepository: 'AdguardTeam/AdguardFilters',
                 filtersBaseSha: '4e28093e719cbb2bab819b6d3a84c12f441343c6',
-                // Extension preparation is the shared core's own business: the lab cycle locks
-                // only its executor set, and the historical filters pinning stays run-config
-                // territory. The AdGuard CLI proxy dependencies are an incidental wiring
-                // detail, not part of this contract, so they stay unasserted here.
                 agentRuntime: expect.objectContaining({
                     executors: ['browser_extension'],
                 }),
@@ -1725,6 +1735,11 @@ describe('runLocalFix', () => {
                     stableRef: 'stable/v5.4',
                 },
                 filtersBaseSha: 'd39891819f266ffb17d31a1329d0b323dac6ee53',
+                extensionBuild: {
+                    version: '5.4.3.91',
+                    releaseTag: 'v5.4.3.1',
+                    autobuildCommit: 'a'.repeat(40),
+                },
             }),
             'utf8',
         );
@@ -1781,10 +1796,6 @@ describe('runLocalFix', () => {
                 body: expect.stringContaining('AdGuard Polish filter v2.0.10.1'),
             }),
             expect.objectContaining({
-                // Extension preparation is the shared core's own business: the lab cycle locks
-                // only its executor set, and the historical filters pinning stays run-config
-                // territory. The AdGuard CLI proxy dependencies are an incidental wiring
-                // detail, not part of this contract, so they stay unasserted here.
                 agentRuntime: expect.objectContaining({
                     executors: ['browser_extension'],
                 }),
@@ -1827,7 +1838,7 @@ describe('runLocalFix', () => {
 
         expect(JSON.parse(readFileSync(paths.runResultPath, 'utf8')).result).toMatchObject({
             runStatus: 'failed',
-            domain: 'wpoznaniu.pl',
+            domain: 'unknown',
             infrastructureFailureReason: 'input_unavailable',
             fallbackDetail: expect.stringMatching(/require --run-config/i),
         });

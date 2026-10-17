@@ -2,7 +2,10 @@ import { TRUSTED_REPORT_SETTINGS_HOSTS } from '../../src/browser/adguard-setting
 import type { RawIssue } from '../../src/github/fetch-issue';
 import type { LocalExtensionProvenance, LocalRunRecord } from '../../src/local/run-output';
 import { loadLocalIssueSnapshot, toAgentIssueInput } from '../../src/local/issue-snapshot';
-import { ExtensionManifestVersion } from '../../src/environment/extension-preparation';
+import {
+    ExtensionManifestVersion,
+    PreparedExtensionSource,
+} from '../../src/environment/extension-preparation';
 import {
     adguardListKey,
     parseAdguardListKey,
@@ -313,8 +316,8 @@ export async function assessGoldenAgentEnvironment(
     const wrapperExtension = record.provenance.extension;
     if (!extension || !wrapperExtension) {
         return {
-            status: 'agent_mismatch',
-            detail: 'Locked result has no verified-session extension provenance.',
+            status: 'infrastructure_failure',
+            detail: 'Locked result has no historical build extension provenance.',
             extension: null,
         };
     }
@@ -326,12 +329,31 @@ export async function assessGoldenAgentEnvironment(
             extension: null,
         };
     }
+    if (
+        extension.source !== PreparedExtensionSource.HistoricalBuild ||
+        !extension.historicalBuild
+    ) {
+        return {
+            status: 'infrastructure_failure',
+            detail: 'Locked result requires a historical build with its reporter build identity.',
+            extension: null,
+        };
+    }
+    if (extension.historicalBuild.version !== reporter.extensionVersion) {
+        return {
+            status: 'infrastructure_failure',
+            detail:
+                `The loaded reporter build version ${extension.historicalBuild.version} does not ` +
+                `match reporter product_version=${reporter.extensionVersion}.`,
+            extension: null,
+        };
+    }
     if (extension.manifestVersion !== ExtensionManifestVersion.Mv3) {
         return {
             status: 'agent_mismatch',
             detail:
                 `The loaded extension build declares manifest_version=${extension.manifestVersion}; ` +
-                'this suite verifies the current Chromium MV3 pinned release.',
+                'this suite verifies the reporter Chromium MV3 build.',
             extension: null,
         };
     }
@@ -399,7 +421,7 @@ export async function assessGoldenAgentEnvironment(
     return {
         status: 'matched',
         detail:
-            `Locked verified session matches the pinned extension build (${wrapperExtension.source}), ` +
+            `Locked verified session matches the reporter extension build (${wrapperExtension.source}), ` +
             `${reporter.enabledFilterIds.length} reporter filter IDs, and exact Stealth state.`,
         extension: wrapperExtension,
     };

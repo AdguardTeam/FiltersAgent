@@ -1,4 +1,4 @@
-import type { Frame, Request, Route } from 'playwright-core';
+import type { Frame } from 'playwright-core';
 import type { Logger } from 'pino';
 import * as v from 'valibot';
 import type { IBrowserSession } from './browser-interfaces';
@@ -50,6 +50,8 @@ import { writeArtifact, captureFullPageTiles, parseTileWindowArg } from './full-
 import { inspectPageState } from './page-state-probe';
 import type { PageStateInspection } from '../types/page-state-inspection';
 import { BrowserFallbackReason } from '../types/browser-fallback-reason';
+import { createNavigationAdmission } from './navigation-admission';
+import { RedirectOriginPolicy } from './redirect-origin-policy';
 
 /**
  * Configuration for the browser tool handler factory.
@@ -76,11 +78,14 @@ export interface BrowserToolConfig {
     logger?: Logger;
 
     /**
-     * Reported issue URL whose canonical origin top-level navigation is restricted to. A redirect
-     * the site itself performs while an admitted page loads widens the restriction to the landing
-     * origin for the rest of the session.
+     * Reported issue URL whose origin admits initial top-level navigation.
      */
     allowedOrigin: string;
+
+    /**
+     * Retention policy for redirect origins. Defaults to keeping every landing origin.
+     */
+    redirectOriginPolicy?: RedirectOriginPolicy;
 
     /**
      * Injectable resolver for public-address checks. Defaults to the operating system resolver.
@@ -337,83 +342,12 @@ export function createBrowserToolHandlers(config: BrowserToolConfig): BrowserToo
         inFlightDnsResolutions.set(hostname, pending);
         return pending;
     };
-    // The origins a top-level navigation may land on: the reported issue origin, plus every origin
-    // the site itself redirected an admitted page to. A reported URL that is a short link or an
-    // interstitial lands somewhere else by design — the reporter saw the landing page — and
-    // refusing that landing would fail every attempt until the target counted as unavailable.
-    // The model's own navigation still has to name one of these.
-    const issueOrigins = new Set<string>();
-    let allowedOriginError: string | undefined;
-    try {
-        issueOrigins.add(canonicalHttpOrigin(config.allowedOrigin));
-    } catch (error) {
-        allowedOriginError = (error as Error).message;
-    }
-    // True only while open_page loads a URL the guard admitted, from the navigation request to the
-    // end of stabilization: a cross-origin top-level navigation in that window is the site's own
-    // redirect. Outside it — consent setup, a click, a later script — it is refused.
-    let loadingAdmittedUrl = false;
-    let blockedNavigationError: string | undefined;
-    let safetyGuardInstall: Promise<void> | undefined;
-
-    /**
-     * Admit one top-level navigation, following the site's own redirect while an admitted page
-     * loads.
-     *
-     * @param rawUrl - The URL the main frame is navigating to or landed on.
-     * @returns Nothing when the navigation may proceed.
-     * @throws UnsafeNetworkUrlError when the URL is unsafe, or leaves the issue origins outside a
-     *   page load.
-     */
-    async function admitMainNavigation(rawUrl: string): Promise<void> {
-        const url = await validatePublicHttpUrl(rawUrl, {
-            ...(loadingAdmittedUrl ? {} : { expectedOrigins: [...issueOrigins] }),
-            resolveHostname: resolveHostnameFresh,
-        });
-        if (issueOrigins.has(url.origin)) {
-            return;
-        }
-        issueOrigins.add(url.origin);
-        config.logger?.info(
-            { landingOrigin: url.origin, issueOrigins: [...issueOrigins] },
-            'the site redirected the loading page off the issue origin; the landing origin ' +
-                'joins the issue origins for this session',
-        );
-    }
-
-    /**
-     * Install the public-network route exactly once for the lifetime of this browser session.
-     *
-     * @param page - Active page whose requests must be guarded.
-     * @returns Promise resolved once the persistent route is registered.
-     */
-    function ensureSafetyGuard(page: ReturnType<IBrowserSession['getPage']>): Promise<void> {
-        if (safetyGuardInstall) {
-            return safetyGuardInstall;
-        }
-        const requestGuard = async (route: Route, request: Request): Promise<void> => {
-            const isMainNavigation =
-                request.isNavigationRequest() && request.frame() === page.mainFrame();
-            try {
-                if (isMainNavigation) {
-                    await admitMainNavigation(request.url());
-                } else {
-                    await validatePublicHttpUrl(request.url(), {
-                        resolveHostname: resolveHostnameFresh,
-                    });
-                }
-                await route.fallback();
-            } catch (error) {
-                if (isMainNavigation) {
-                    blockedNavigationError = (error as Error).message;
-                }
-                await route.abort('blockedbyclient');
-            }
-        };
-        const install = page.route('**/*', requestGuard).then(() => undefined);
-        safetyGuardInstall = install;
-        return install;
-    }
+    const admission = createNavigationAdmission({
+        allowedOrigin: config.allowedOrigin,
+        redirectOriginPolicy: config.redirectOriginPolicy ?? RedirectOriginPolicy.KeepEveryLanding,
+        resolveHostname: resolveHostnameFresh,
+        logger,
+    });
 
     return {
         /**
@@ -423,19 +357,20 @@ export function createBrowserToolHandlers(config: BrowserToolConfig): BrowserToo
          * @returns Page URL, title, and status code on success; error on failure.
          */
         async open_page(args: Record<string, unknown>) {
+            admission.resetLoad();
             const url = typeof args.url === 'string' ? args.url : '';
             if (!url) {
                 return { error: 'url is required' };
             }
-            if (issueOrigins.size === 0) {
+            if (admission.sessionOrigins().length === 0) {
                 return {
-                    error: `navigation blocked: ${allowedOriginError ?? 'allowed origin is invalid'}`,
+                    error: `navigation blocked: ${admission.configurationError ?? 'allowed origin is invalid'}`,
                     fallbackReason: BrowserFallbackReason.UnsafeTargetUrl,
                 };
             }
             try {
                 await validatePublicHttpUrl(url, {
-                    expectedOrigins: [...issueOrigins],
+                    expectedOrigins: admission.sessionOrigins(),
                     resolveHostname: resolveHostnameFresh,
                 });
             } catch (error) {
@@ -455,24 +390,26 @@ export function createBrowserToolHandlers(config: BrowserToolConfig): BrowserToo
                 }
             };
             page.on('framenavigated', recordFrameNavigation);
-            await ensureSafetyGuard(page);
+            await admission.installGuard(page);
             try {
                 for (let attempt = 0; attempt < retries; attempt++) {
-                    blockedNavigationError = undefined;
+                    admission.takeBlockedNavigationError();
+                    let blockedNavigationError: string | undefined;
                     try {
                         const attemptStartedAt = Date.now();
-                        loadingAdmittedUrl = true;
+                        admission.openWindow();
                         const response = await page.goto(url, {
                             waitUntil: 'domcontentloaded',
                             timeout: pageStabilizationTimeoutMs,
                         });
+                        blockedNavigationError = admission.takeBlockedNavigationError();
                         if (blockedNavigationError) {
                             throw new Error(blockedNavigationError);
                         }
                         const finalUrl = page.url();
                         // The route sees a script or meta redirect as a new request; an HTTP
                         // redirect is followed by the browser and only its landing shows here.
-                        await admitMainNavigation(finalUrl);
+                        await admission.admitMainNavigation(finalUrl);
                         const statusCode = response?.status() ?? 200;
                         const fallbackReason =
                             statusCode === 451
@@ -513,7 +450,7 @@ export function createBrowserToolHandlers(config: BrowserToolConfig): BrowserToo
                                 ),
                             },
                         });
-                        loadingAdmittedUrl = false;
+                        admission.closeWindow();
                         if (stabilization.status !== 'stable') {
                             throw new Error(
                                 stabilization.detail ?? 'page did not stabilize before capture',
@@ -526,6 +463,7 @@ export function createBrowserToolHandlers(config: BrowserToolConfig): BrowserToo
                             pageStabilityPollMs,
                             pageStabilityQuietMs,
                         );
+                        blockedNavigationError = admission.takeBlockedNavigationError();
                         if (blockedNavigationError) {
                             return {
                                 url: page.url(),
@@ -538,9 +476,13 @@ export function createBrowserToolHandlers(config: BrowserToolConfig): BrowserToo
                         }
                         const postConsentUrl = page.url();
                         try {
-                            if (!issueOrigins.has(canonicalHttpOrigin(postConsentUrl))) {
+                            if (
+                                !admission
+                                    .currentLoadOrigins()
+                                    .includes(canonicalHttpOrigin(postConsentUrl))
+                            ) {
                                 throw new Error(
-                                    `URL origin must remain on ${[...issueOrigins].join(', ')} ` +
+                                    `URL origin must remain on ${admission.currentLoadOrigins().join(', ')} ` +
                                         'after consent setup',
                                 );
                             }
@@ -564,7 +506,8 @@ export function createBrowserToolHandlers(config: BrowserToolConfig): BrowserToo
                             consent,
                         };
                     } catch (err) {
-                        loadingAdmittedUrl = false;
+                        admission.closeWindow();
+                        blockedNavigationError ??= admission.takeBlockedNavigationError();
                         lastError = blockedNavigationError ?? (err as Error).message;
                         lastFallbackReason = blockedNavigationError
                             ? BrowserFallbackReason.NavigationOffOrigin
@@ -577,6 +520,8 @@ export function createBrowserToolHandlers(config: BrowserToolConfig): BrowserToo
                         if (attempt < retries - 1) {
                             await page.waitForTimeout(1_000 * (attempt + 1));
                         }
+                    } finally {
+                        admission.closeWindow();
                     }
                 }
                 const failure = {

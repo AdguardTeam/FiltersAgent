@@ -6,7 +6,12 @@ import {
     EnvironmentPhaseStateProofSchema,
     PROOF_ACTION_LOG_MAX_ENTRIES,
     PROOF_ACTION_LOG_SUMMARY_MAX,
+    PreparedExtensionProvenanceSchema,
 } from '../../src/environment/environment-proofs';
+import {
+    ExtensionManifestVersion,
+    PreparedExtensionSource,
+} from '../../src/environment/extension-preparation';
 import type { PhaseApplicationProof } from '../../src/environment/environment-proofs';
 
 const actualContext = {
@@ -366,5 +371,55 @@ describe('EnvironmentPhaseStateProofSchema application contract', () => {
         });
 
         expect(v.safeParse(EnvironmentPhaseStateProofSchema, proof).success).toBe(false);
+    });
+});
+
+const historicalBuild = {
+    version: '5.4.3.99',
+    releaseTag: 'v5.4.3.1',
+    releaseSha256: 'a'.repeat(64),
+    autobuildTag: 'autobuild-v5.4.3.99',
+    autobuildCommit: 'b'.repeat(40),
+};
+
+const pinnedProvenance = {
+    source: PreparedExtensionSource.PinnedRelease,
+    extensionPath: '/tmp/extension',
+    manifestVersion: ExtensionManifestVersion.Mv3,
+    extensionSourceSha256: 'c'.repeat(64),
+    extensionSourceTag: 'v5.5.2.3',
+};
+
+describe('PreparedExtensionProvenanceSchema', () => {
+    it('parses a historical-build provenance with its release and autobuild identity', () => {
+        const provenance = {
+            ...pinnedProvenance,
+            source: PreparedExtensionSource.HistoricalBuild,
+            extensionSourceTag: historicalBuild.autobuildTag,
+            historicalBuild,
+        };
+
+        expect(v.parse(PreparedExtensionProvenanceSchema, provenance)).toEqual(provenance);
+    });
+
+    it('refuses a historical-build provenance without its build identity and a build identity on another source', () => {
+        expect(
+            v.safeParse(PreparedExtensionProvenanceSchema, {
+                ...pinnedProvenance,
+                source: PreparedExtensionSource.HistoricalBuild,
+            }).success,
+        ).toBe(false);
+        expect(
+            v.safeParse(PreparedExtensionProvenanceSchema, {
+                ...pinnedProvenance,
+                historicalBuild,
+            }).success,
+        ).toBe(false);
+    });
+
+    it('keeps parsing a pinned-release provenance written before historical builds', () => {
+        expect(v.parse(PreparedExtensionProvenanceSchema, pinnedProvenance)).toEqual(
+            pinnedProvenance,
+        );
     });
 });

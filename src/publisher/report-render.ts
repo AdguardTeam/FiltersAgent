@@ -169,6 +169,7 @@ const SYMPTOM_OBSERVATION_LABELS: Record<SymptomObservation, string> = {
  */
 const PREPARED_EXTENSION_SOURCE_LABELS: Record<PreparedExtensionSource, string> = {
     [PreparedExtensionSource.PinnedRelease]: 'Pinned prebuilt release',
+    [PreparedExtensionSource.HistoricalBuild]: 'Reporter build from release and autobuild lists',
     [PreparedExtensionSource.Preloaded]: 'Preloaded unpacked extension',
     [PreparedExtensionSource.Instruction]: 'Prepared from the instruction',
 };

@@ -5,6 +5,7 @@ import { EXTENSION_LAUNCH_FAMILY_VALUES } from './extension-launch';
 import {
     EXTENSION_MANIFEST_VERSION_VALUES,
     PREPARED_EXTENSION_SOURCE_VALUES,
+    PreparedExtensionSource,
 } from './extension-preparation';
 import {
     LIST_KEY_MAX_COUNT,
@@ -114,6 +115,32 @@ export const PublishedBaselineProvenanceSchema = v.strictObject({
 });
 
 /**
+ * Reporter build versions have four numeric components, matching extension manifests and autobuild
+ * tags rather than a three-component release code line.
+ */
+export const EXTENSION_BUILD_VERSION_PATTERN = /^\d+\.\d+\.\d+\.\d+$/u;
+
+/**
+ * A full lowercase Git commit id pins the autobuild tree without an ambiguous abbreviation.
+ */
+export const FULL_COMMIT_SHA_PATTERN = /^[0-9a-f]{40}$/u;
+
+export const HistoricalExtensionBuildSchema = v.strictObject({
+    version: v.pipe(v.string(), v.regex(EXTENSION_BUILD_VERSION_PATTERN)),
+    releaseTag: BoundedIdSchema,
+    releaseSha256: DigestSchema,
+    autobuildTag: BoundedIdSchema,
+    autobuildCommit: v.pipe(v.string(), v.regex(FULL_COMMIT_SHA_PATTERN)),
+});
+
+/**
+ * The release code and exact autobuild lists assembled into a reporter's historical extension.
+ */
+export type HistoricalExtensionBuildProvenance = v.InferOutput<
+    typeof HistoricalExtensionBuildSchema
+>;
+
+/**
  * The serialized single-source provenance of the one extension build a run loads.
  *
  * The run's extension is prepared host-side before any session starts, so the provenance is one
@@ -128,16 +155,25 @@ export const PublishedBaselineProvenanceSchema = v.strictObject({
  * before the families were distinguished keep parsing. The managed-storage declaration is launch
  * input, not provenance, and is deliberately not serialized here.
  */
-export const PreparedExtensionProvenanceSchema = v.strictObject({
-    source: v.picklist(PREPARED_EXTENSION_SOURCE_VALUES),
-    launchFamily: v.optional(v.picklist(EXTENSION_LAUNCH_FAMILY_VALUES)),
-    extensionPath: v.optional(v.pipe(v.string(), v.minLength(1), v.maxLength(1_024))),
-    manifestVersion: v.optional(v.picklist(EXTENSION_MANIFEST_VERSION_VALUES)),
-    extensionId: v.optional(v.pipe(v.string(), v.minLength(1), v.maxLength(256))),
-    xpiPath: v.optional(v.pipe(v.string(), v.minLength(1), v.maxLength(1_024))),
-    extensionSourceSha256: DigestSchema,
-    extensionSourceTag: v.optional(v.pipe(v.string(), v.minLength(1), v.maxLength(200))),
-});
+export const PreparedExtensionProvenanceSchema = v.pipe(
+    v.strictObject({
+        source: v.picklist(PREPARED_EXTENSION_SOURCE_VALUES),
+        launchFamily: v.optional(v.picklist(EXTENSION_LAUNCH_FAMILY_VALUES)),
+        extensionPath: v.optional(v.pipe(v.string(), v.minLength(1), v.maxLength(1_024))),
+        manifestVersion: v.optional(v.picklist(EXTENSION_MANIFEST_VERSION_VALUES)),
+        extensionId: v.optional(v.pipe(v.string(), v.minLength(1), v.maxLength(256))),
+        xpiPath: v.optional(v.pipe(v.string(), v.minLength(1), v.maxLength(1_024))),
+        extensionSourceSha256: DigestSchema,
+        extensionSourceTag: v.optional(v.pipe(v.string(), v.minLength(1), v.maxLength(200))),
+        historicalBuild: v.optional(HistoricalExtensionBuildSchema),
+    }),
+    v.check(
+        (provenance) =>
+            (provenance.source === PreparedExtensionSource.HistoricalBuild) ===
+            (provenance.historicalBuild !== undefined),
+        'Only a historical build must carry its release and autobuild identity.',
+    ),
+);
 
 /**
  * PreparedExtensionProvenanceSchema output.

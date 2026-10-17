@@ -613,7 +613,10 @@ describe('createToolRegistry', () => {
     it('honors the caller-owned physical navigation budget', async () => {
         const page = {
             goto: vi.fn().mockRejectedValue(new Error('net::ERR_CONNECTION_REFUSED')),
-            route: vi.fn().mockResolvedValue(undefined),
+            context: () => ({
+                route: vi.fn().mockResolvedValue(undefined),
+                unroute: vi.fn().mockResolvedValue(undefined),
+            }),
             waitForTimeout: vi.fn().mockResolvedValue(undefined),
             on: vi.fn(),
             off: vi.fn(),

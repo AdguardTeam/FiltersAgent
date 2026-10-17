@@ -51,10 +51,10 @@ pass `--no-comment` to keep them in the output directory only.
 | `--repository <owner/repo>` | Repository the issue belongs to; see [Repository identity](#repository-identity) |
 | `--browser <mode>` | `auto` (default) or `on`; `off` is accepted only by `show` |
 | `--executors <names>` | Comma-separated executors the run may select: `browser_extension` and the executors of the plugged-in modules; defaults to all of them |
-| `--blocker-module <manifest>` | Plug in the blocker module this manifest describes; repeatable. See [Blocker modules](#blocker-modules) |
+| `--blocker-module <manifest>` | Plug in the blocker module this manifest describes; repeatable. Refused with `--environment historical`. See [Blocker modules](#blocker-modules) |
 | `--issue-file <path>` | Read the issue from an `export issue` bundle instead of GitHub |
-| `--environment <mode>` | `current` (default) runs against the filters' current state; `historical` against the commit `--run-config` names |
-| `--run-config <path>` | JSON case file with the issue identity and the historical filters commit |
+| `--environment <mode>` | `current` (default) runs against the filters' current state; `historical` uses the filters commit and reporter extension build in `--run-config` |
+| `--run-config <path>` | JSON case file with the issue identity, historical filters commit, and `extensionBuild` (`version`, `releaseTag`, `autobuildCommit`) |
 | `--output-dir <path>` | Output directory; defaults to `./tmp/adguard-agent-runs/issue-<number>-<environment>` |
 | `--instruction <path>` | Run instruction file, relative to the checkout; defaults to `.github/filters-agent/AGENTS.md` when present |
 | `--lint-command <command>` | The filters repository's own lint command, run over each candidate rule |
@@ -123,9 +123,10 @@ The `ADGUARD_*` variables reach the AdGuard CLI module only: see
 
 A blocker module adds an executor beside the built-in browser extension. It is
 a process that speaks the blocker protocol on stdio, described by a JSON
-manifest. `fix issue` and `backlog` take `--blocker-module <manifest>`, the
-benchmark takes the same option; the action takes the same manifests in its
-`blockerModules` input.
+manifest. Current `fix issue` and `backlog` runs take
+`--blocker-module <manifest>`; the action takes the same manifests in its
+`blockerModules` input. Historical local runs and the benchmark refuse
+`--blocker-module` because module lists cannot be pinned to the reporter's date.
 
 - A relative manifest path resolves against the working directory, which is
   the repository root under `pnpm start`.

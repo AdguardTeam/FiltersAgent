@@ -1,3 +1,4 @@
+import { RedirectOriginPolicy } from '../browser/redirect-origin-policy';
 import { applyRuleResultForModel } from './apply-rule-model-result';
 import {
     CandidateRefusalMemo,
@@ -240,6 +241,7 @@ import {
 import {
     createProductionBrowserRegistry,
     openSessionAppliedRulesLog,
+    type AgentRuntimeBrowserContext,
 } from './session-browser-registry';
 import { recordingUnfilteredHosts, type AppliedRulesLog } from '../environment/applied-rules';
 import { createRunHostStateRoot, type RunHostStateRoot } from './host-state-root';
@@ -324,6 +326,11 @@ const MAX_REPORTER_SCREENSHOT_OBSERVATION_LENGTH = 2_000;
  * Inputs and immutable trust boundaries for one model-driven browser investigation.
  */
 export interface AgentRuntimeOptions {
+    /**
+     * Policy deciding which redirect landing origins remain available to later navigation.
+     */
+    redirectOriginPolicy?: RedirectOriginPolicy;
+
     /**
      * Prompt-safe issue snapshot exposed by fetch_issue.
      */
@@ -451,36 +458,6 @@ export interface AgentRuntimeOptions {
      * host wiring `src/` cannot type; absent for a run that wires none.
      */
     executorDependencies?: ExecutorDependenciesByName;
-}
-
-/**
- * Runtime-owned browser context supplied to an injectable browser registry factory.
- */
-export interface AgentRuntimeBrowserContext {
-    /**
-     * Newly launched isolated browser session.
-     */
-    session: BrowserSession;
-
-    /**
-     * Runtime recorder that owns every browser artifact identity and local path.
-     */
-    recorder: TraceRecorder;
-
-    /**
-     * Reporter symptom accumulated from issue screenshot vision calls.
-     */
-    reporterSymptom: () => string | undefined;
-
-    /**
-     * Physical navigation attempts allowed for one model-visible open_page call.
-     */
-    openPageRetries: number;
-
-    /**
-     * Bounded consent setup selected by the model for this isolated session.
-     */
-    consentStrategy: ReproProfile['consentStrategy'];
 }
 
 /**
@@ -3294,6 +3271,8 @@ export class AgentRuntime {
             recorder: this.options.recorder,
             reporterSymptom: () => this.reporterSymptom(),
             openPageRetries: AGENT_RUNTIME_OPEN_PAGE_RETRIES,
+            redirectOriginPolicy:
+                this.options.redirectOriginPolicy ?? RedirectOriginPolicy.KeepEveryLanding,
             consentStrategy,
         };
         if (this.dependencies.createBrowserRegistry) {

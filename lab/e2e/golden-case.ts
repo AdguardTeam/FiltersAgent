@@ -1,6 +1,8 @@
-import { readFileSync } from 'node:fs';
-import { dirname, isAbsolute, join, relative, resolve, sep, win32 } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep, win32 } from 'node:path';
 import * as v from 'valibot';
+import { ExtensionBuildPinSchema } from '../local/run-config';
 import { LocalIssueSnapshotSchema } from '../../src/local/issue-snapshot';
 
 const FullCommitSchema = v.pipe(v.string(), v.regex(/^[0-9a-f]{40}$/iu));
@@ -14,12 +16,42 @@ const PortableRelativePathSchema = v.pipe(
     ),
 );
 
-export const GoldenE2ERunSchema = v.strictObject({
-    schemaVersion: v.literal(2),
+export const GoldenRunSchemaVersion = {
+    /**
+     * Older cases omit reporter-build provenance and require explicit migration.
+     */
+    Legacy: 2,
+    /**
+     * Executable historical cases include the reporter's pinned extension build.
+     */
+    Current: 3,
+} as const;
+
+/**
+ * Run document versions supported by execution and migration.
+ */
+export type GoldenRunSchemaVersion =
+    (typeof GoldenRunSchemaVersion)[keyof typeof GoldenRunSchemaVersion];
+
+export const LegacyGoldenE2ERunSchema = v.strictObject({
+    schemaVersion: v.literal(GoldenRunSchemaVersion.Legacy),
     issueNumber: v.pipe(v.number(), v.integer(), v.minValue(1)),
     issueFile: PortableRelativePathSchema,
     filtersBaseSha: FullCommitSchema,
 });
+
+export const GoldenE2ERunSchema = v.strictObject({
+    schemaVersion: v.literal(GoldenRunSchemaVersion.Current),
+    issueNumber: v.pipe(v.number(), v.integer(), v.minValue(1)),
+    issueFile: PortableRelativePathSchema,
+    filtersBaseSha: FullCommitSchema,
+    extensionBuild: ExtensionBuildPinSchema,
+});
+
+/**
+ * Historical environment document accepted only for migration to an explicit extension build.
+ */
+export type LegacyGoldenE2ERun = v.InferOutput<typeof LegacyGoldenE2ERunSchema>;
 
 export const GoldenHumanOracleSchema = v.strictObject({
     humanFixCommit: FullCommitSchema,
@@ -53,6 +85,16 @@ export interface LoadedGoldenRunCase {
      * Absolute path to run.json, reused by the standard local lifecycle.
      */
     runConfigPath: string;
+}
+
+/**
+ * Resolved legacy run-side files used only to migrate a golden case.
+ */
+export interface LoadedLegacyGoldenRunCase extends Omit<LoadedGoldenRunCase, 'config'> {
+    /**
+     * Validated historical configuration lacking an extension build.
+     */
+    config: LegacyGoldenE2ERun;
 }
 
 /**
@@ -142,6 +184,13 @@ function validateGoldenAttachmentPaths(issueFile: string): void {
  */
 export function loadGoldenRunCase(caseDirectory: string): LoadedGoldenRunCase {
     const runConfigPath = join(resolve(caseDirectory), 'run.json');
+    if (readGoldenRunSchemaVersion(caseDirectory) === GoldenRunSchemaVersion.Legacy) {
+        throw new Error(
+            `Golden case ${basename(resolve(caseDirectory))} uses a legacy run.json. Migrate with ` +
+                `pnpm benchmark:case:check -- ${basename(resolve(caseDirectory))} ` +
+                '--extension-version <version>.',
+        );
+    }
     const config = v.parse(GoldenE2ERunSchema, readJson(runConfigPath, 'run.json'));
     const issueFile = resolvePortableCasePath(caseDirectory, config.issueFile);
     validateGoldenAttachmentPaths(issueFile);
@@ -161,4 +210,50 @@ export function loadGoldenRunCase(caseDirectory: string): LoadedGoldenRunCase {
 export function loadGoldenHumanOracle(caseDirectory: string): GoldenHumanOracle {
     const oraclePath = join(resolve(caseDirectory), 'oracle.json');
     return v.parse(GoldenHumanOracleSchema, readJson(oraclePath, 'oracle.json'));
+}
+
+/**
+ * Read the declared run format before choosing execution or migration.
+ *
+ * @param caseDirectory - Directory containing run.json.
+ * @returns Supported run schema version.
+ */
+export function readGoldenRunSchemaVersion(caseDirectory: string): GoldenRunSchemaVersion {
+    const document = v.parse(
+        v.object({ schemaVersion: v.picklist(Object.values(GoldenRunSchemaVersion)) }),
+        readJson(join(resolve(caseDirectory), 'run.json'), 'run.json'),
+    );
+    return document.schemaVersion;
+}
+
+/**
+ * Load the legacy run-side configuration for migration while enforcing portable input paths.
+ *
+ * @param caseDirectory - Directory containing a legacy run.json and issue bundle.
+ * @returns Legacy run configuration with resolved input paths.
+ */
+export function loadLegacyGoldenRunCase(caseDirectory: string): LoadedLegacyGoldenRunCase {
+    const runConfigPath = join(resolve(caseDirectory), 'run.json');
+    const config = v.parse(LegacyGoldenE2ERunSchema, readJson(runConfigPath, 'run.json'));
+    const issueFile = resolvePortableCasePath(caseDirectory, config.issueFile);
+    validateGoldenAttachmentPaths(issueFile);
+    return { config, issueFile, runConfigPath };
+}
+
+/**
+ * Atomically replace one run document so readers see only a complete historical configuration.
+ *
+ * @param caseDirectory - Existing golden case directory receiving run.json.
+ * @param run - Current run document with its reporter extension identity.
+ * @returns Nothing after atomically saving the document.
+ */
+export function writeGoldenRunDocument(caseDirectory: string, run: GoldenE2ERun): void {
+    const runConfigPath = join(resolve(caseDirectory), 'run.json');
+    const temporaryPath = `${runConfigPath}.tmp-${randomUUID()}`;
+    try {
+        writeFileSync(temporaryPath, `${JSON.stringify(run, null, 4)}\n`, 'utf8');
+        renameSync(temporaryPath, runConfigPath);
+    } finally {
+        rmSync(temporaryPath, { force: true });
+    }
 }

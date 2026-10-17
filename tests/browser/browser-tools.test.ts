@@ -91,10 +91,10 @@ function mockSession(overrides: Partial<IBrowserSession> = {}): IBrowserSession 
                 return undefined;
             }),
             url: vi.fn().mockReturnValue('https://example.com'),
-            route: vi.fn().mockResolvedValue(undefined),
-            unroute: vi.fn().mockResolvedValue(undefined),
             viewportSize: vi.fn().mockReturnValue({ width: 1920, height: 1080 }),
             context: vi.fn().mockReturnValue({
+                route: vi.fn().mockResolvedValue(undefined),
+                unroute: vi.fn().mockResolvedValue(undefined),
                 cookies: vi.fn().mockResolvedValue([]),
                 newCDPSession: vi.fn().mockResolvedValue(cdpSession),
             }),
@@ -527,7 +527,7 @@ describe('open_page', () => {
         });
         expect(session.getPage().waitForTimeout).toHaveBeenCalledWith(250);
         expect(session.getPage().waitForLoadState).not.toHaveBeenCalled();
-        expect(session.getPage().unroute).not.toHaveBeenCalled();
+        expect(session.getPage().context().unroute).not.toHaveBeenCalled();
     });
 
     it.each([
@@ -1128,7 +1128,7 @@ describe('open_page', () => {
         expect(page.goto).not.toHaveBeenCalled();
     });
 
-    it('installs one safety route but revalidates DNS across repeated navigation', async () => {
+    it('installs one safety route on the browser context but revalidates DNS across repeated navigation', async () => {
         const resolver: HostnameResolver = vi
             .fn()
             .mockResolvedValueOnce(['93.184.216.34'])
@@ -1149,10 +1149,10 @@ describe('open_page', () => {
         expect(first.error).toBeUndefined();
         expect(rebound.fallbackReason).toBe('unsafe_target_url');
         expect(rebound.error).toContain('non-public address');
-        expect(page.route).toHaveBeenCalledTimes(1);
+        expect(page.context().route).toHaveBeenCalledTimes(1);
         expect(resolver).toHaveBeenCalledTimes(3);
         expect(page.goto).toHaveBeenCalledTimes(1);
-        expect(page.unroute).not.toHaveBeenCalled();
+        expect(page.context().unroute).not.toHaveBeenCalled();
     });
 
     it('follows the redirect the site performs while the reported page loads and keeps the landing origin', async () => {
@@ -1173,25 +1173,29 @@ describe('open_page', () => {
             ...mockSession().getPage(),
             mainFrame: vi.fn().mockReturnValue(mainFrame),
             url: vi.fn().mockImplementation(() => currentUrl),
-            route: vi
-                .fn()
-                .mockImplementation(
-                    async (
-                        _pattern: string,
-                        handler: (
-                            route: Record<string, unknown>,
-                            request: Record<string, unknown>,
-                        ) => Promise<void>,
-                    ) => {
-                        navigationGuard = handler;
-                    },
-                ),
+            context: vi.fn().mockReturnValue({
+                ...mockSession().getPage().context(),
+                route: vi
+                    .fn()
+                    .mockImplementation(
+                        async (
+                            _pattern: string,
+                            handler: (
+                                route: Record<string, unknown>,
+                                request: Record<string, unknown>,
+                            ) => Promise<void>,
+                        ) => {
+                            navigationGuard = handler;
+                        },
+                    ),
+            }),
             goto: vi.fn().mockImplementation(async (url: string) => {
                 if (url === 'https://example.com/short') {
                     // The short link answers with a script redirect: a new top-level request.
                     await navigationGuard?.(route, {
                         url: () => 'https://landing.example/page',
                         isNavigationRequest: () => true,
+                        serviceWorker: () => null,
                         frame: () => mainFrame,
                     });
                     currentUrl = 'https://landing.example/page';
@@ -1242,19 +1246,22 @@ describe('open_page', () => {
         const page = {
             ...mockSession().getPage(),
             mainFrame: vi.fn().mockReturnValue(mainFrame),
-            route: vi
-                .fn()
-                .mockImplementation(
-                    async (
-                        _pattern: string,
-                        handler: (
-                            route: Record<string, unknown>,
-                            request: Record<string, unknown>,
-                        ) => Promise<void>,
-                    ) => {
-                        navigationGuard = handler;
-                    },
-                ),
+            context: vi.fn().mockReturnValue({
+                ...mockSession().getPage().context(),
+                route: vi
+                    .fn()
+                    .mockImplementation(
+                        async (
+                            _pattern: string,
+                            handler: (
+                                route: Record<string, unknown>,
+                                request: Record<string, unknown>,
+                            ) => Promise<void>,
+                        ) => {
+                            navigationGuard = handler;
+                        },
+                    ),
+            }),
         };
         const tools = createTestBrowserToolHandlers({
             session: mockSession({ getPage: vi.fn().mockReturnValue(page) }),
@@ -1267,6 +1274,7 @@ describe('open_page', () => {
         await navigationGuard?.(route, {
             url: () => 'https://elsewhere.example/',
             isNavigationRequest: () => true,
+            serviceWorker: () => null,
             frame: () => mainFrame,
         });
 
@@ -1284,25 +1292,29 @@ describe('open_page', () => {
         };
         const page = {
             ...mockSession().getPage(),
-            mainFrame: vi.fn().mockReturnValue({}),
-            route: vi
-                .fn()
-                .mockImplementation(
-                    async (
-                        _pattern: string,
-                        handler: (
-                            route: Record<string, unknown>,
-                            request: Record<string, unknown>,
-                        ) => Promise<void>,
-                    ) => {
-                        requestGuard = handler;
-                    },
-                ),
+            mainFrame: vi.fn().mockReturnValue({ url: () => 'https://example.com/' }),
+            context: vi.fn().mockReturnValue({
+                ...mockSession().getPage().context(),
+                route: vi
+                    .fn()
+                    .mockImplementation(
+                        async (
+                            _pattern: string,
+                            handler: (
+                                route: Record<string, unknown>,
+                                request: Record<string, unknown>,
+                            ) => Promise<void>,
+                        ) => {
+                            requestGuard = handler;
+                        },
+                    ),
+            }),
             goto: vi.fn().mockImplementation(async () => {
                 await requestGuard?.(route, {
                     url: () => 'http://10.0.0.9/secret',
                     isNavigationRequest: () => false,
-                    frame: () => ({}),
+                    serviceWorker: () => null,
+                    frame: () => ({ page: () => page }),
                 });
                 return { status: () => 200 };
             }),

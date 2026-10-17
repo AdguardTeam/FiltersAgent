@@ -19,7 +19,7 @@ import type { FirefoxExtensionEnvironmentOptions } from '../environment/firefox-
 import type { LoadedInstruction } from '../knowledge/instruction-loader';
 import type { FirefoxPreparedExtension, PreparedExtension } from '../local/prepared-extension';
 import type { AgentRuntimeSessionState } from './agent-runtime-session-evidence';
-import { serializeAgentExtensionProvenance } from './agentic-run-evidence';
+import { serializeAgentExtensionProvenance } from './extension-provenance';
 import { applicationInstructionContent } from './phase-application-flow-host';
 import type { BrowserExtensionEnvironmentCallbacks } from './phase-application-launch';
 

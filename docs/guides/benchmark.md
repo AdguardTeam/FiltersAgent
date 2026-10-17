@@ -10,10 +10,10 @@ the key, the models, and optionally the prices.
 - [Before you start](#before-you-start)
 - [Configure the provider](#configure-the-provider)
 - [Run one case or the whole set](#run-one-case-or-the-whole-set)
-- [Run the cases with a blocker module](#run-the-cases-with-a-blocker-module)
 - [Read the results](#read-the-results)
 - [Count the cost](#count-the-cost)
 - [Add a case](#add-a-case)
+- [Check cases](#check-cases)
 
 ## Before you start
 
@@ -21,20 +21,21 @@ You need:
 
 - **Node.js 24 or newer** and **pnpm 10**.
 - **git** and network access to `github.com`. Each case clones
-  AdguardFilters at the commit before the fix and downloads the pinned
-  AdGuard Browser Extension release.
+  AdguardFilters at the commit before the fix and assembles the reporter's
+  extension build from release code and the pinned autobuild filter lists.
 - **An LLM endpoint** speaking the OpenAI chat-completions or Anthropic
   Messages API, with a reasoning model that supports tool calling and a
   vision model that accepts images. One model can fill both roles.
-- **A GitHub token** with public read access, only to add cases. Running
-  cases works without one; set `GITHUB_TOKEN` anyway if GitHub rate-limits
-  your anonymous clones.
+- **A GitHub token** with public read access, to add cases or resolve
+  a version with `benchmark:case:check --extension-version`. Running
+  cases and checking existing v3 pins work without one; set `GITHUB_TOKEN`
+  anyway if GitHub rate-limits your anonymous clones.
 
 You do not need a browser install: the stealth Chromium build is downloaded
 on the first run. You do not need the AdGuard CLI either: every case is a
 Chrome MV3 browser extension report, and a case runs only the browser
-extension unless you
-[plug in a blocker module](#run-the-cases-with-a-blocker-module).
+extension. Historical cases refuse `--blocker-module`: module filter lists
+cannot yet be pinned to the reporter's date.
 
 Install the dependencies from the repository root:
 
@@ -112,31 +113,6 @@ pnpm test:e2e -- --all
 Each case is a complete agent investigation with a real browser, so expect
 minutes per case. Each run of a case replaces that case's previous output.
 
-## Run the cases with a blocker module
-
-To check that a blocker module does not pull extension reports away from the
-browser extension, plug it in with `--blocker-module`, once per module. Every
-case then lets the agent choose between the browser extension and the module:
-
-```bash
-pnpm test:e2e -- --all --blocker-module path/to/blocker-module.json
-```
-
-Set the variables the manifest lists in `env` in `.env` or the shell. A
-manifest that cannot be loaded, or a missing variable, stops the command
-before the first case and names the problem.
-
-For the AdGuard CLI module in `adguard-cli/`, pass its licence and release as
-described in [DEVELOPMENT.md](../../DEVELOPMENT.md#run-the-adguard-cli-executor):
-
-```bash
-pnpm test:e2e -- --case nettg-pl-235988 \
-    --blocker-module adguard-cli/blocker-module.json
-```
-
-What a module process receives from the environment is listed in the
-[CLI reference](../reference/cli.md#blocker-modules).
-
 ## Read the results
 
 The command prints one entry per case, then exits with the most severe code
@@ -157,6 +133,10 @@ nettg-pl-235988: pass (Agent result matches a browser-confirmed human change: ..
 A failing provider is reported as `infrastructure_failure`, not as an agent
 regression. Exit code 3 is also used when the command itself fails, for
 example on a missing variable.
+
+Extension builds in the 5.4.3 line do not record domainless scriptlets in
+the filtering log. Expect the same limitation in `get_applied_rules` as
+in the reporter's extension.
 
 The files of each case are in two directories under `tmp/`:
 
@@ -269,9 +249,50 @@ pnpm benchmark:case:add -- \
 ```
 
 The command uses your provider once per candidate report to extract the
-reporter's environment. It writes the case to
+reporter's environment. It assembles the reporter's historical extension
+build and refuses a case if a genuinely new human-added rule is already in
+that build or the version's code line has no listed release. An added rule
+already present in any `.txt` file at `filtersBaseSha` is ignored. A removed
+rule absent from the build prints a warning without refusing the case.
+`case:check` applies the same guard. `case:add` writes the case to
 `lab/benchmark/e2e/cases/<domain>-<issue>/`: `run.json` and the issue snapshot
 in `issue/`, which the agent sees, and `oracle.json` with the human commit,
-which only the comparison reads. Pass `--case-name <name>` to choose the
+which is withheld from the agent and read by the comparison and case checks.
+The v3 `run.json` carries `extensionBuild`:
+the reporter version, compatible release tag, and exact autobuild commit.
+Pass `--case-name <name>` to choose the
 directory name. An existing case is never overwritten. The command prints the
 case name; run it with `pnpm test:e2e -- --case <name>`.
+
+## Check cases
+
+Recheck the historical builds and human-fix absence guard for every case:
+
+```bash
+pnpm benchmark:case:check -- --all
+```
+
+To check one v3 case, pass its directory name:
+
+```bash
+pnpm benchmark:case:check -- nettg-pl-235988
+```
+
+To migrate a v2 case, supply the reporter's exact four-component extension
+version and set `GITHUB_TOKEN` so the command can resolve its autobuild tag:
+
+```bash
+pnpm benchmark:case:check -- nettg-pl-235988 --extension-version 5.4.3.99
+```
+
+These checks do not call an LLM or launch a browser. A passing migration
+writes `run.json` v3 with `extensionBuild`; a refusal leaves the file
+unchanged and names the reason, including the rule and list id when a rule
+is already present. The command prints `passed`, `updated`, or `refused`
+for each case and exits 1 if any case is refused. With `--all` it continues
+after refusals. `--extension-version` accepts only one named case.
+
+After changing the release table in
+`lab/local/historical-extension-releases.ts`, rerun
+`pnpm benchmark:case:check -- --all`. Successful checks refresh each v3
+case's release tag when its code line now names another release.

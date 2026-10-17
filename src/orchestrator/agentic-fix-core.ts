@@ -92,12 +92,12 @@ import {
     persistAgentSettingsProof,
     selectConfigurationSpecificEnvironmentMatrix,
     serializeAgentBrowserSessions,
-    serializeAgentExtensionProvenance,
     serializeConfigurationSpecificEnvironmentMatrix,
     publishedSessionSettingsEvidence,
     serializeVerifiedCandidateBinding,
     symptomFromTerminal,
 } from './agentic-run-evidence';
+import { serializeAgentExtensionProvenance } from './extension-provenance';
 import { completeFixResultAfterEnvironmentCleanup } from './fix-environment-lifecycle';
 import { lintPublishedCandidate } from '../rules/repository-lint-command';
 
@@ -264,6 +264,7 @@ export async function runAgenticFixCore(
                 },
                 {
                     artifactsDir: options.artifactsDir,
+                    preparedExtension: options.preparedExtension,
                     instruction: options.instruction,
                     signal: options.signal,
                 },
@@ -331,6 +332,7 @@ export async function runAgenticFixCore(
                 vision: visionClient,
                 recorder,
                 preparedExtension,
+                redirectOriginPolicy: options.redirectOriginPolicy,
                 // The run instruction and its model inputs ride the runtime too: every
                 // between-phases rule application performs this instruction's application contract
                 // through the bounded application sessions.

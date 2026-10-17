@@ -3,19 +3,17 @@
  *
  * In order:
  *
- * 1. The instruction carries a `## Preparation` section — a short-lived preparation session performs
+ * 1. A host-prepared extension is returned directly, preserving the host's verified build.
+ * 2. The instruction carries a `## Preparation` section — a short-lived preparation session performs
  *    the blocker steps and names its result; the payload's extension directory is validated to
  *    resolve inside the session workdir and to hold a loadable manifest. Provenance `Instruction`.
- * 2. No instruction, or none with the section — the host downloads the operator-pinned prebuilt
+ * 3. No instruction, or none with the section — the host downloads the operator-pinned prebuilt
  *    release (the module's own verified constant, injected as this module's default). Provenance
  *    `PinnedRelease`. A missing section never fails the run.
  *
- * A custom build for local testing goes through the instruction's `## Preparation` section (step 1)
- * rather than a preloaded-directory channel.
- *
  * Contract for every failure: there is NO second attempt — a failed download, digest, unpack, or
  * placement throws the typed error with the full captured output, and the fix run fails named. The
- * pinned release's digest marker is the only retry mechanism, across runs.
+ * pinned release's verified cache permits reuse across runs.
  */
 import { mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -157,6 +155,11 @@ export interface PreRunPreparationContext {
  * What varies per run.
  */
 export interface PreRunPreparationOptions {
+    /**
+     * Verified build supplied by the host, bypassing download and instruction preparation.
+     */
+    preparedExtension?: PreparedExtension;
+
     /**
      * The run artifacts directory; hosts the preparation workdir.
      */
@@ -340,6 +343,17 @@ export async function prepareRunExtension(
     options: PreRunPreparationOptions,
     dependencies: PreRunPreparationDependencies = {},
 ): Promise<PreparedExtension> {
+    if (options.preparedExtension !== undefined) {
+        context.logger.info(
+            {
+                source: options.preparedExtension.source,
+                extensionPath: options.preparedExtension.extensionPath,
+                extensionSourceTag: options.preparedExtension.extensionSourceTag,
+            },
+            'Using the host-prepared extension build',
+        );
+        return options.preparedExtension;
+    }
     const preparationSection = options.instruction
         ? extractPreparationSection(options.instruction.content)
         : undefined;

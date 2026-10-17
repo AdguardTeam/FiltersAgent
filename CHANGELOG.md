@@ -15,6 +15,7 @@ The format is based on [Keep a Changelog], and this project adheres to
 - Added `LLM_API` / `llmApi` with `anthropic-messages` to run Claude with
   your own Anthropic key, prompt caching and thinking. Its base URL has no
   `/v1`; a URL ending in `/v1` fails at startup.
+- Added `pnpm benchmark:case:check` to check or migrate historical cases.
 
 ### Changed
 
@@ -24,11 +25,26 @@ The format is based on [Keep a Changelog], and this project adheres to
   `content_filter`) and bodyless HTTP 400/404/413/422 errors to end the run
   as `llm_rejected`.
 - Changed the vision image size cap to 5 MB for both APIs.
+- Changed benchmark scoring to classify missing extension provenance and
+  reporter-build version mismatches as infrastructure failures rather than
+  agent regressions.
+- Changed historical case checks to ignore rules already present in the
+  base checkout and warn when removed rules are absent from the build.
 
 ### Fixed
 
 - Fixed the usage summary leaving out single-shot attempts that failed and
   were retried.
+- Fixed historical benchmark and local historical `fix` runs using current
+  lists instead of reporter builds pinned in `run.json` v3.
+- Fixed historical runs accepting `--blocker-module` when module lists
+  cannot be pinned to the reporter's date.
+- Fixed historical investigations accessing later AdguardFilters commits
+  or retaining unrelated redirect origins.
+- Fixed browser request checks missing popups and other pages in the same
+  browser context.
+- Fixed redirects staying permitted after a page load returns an HTTP
+  error.
 
 ## [1.0.1] - 2026-10-15
 

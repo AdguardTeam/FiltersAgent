@@ -79,11 +79,17 @@ function writeIssue(body: string): string {
  */
 function lockedRecord(): LocalRunRecord {
     const extension = {
-        source: 'pinned_release' as const,
-        extensionPath: '/tmp/cache/extensions/prebuilt/v5.5.2.3/unpacked',
+        source: 'historical_build' as const,
+        extensionPath: '/tmp/cache/extensions/historical/build',
         manifestVersion: 3 as const,
         extensionSourceSha256: 'e'.repeat(64),
-        extensionSourceTag: 'v5.5.2.3',
+        historicalBuild: {
+            version: '5.4.3.99',
+            releaseTag: 'v5.4.3.1',
+            releaseSha256: 'a'.repeat(64),
+            autobuildTag: 'autobuild-v5.4.3.99',
+            autobuildCommit: 'b'.repeat(40),
+        },
     };
     return {
         result: {
@@ -139,16 +145,20 @@ function lockedRecord(): LocalRunRecord {
 }
 
 /**
- * Retarget a locked record to one tracked case's exact reporter filter selection.
- *
- * The pinned prebuilt release is the only build a run loads, so the tracked cases compare their
- * settings evidence only — the version and commit fields of the historical replay are retired.
+ * Retarget a locked record to one tracked case's reporter build and filter selection.
  *
  * @param filterIds - Exact reporter filter IDs.
+ * @param version - Reporter extension version.
+ * @param commit - Exact autobuild commit for the reporter version.
  * @returns Updated locked record.
  */
-function trackedCaseRecord(filterIds: number[]): LocalRunRecord {
+function trackedCaseRecord(filterIds: number[], version: string, commit: string): LocalRunRecord {
     const record = lockedRecord();
+    Object.assign(record.result.extensionProvenance!.historicalBuild!, {
+        version,
+        autobuildTag: `autobuild-v${version}`,
+        autobuildCommit: commit,
+    });
     const listKeys = filterIds.map((filterId) => `adguard:${filterId}`);
     record.result.settingsEvidence!.enabledListKeys = [...listKeys];
     record.result.settingsEvidence!.activeRulesetListKeys = [...listKeys];
@@ -211,7 +221,11 @@ describe('assessGoldenAgentEnvironment', () => {
         'matches exact reporter filter selection recorded for tracked case %s',
         async (_caseName, tracked) => {
             const issueFile = writeIssue('Historical root body; the seam carries the import.');
-            const record = trackedCaseRecord([...tracked.filterIds]);
+            const record = trackedCaseRecord(
+                [...tracked.filterIds],
+                tracked.version,
+                tracked.commit,
+            );
 
             expect(
                 await assessGoldenAgentEnvironment(
@@ -282,6 +296,50 @@ describe('assessGoldenAgentEnvironment', () => {
 
             expect(assessment).toMatchObject({ status: 'agent_mismatch' });
             expect(assessment.detail).toMatch(detailPattern);
+        },
+    );
+
+    it("treats a build version different from the reporter's as case infrastructure failure", async () => {
+        const issueFile = writeIssue('Reporter settings are extracted independently.');
+        const record = lockedRecord();
+        record.result.extensionProvenance!.historicalBuild!.version = '5.4.3.98';
+
+        const assessment = await assessGoldenAgentEnvironment(
+            record,
+            issueFile,
+            dependencies(REPORT_URL),
+        );
+
+        expect(assessment.status).toBe('infrastructure_failure');
+        expect(assessment.detail).toContain('5.4.3.98');
+        expect(assessment.detail).toContain('5.4.3.99');
+    });
+
+    it.each(['missing provenance', 'pinned release', 'missing build identity'])(
+        'treats a locked run without a historical build as case infrastructure failure: %s',
+        async (scenario) => {
+            const issueFile = writeIssue('Reporter settings are extracted independently.');
+            const record = lockedRecord();
+            if (scenario === 'missing provenance') {
+                delete record.result.extensionProvenance;
+                record.provenance.extension = null;
+            } else if (scenario === 'pinned release') {
+                record.result.extensionProvenance!.source = 'pinned_release';
+                delete record.result.extensionProvenance!.historicalBuild;
+            } else {
+                delete record.result.extensionProvenance!.historicalBuild;
+            }
+
+            const assessment = await assessGoldenAgentEnvironment(
+                record,
+                issueFile,
+                dependencies(REPORT_URL),
+            );
+
+            expect(assessment).toMatchObject({
+                status: 'infrastructure_failure',
+                detail: expect.stringMatching(/historical.*build/i),
+            });
         },
     );
 

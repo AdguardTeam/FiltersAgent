@@ -1,5 +1,8 @@
-import { createHash } from 'node:crypto';
-import { access, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+/**
+ * Verify pinned release assets and atomically publish complete unpacked extensions to the cache.
+ */
+import { createHash, randomUUID } from 'node:crypto';
+import { access, mkdir, mkdtemp, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { ExtensionManifestVersion } from '../environment/extension-preparation';
 import type { Logger } from '../logger/logger';
@@ -123,20 +126,14 @@ export class PinnedReleaseError extends Error {
 const RELEASE_CACHE_SEGMENTS = ['extensions', 'prebuilt'] as const;
 
 /**
- * File name under the release directory where the verified asset bytes are kept for re-unpacks.
+ * Prefix for temporary asset files, isolating concurrent downloads under the same release tag.
  */
-const RELEASE_ZIP_FILE_NAME = 'download';
+const RELEASE_ZIP_TEMP_PREFIX = 'download-';
 
 /**
- * Directory under the release directory holding the unpacked extension the browser loads.
+ * Prefix for sibling unpack directories, keeping partial content outside the published cache path.
  */
-const UNPACKED_RELEASE_DIR_NAME = 'unpacked';
-
-/**
- * Marker file name recording the verified digest of the unpacked release; its presence with a
- * matching digest short-circuits re-download and re-unpack.
- */
-const RELEASE_MARKER_FILE_NAME = 'digest.json';
+const RELEASE_UNPACK_TEMP_PREFIX = 'unpacked-';
 
 /**
  * File every extension must carry at its root for the browser to load it.
@@ -144,7 +141,7 @@ const RELEASE_MARKER_FILE_NAME = 'digest.json';
 const MANIFEST_FILE_NAME = 'manifest.json';
 
 /**
- * The one unpacker, per the plan's choice of `unzip` — present on macOS and ubuntu-latest.
+ * The release asset unpacker, available on macOS and ubuntu-latest.
  */
 const UNZIP_EXECUTABLE = 'unzip';
 
@@ -184,8 +181,7 @@ export interface PinnedExtensionRelease {
 export interface DownloadPinnedExtensionReleaseOptions {
     /**
      * Directory under which the per-tag release cache lives;
-     * `<destinationRoot>/extensions/prebuilt/<tag>/` holds the zip, the unpacked dir, and the
-     * digest marker.
+     * `<destinationRoot>/extensions/prebuilt/<tag>/<sha256>/` holds the complete extension.
      */
     destinationRoot: string;
 
@@ -228,43 +224,14 @@ function describeCause(error: unknown): string {
 }
 
 /**
- * Parsed digest marker left by a previous successful download.
- */
-interface ReleaseDigestMarker {
-    /**
-     * Release tag recorded at download time.
-     */
-    tag?: string;
-
-    /**
-     * Verified SHA-256 of the bytes unpacked to the cached dir.
-     */
-    sha256?: string;
-}
-
-/**
- * Read the digest marker left by a previous successful download, when there is one.
- *
- * @param markerPath - Path of the digest marker.
- * @returns The parsed marker, or undefined when it is missing or unreadable — either way a cache
- *   miss, never a failure.
- */
-async function readDigestMarker(markerPath: string): Promise<ReleaseDigestMarker | undefined> {
-    try {
-        return JSON.parse(await readFile(markerPath, 'utf8')) as ReleaseDigestMarker;
-    } catch {
-        return undefined;
-    }
-}
-
-/**
  * Download the pinned prebuilt AdGuard extension release, verify it, unpack it, and cache it.
  *
  * Contract: digest-first — the exact bytes are verified against the pin before anything is
- * unpacked, and a mismatch fails named (tag, asset, expected, actual) leaving no marker behind. The
- * unpack runs through the preparation subprocess with its full output logged. A previously verified
- * release whose marker digest still matches the pin short-circuits to the cached unpacked dir
- * without touching the network; a missing manifest in the unpacked asset fails named.
+ * unpacked, and a mismatch fails named (tag, asset, expected, actual). Each attempt unpacks into a
+ * private temporary directory and publishes it atomically at the digest-keyed cache path only after
+ * verifying manifest.json. A complete cached extension is reused without network access. Concurrent
+ * downloads converge on the same complete directory, and failed attempts leave no reusable cache.
+ * The unpack runs through the preparation subprocess with its full output logged.
  *
  * @param options - Destination root, injectable fetch, optional test pin, logger.
  * @returns The unpacked extension directory with its provenance.
@@ -278,19 +245,14 @@ export async function downloadPinnedExtensionRelease(
     const fetchImpl = options.fetchImpl ?? fetch;
     const pin = options.pinnedRelease ?? PINNED_ADGUARD_EXTENSION_RELEASE;
     const releaseDir = join(destinationRoot, ...RELEASE_CACHE_SEGMENTS, pin.tag);
-    const zipPath = join(releaseDir, RELEASE_ZIP_FILE_NAME);
-    const unpackedDir = join(releaseDir, UNPACKED_RELEASE_DIR_NAME);
-    const markerPath = join(releaseDir, RELEASE_MARKER_FILE_NAME);
+    const unpackedDir = join(releaseDir, pin.sha256);
     const manifestPath = join(unpackedDir, MANIFEST_FILE_NAME);
 
-    const cachedMarker = await readDigestMarker(markerPath);
     if (
-        cachedMarker?.sha256 === pin.sha256 &&
-        cachedMarker.tag === pin.tag &&
-        (await access(manifestPath).then(
+        await access(manifestPath).then(
             () => true,
             () => false,
-        ))
+        )
     ) {
         logger.info(
             { tag: pin.tag, sha256: pin.sha256, extensionDir: unpackedDir },
@@ -304,11 +266,6 @@ export async function downloadPinnedExtensionRelease(
             fromCache: true,
         };
     }
-
-    // Drop any stale marker and stale unpacked content first: a failed re-fetch must never MISS a
-    // marker left behind, and unzip must never hit leftover files from a broken early attempt.
-    await rm(markerPath, { force: true });
-    await rm(unpackedDir, { recursive: true, force: true });
 
     logger.info(
         { tag: pin.tag, assetName: pin.assetName, url: pin.downloadUrl },
@@ -346,43 +303,61 @@ export async function downloadPinnedExtensionRelease(
         );
     }
     logger.info(
-        { tag: pin.tag, sha256: digest, byteLength: bytes.byteLength, zipPath },
+        { tag: pin.tag, sha256: digest, byteLength: bytes.byteLength },
         'Pinned release downloaded; digest verified against the pin',
     );
 
     await mkdir(releaseDir, { recursive: true });
-    await writeFile(zipPath, bytes);
+    const zipPath = join(releaseDir, `${RELEASE_ZIP_TEMP_PREFIX}${randomUUID()}`);
+    let temporaryUnpackedDir: string | undefined;
+    try {
+        await writeFile(zipPath, bytes);
+        temporaryUnpackedDir = await mkdtemp(join(releaseDir, RELEASE_UNPACK_TEMP_PREFIX));
 
-    const unpack = await runPreparationSubprocess(
-        { executable: UNZIP_EXECUTABLE, args: ['-q', zipPath, '-d', unpackedDir] },
-        process.env,
-    );
-    logger.info(
-        {
-            command: [UNZIP_EXECUTABLE, '-q', zipPath, '-d', unpackedDir],
-            unzipStdout: unpack.stdout,
-            unzipStderr: unpack.stderr,
-        },
-        'Pinned release unpack subprocess output',
-    );
-    if (unpack.exitCode !== 0) {
-        throw new PinnedReleaseError(
-            PinnedReleaseFailureCode.UnpackFailed,
-            `Pinned release ${pin.tag} unpack failed: unzip exited ${unpack.exitCode}; ` +
-                `stdout: ${unpack.stdout}; stderr: ${unpack.stderr}`,
+        const unpack = await runPreparationSubprocess(
+            { executable: UNZIP_EXECUTABLE, args: ['-q', zipPath, '-d', temporaryUnpackedDir] },
+            process.env,
         );
-    }
-
-    const unpackedEntries = await readdir(unpackedDir);
-    if (!unpackedEntries.includes(MANIFEST_FILE_NAME)) {
-        throw new PinnedReleaseError(
-            PinnedReleaseFailureCode.ManifestMissing,
-            `Pinned release ${pin.tag} unpacked without ${MANIFEST_FILE_NAME}; unpacked entries: ` +
-                `${unpackedEntries.join(', ')}.`,
+        logger.info(
+            {
+                command: [UNZIP_EXECUTABLE, '-q', zipPath, '-d', temporaryUnpackedDir],
+                unzipStdout: unpack.stdout,
+                unzipStderr: unpack.stderr,
+            },
+            'Pinned release unpack subprocess output',
         );
-    }
+        if (unpack.exitCode !== 0) {
+            throw new PinnedReleaseError(
+                PinnedReleaseFailureCode.UnpackFailed,
+                `Pinned release ${pin.tag} unpack failed: unzip exited ${unpack.exitCode}; ` +
+                    `stdout: ${unpack.stdout}; stderr: ${unpack.stderr}`,
+            );
+        }
 
-    await writeFile(markerPath, `${JSON.stringify({ sha256: digest, tag: pin.tag }, null, 2)}\n`);
+        const unpackedEntries = await readdir(temporaryUnpackedDir);
+        if (!unpackedEntries.includes(MANIFEST_FILE_NAME)) {
+            throw new PinnedReleaseError(
+                PinnedReleaseFailureCode.ManifestMissing,
+                `Pinned release ${pin.tag} unpacked without ${MANIFEST_FILE_NAME}; unpacked entries: ` +
+                    `${unpackedEntries.join(', ')}.`,
+            );
+        }
+
+        try {
+            await rename(temporaryUnpackedDir, unpackedDir);
+        } catch (error) {
+            const code = (error as NodeJS.ErrnoException).code;
+            if (code !== 'EEXIST' && code !== 'ENOTEMPTY') {
+                throw error;
+            }
+            await access(manifestPath);
+        }
+    } finally {
+        await rm(zipPath, { force: true });
+        if (temporaryUnpackedDir !== undefined) {
+            await rm(temporaryUnpackedDir, { recursive: true, force: true });
+        }
+    }
     logger.info(
         { tag: pin.tag, extensionDir: unpackedDir, sha256: digest },
         'Pinned release ready',

@@ -1,7 +1,8 @@
 /**
- * The build's own text of a built-in filter list, and the lines of it a slice session runs. The
- * pinned MV3 build ships every list's complete text inside its declarative ruleset JSON, byte for
- * byte the published list; a slice is a line range of that text re-issued as a custom filter, so
+ * The build's own text of a built-in filter list, and the lines of it a slice session runs. The MV3
+ * builds ship every list's complete text inside their declarative ruleset JSON:
+ * `metadata.filterContent` in the 5.5 line and `metadata.rawFilterList` in the 5.4 line, byte for
+ * byte the published list. A slice is a line range of that text re-issued as a custom filter, so
  * line numbers the agent quotes mean the same thing in the build, in the launch answer and in the
  * filtering log.
  */
@@ -21,6 +22,37 @@ const BUNDLED_RULESETS_DIRECTORY = join('filters', 'declarative');
  * manifest's `declarative_net_request` resources use.
  */
 const RULESET_NAME_PREFIX = 'ruleset_';
+
+/**
+ * The extension manifest lists the authoritative bundled rulesets, including metadata resources.
+ */
+const MANIFEST_FILENAME = 'manifest.json';
+
+/**
+ * The converter's metadata ruleset carries the other rulesets' checksums, not a filter list, so the
+ * human-fix guard excludes it when reading list text.
+ */
+export const BUNDLED_METADATA_RULESET_ID = 0;
+
+/**
+ * The trusted build manifest's authoritative declarative ruleset resources.
+ */
+interface BundledRulesetManifest {
+    /**
+     * Declarative request rules registered by the build.
+     */
+    declarative_net_request: {
+        /**
+         * The bundled rulesets, including the converter's metadata ruleset.
+         */
+        rule_resources: {
+            /**
+             * The converter's ruleset name, suffixed with its numeric filter id.
+             */
+            id: string;
+        }[];
+    };
+}
 
 /**
  * Splits the bundled text into lines. The build stores lists with CRLF line ends (the text is
@@ -55,6 +87,10 @@ interface BundledMetadataRule {
          * The whole list text, byte-identical to the published list, CRLF line ends included.
          */
         filterContent?: string;
+        /**
+         * The whole list text in the 5.4 build line, before it was named `filterContent`.
+         */
+        rawFilterList?: string;
     };
 }
 
@@ -68,6 +104,23 @@ interface BundledMetadataRule {
 export function bundledRulesetPath(extensionPath: string, filterId: number): string {
     const rulesetName = `${RULESET_NAME_PREFIX}${filterId}`;
     return join(extensionPath, BUNDLED_RULESETS_DIRECTORY, rulesetName, `${rulesetName}.json`);
+}
+
+/**
+ * Lists the manifest's declarative ruleset ids in ascending order, including the converter's
+ * metadata ruleset. Unreferenced files on disk do not participate. A missing manifest throws with
+ * its path rather than representing a build with no lists.
+ *
+ * @param extensionPath - Unpacked extension root of the prepared build.
+ * @returns The declared ruleset ids in the extension's own registry numbering.
+ */
+export function listBundledListIds(extensionPath: string): number[] {
+    const manifest = JSON.parse(
+        readFileSync(join(extensionPath, MANIFEST_FILENAME), 'utf8'),
+    ) as BundledRulesetManifest;
+    return manifest.declarative_net_request.rule_resources
+        .map((resource) => Number(resource.id.slice(RULESET_NAME_PREFIX.length)))
+        .sort((left, right) => left - right);
 }
 
 /**
@@ -97,7 +150,8 @@ export function readBundledListLines(extensionPath: string, filterId: number): s
         );
     }
     const ruleset = JSON.parse(raw) as BundledMetadataRule[];
-    const filterContent = ruleset[0]?.metadata?.filterContent;
+    const metadata = ruleset[0]?.metadata;
+    const filterContent = metadata?.filterContent ?? metadata?.rawFilterList;
     if (typeof filterContent !== 'string') {
         throw new Error(
             `The bundled ruleset of list ${filterId} carries no list text in its first rule: ` +

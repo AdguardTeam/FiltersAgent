@@ -18,7 +18,7 @@ import {
     type LocalRunOutputPaths,
     type LocalRunRecord,
 } from '../../../src/local/run-output';
-import type { GoldenHumanOracle } from '../../../lab/e2e/golden-case';
+import { GoldenRunSchemaVersion, type GoldenHumanOracle } from '../../../lab/e2e/golden-case';
 import type { ExtractedHumanFix } from '../../../lab/e2e/human-commit-oracle';
 import { runGoldenE2ECase } from '../../../lab/e2e/golden-runner';
 import { listGoldenCaseNames, runGoldenE2ESuite } from '../../../lab/e2e/golden-suite';
@@ -83,10 +83,15 @@ function writeRunSide(caseDirectory: string): void {
     writeFileSync(
         join(caseDirectory, 'run.json'),
         JSON.stringify({
-            schemaVersion: 2,
+            schemaVersion: GoldenRunSchemaVersion.Current,
             issueNumber: 235988,
             issueFile: 'issue/issue.json',
             filtersBaseSha: '0e06526e359cfb83f2883f7005aeee3feb56b653',
+            extensionBuild: {
+                version: '5.4.3.99',
+                releaseTag: 'v5.4.3.1',
+                autobuildCommit: 'a'.repeat(40),
+            },
         }),
         'utf8',
     );
@@ -236,6 +241,36 @@ function evaluationDirectoryFor(outputDirectory: string): string {
 }
 
 describe('runGoldenE2ECase', () => {
+    it('classifies a v2 case as infrastructure failure without running the agent', async () => {
+        const root = mkdtempSync(join(tmpdir(), 'golden-runner-v2-'));
+        const caseDirectory = join(root, 'case');
+        mkdirSync(caseDirectory);
+        writeRunSide(caseDirectory);
+        const run = JSON.parse(readFileSync(join(caseDirectory, 'run.json'), 'utf8'));
+        delete run.extensionBuild;
+        run.schemaVersion = GoldenRunSchemaVersion.Legacy;
+        writeFileSync(join(caseDirectory, 'run.json'), JSON.stringify(run));
+        const runLocalFix = vi.fn();
+
+        const result = await runGoldenE2ECase(
+            coreConfig,
+            {
+                caseName: 'legacy-case',
+                caseDirectory,
+                outputDirectory: join(root, 'run'),
+                evaluationDirectory: join(root, 'evaluation'),
+            },
+            { runLocalFix },
+        );
+
+        expect(result).toMatchObject({
+            status: 'infrastructure_failure',
+            exitCode: 3,
+            detail: expect.stringMatching(/benchmark:case:check/),
+        });
+        expect(runLocalFix).not.toHaveBeenCalled();
+    });
+
     it('does not clear a caller directory that lacks the ownership marker', async () => {
         const root = mkdtempSync(join(tmpdir(), 'golden-runner-unowned-'));
         const caseDirectory = join(root, 'case');

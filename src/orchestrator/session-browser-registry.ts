@@ -6,6 +6,7 @@
  * Split from `agent-runtime.ts`, which builds one of these for every launched session and needs
  * nothing from it but the finished registry.
  */
+import type { RedirectOriginPolicy } from '../browser/redirect-origin-policy';
 import type { SiteAnalyzer } from '../analyzer/site-analyzer';
 import { createToolRegistry } from '../agent/tool-factory';
 import type { ToolRegistry } from '../agent/tool-registry';
@@ -21,6 +22,41 @@ import type { SingleShotClient } from '../pi/single-shot-types';
 import type { TraceRecorder } from '../tracer/trace-recorder';
 import type { PlacementMap } from '../types/repo-context';
 import type { ReproProfile } from '../types/repro-profile';
+
+/**
+ * Runtime-owned browser context supplied to an injectable browser registry factory.
+ */
+export interface AgentRuntimeBrowserContext {
+    /**
+     * Policy deciding whether a redirect landing remains admitted after its current load.
+     */
+    redirectOriginPolicy: RedirectOriginPolicy;
+
+    /**
+     * Newly launched isolated browser session.
+     */
+    session: BrowserSession;
+
+    /**
+     * Runtime recorder that owns every browser artifact identity and local path.
+     */
+    recorder: TraceRecorder;
+
+    /**
+     * Reporter symptom accumulated from issue screenshot vision calls.
+     */
+    reporterSymptom: () => string | undefined;
+
+    /**
+     * Physical navigation attempts allowed for one model-visible open_page call.
+     */
+    openPageRetries: number;
+
+    /**
+     * Bounded consent setup selected by the model for this isolated session.
+     */
+    consentStrategy: ReproProfile['consentStrategy'];
+}
 
 /**
  * What decides a session's applied-rules log.
@@ -120,21 +156,11 @@ export async function openSessionAppliedRulesLog(
 /**
  * Everything one production session registry is built from.
  */
-export interface ProductionBrowserRegistryInput {
-    /**
-     * The launched session.
-     */
-    session: BrowserSession;
-
+export interface ProductionBrowserRegistryInput extends AgentRuntimeBrowserContext {
     /**
      * Exact prompt-safe URL selected for the session.
      */
     targetUrl: string;
-
-    /**
-     * Trusted bounded consent interaction selected for the session.
-     */
-    consentStrategy: ReproProfile['consentStrategy'];
 
     /**
      * The run's issue snapshot, answering fetch_issue.
@@ -157,24 +183,9 @@ export interface ProductionBrowserRegistryInput {
     artifactsDir: string;
 
     /**
-     * The run's trace recorder.
-     */
-    recorder: TraceRecorder;
-
-    /**
      * The run's vision client.
      */
     vision: SingleShotClient;
-
-    /**
-     * Late-bound reporter symptom accumulated from issue screenshots.
-     */
-    reporterSymptom: () => string | undefined;
-
-    /**
-     * Physical navigation attempts allowed for one open_page call.
-     */
-    openPageRetries: number;
 
     /**
      * The session's applied-rules log; absent when its engine cannot report.
@@ -207,6 +218,7 @@ export async function createProductionBrowserRegistry(
             reporterSymptom: input.reporterSymptom,
             openPageRetries: input.openPageRetries,
             consentStrategy: input.consentStrategy,
+            redirectOriginPolicy: input.redirectOriginPolicy,
             appliedRules: input.appliedRules,
         },
         visionTools: {

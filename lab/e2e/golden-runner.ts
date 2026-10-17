@@ -32,11 +32,8 @@ import {
     type GoldenAgentEnvironmentAssessment,
 } from './golden-agent-environment';
 import { bindExtractReport } from '../../src/intake/extract-issue-facts';
-import {
-    extractHumanCommitFix,
-    type ExtractedHumanFix,
-    type HumanFixCandidate,
-} from './human-commit-oracle';
+import { type ExtractedHumanFix, type HumanFixCandidate } from './human-commit-oracle';
+import { extractHumanCommitFix } from './human-commit-reader';
 import {
     classifyGoldenPreOracleResult,
     classifyGoldenResult,

@@ -1,6 +1,6 @@
 import { access, mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import type { FiltersPreparationConfig } from './run-config-types';
 import { runPreparationSubprocess } from './preparation-subprocess';
 import { ExtensionEnvironmentKind } from '../types/extension-environment-kind';
@@ -120,12 +120,12 @@ export interface FiltersProvenance {
     environment: FiltersPreparationConfig['environment']['kind'];
 
     /**
-     * Whether the disposable repository was cloned locally or remotely.
+     * Whether the disposable repository was prepared from a local or remote source.
      */
     source: CheckoutSource;
 
     /**
-     * Local source path or remote repository URL used for the initial clone.
+     * Local source path or remote repository URL used to prepare the checkout.
      */
     sourceLocation: string;
 
@@ -198,7 +198,7 @@ export async function withPreparedFiltersCheckout<T>(
 }
 
 /**
- * Clones and resolves a selected filters revision inside disposable storage.
+ * Prepares and resolves a selected filters revision inside disposable storage.
  *
  * @param config - Source and revision selection configuration.
  * @param temporaryDirectory - Root of the disposable lifecycle.
@@ -214,15 +214,24 @@ async function prepareInDirectory(
     const localSourceAvailable =
         config.localSourcePath !== undefined &&
         (await dependencies.fileSystem.exists(config.localSourcePath));
-    const sourceLocation = localSourceAvailable ? config.localSourcePath! : config.remoteUrl;
+    const sourceLocation = localSourceAvailable
+        ? resolve(config.localSourcePath!)
+        : config.remoteUrl;
     const source = localSourceAvailable
         ? CheckoutSource.LocalSharedClone
         : CheckoutSource.RemoteShallowClone;
 
-    await runChecked(
-        dependencies.commandRunner,
-        createCloneCommand(sourceLocation, checkoutPath, localSourceAvailable),
-    );
+    if (config.environment.kind === ExtensionEnvironmentKind.Historical) {
+        await runChecked(dependencies.commandRunner, {
+            executable: 'git',
+            args: ['init', '--quiet', checkoutPath],
+        });
+    } else {
+        await runChecked(
+            dependencies.commandRunner,
+            createCloneCommand(sourceLocation, checkoutPath, localSourceAvailable),
+        );
+    }
 
     const requestedRevision =
         config.environment.kind === ExtensionEnvironmentKind.Current
@@ -231,7 +240,12 @@ async function prepareInDirectory(
     const selectedCommit =
         config.environment.kind === ExtensionEnvironmentKind.Current
             ? await fetchCurrentCommit(config, checkoutPath, dependencies.commandRunner)
-            : await resolveHistoricalCommit(config, checkoutPath, dependencies.commandRunner);
+            : await fetchHistoricalCommit(
+                  config,
+                  sourceLocation,
+                  checkoutPath,
+                  dependencies.commandRunner,
+              );
 
     await runChecked(dependencies.commandRunner, {
         executable: 'git',
@@ -330,15 +344,17 @@ async function fetchCurrentCommit(
 }
 
 /**
- * Uses a local historical object when present or shallow-fetches the exact remote commit.
+ * Shallow-fetches only the exact historical commit without importing source refs or later objects.
  *
  * @param config - Historical filters configuration.
+ * @param sourceLocation - Local source path or remote URL supplying the historical commit.
  * @param checkoutPath - Disposable checkout root.
  * @param commandRunner - Git command adapter.
  * @returns Full historical commit selected for checkout.
  */
-async function resolveHistoricalCommit(
+async function fetchHistoricalCommit(
     config: FiltersPreparationConfig,
+    sourceLocation: string,
     checkoutPath: string,
     commandRunner: FiltersCommandRunner,
 ): Promise<string> {
@@ -346,18 +362,9 @@ async function resolveHistoricalCommit(
         throw new FiltersPreparationError('Historical commit resolution requires historical mode.');
     }
     const baseSha = config.environment.baseSha;
-    const objectCheck = await commandRunner.run({
-        executable: 'git',
-        args: ['cat-file', '-e', `${baseSha}^{commit}`],
-        cwd: checkoutPath,
-    });
-    if (objectCheck.exitCode === 0) {
-        return baseSha;
-    }
-
     await runChecked(commandRunner, {
         executable: 'git',
-        args: ['fetch', '--depth', '1', '--no-tags', config.remoteUrl, baseSha],
+        args: ['fetch', '--quiet', '--depth', '1', '--no-tags', sourceLocation, baseSha],
         cwd: checkoutPath,
     });
     const fetchedCommit = (

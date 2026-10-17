@@ -18,7 +18,6 @@ import { extractIntakeFacts } from '../../src/entry/intake-extraction';
 import { IntakeExtractionKind, type extractReport } from '../../src/intake/extract-report';
 import { createLogger } from '../../src/logger/logger';
 import { runFixCore } from '../../src/orchestrator/fix-core';
-import { FixRunResultContractError } from '../../src/orchestrator/fix-core-context';
 import { applyRepositoryEdit } from '../../src/repo/repository-edit';
 import {
     CurrentRulesResolutionStatus,
@@ -39,7 +38,6 @@ import {
     LocalExecutionInfrastructureError,
     LocalInfrastructureFailureCategory,
 } from './cycle-outcome';
-import { InfrastructureFailureReason } from '../../src/types/infrastructure-failure-reason';
 import { withPreparedFiltersCheckout } from '../../src/local/filters-preparer';
 import { runPreparationSubprocess } from '../../src/local/preparation-subprocess';
 import { observeUpstreamDrift } from './upstream-drift';
@@ -70,6 +68,20 @@ import {
 } from '../../src/local/evidence-publication';
 import { LocalPublicationTrustError } from '../../src/local/local-publication-trust';
 import { loadLocalRunConfig } from './run-config';
+import {
+    prepareHistoricalExtensionBuild,
+    labExtensionCacheRoot,
+} from './historical-extension-build';
+import {
+    loadHistoricalBuildExtension,
+    type PreparedExtension,
+} from '../../src/local/prepared-extension';
+import { RedirectOriginPolicy } from '../../src/browser/redirect-origin-policy';
+import {
+    LocalFailureStage,
+    FileBackedApplicationRefusalError,
+    infrastructureFailureReasonForStage,
+} from './local-failure-stage';
 import type { LocalRunConfig } from '../../src/local/run-config-types';
 import {
     writeLocalRunOutput,
@@ -271,10 +283,10 @@ type LocalFixInputLoader = (outputDir: string) => PreparedLocalFixInput;
  * @param knowledgeBaseSha - Optional full campaign-wide KnowledgeBase commit.
  * @returns Configuration with an exact documentation revision when supplied.
  */
-function withPinnedKnowledgeBase(
-    config: LocalRunConfig,
+function withPinnedKnowledgeBase<T extends LocalRunConfig>(
+    config: T,
     knowledgeBaseSha: string | undefined,
-): LocalRunConfig {
+): T {
     if (knowledgeBaseSha === undefined) {
         return config;
     }
@@ -295,6 +307,11 @@ function withPinnedKnowledgeBase(
  * Injectable local lifecycle seams used by unit tests.
  */
 export interface LocalFixRunnerDependencies {
+    /**
+     * Prepare the reporter extension without reaching release or git transports in tests.
+     */
+    prepareHistoricalExtensionBuild?: typeof prepareHistoricalExtensionBuild;
+
     /**
      * Temporary AdguardFilters checkout lifecycle.
      */
@@ -349,106 +366,6 @@ function configuredFiltersRepository(filtersRemoteUrl: string | null): string | 
     }
     const slug = parseRepositorySlugFromGitUrl(filtersRemoteUrl);
     return slug ? `${slug.owner}/${slug.repo}` : null;
-}
-
-/**
- * Lifecycle stage active when a local run fails before producing a complete result.
- *
- * File-local on purpose: the runner is the only minter, advancing the stage cursor as the run
- * crosses each boundary, and the only reader, mapping the stage a failure interrupted to the
- * infrastructure reason it implies.
- */
-const LocalFailureStage = {
-    /**
-     * Loading and parsing the issue snapshot and run configuration.
-     */
-    Input: 'input',
-
-    /**
-     * Preparing the locked execution environment and filters.
-     */
-    Environment: 'environment',
-
-    /**
-     * The investigation itself: agent loop, browser sessions, validation.
-     */
-    Core: 'core',
-
-    /**
-     * Persisting and validating the finished result.
-     */
-    Output: 'output',
-} as const;
-
-/**
- * LocalFailureStage value.
- */
-type LocalFailureStage = (typeof LocalFailureStage)[keyof typeof LocalFailureStage];
-
-/**
- * The run's instruction declares a file-backed verification method, which no session can honour
- * yet; raised at the instruction load, before the core runs its paid investigation.
- */
-class FileBackedApplicationRefusalError extends Error {
-    /**
-     * @param detail - The shared gate's refusal detail naming the declared method.
-     */
-    constructor(detail: string) {
-        super(detail);
-        this.name = 'FileBackedApplicationRefusalError';
-    }
-}
-
-/**
- * Map wrapper failures to explicit infrastructure reasons without labelling generic core defects.
- *
- * @param stage - Local lifecycle boundary that raised the error.
- * @param error - Error raised at the active lifecycle boundary.
- * @returns Typed infrastructure reason, or undefined when the agent core must remain comparable.
- */
-function infrastructureFailureReasonForStage(
-    stage: LocalFailureStage,
-    error: unknown,
-): InfrastructureFailureReason | undefined {
-    if (error instanceof FileBackedApplicationRefusalError) {
-        return InfrastructureFailureReason.FileBackedApplicationUnsupported;
-    }
-    if (stage === LocalFailureStage.Input) {
-        return InfrastructureFailureReason.InputUnavailable;
-    }
-    if (stage === LocalFailureStage.Environment) {
-        return InfrastructureFailureReason.EnvironmentUnavailable;
-    }
-    if (stage === LocalFailureStage.Output) {
-        return InfrastructureFailureReason.OutputUnavailable;
-    }
-    // The finalized result violated its own schema: the investigation ran but produced no
-    // publishable output. Typed as the output layer so the cycle records a precise category
-    // instead of generic runtime infrastructure.
-    if (error instanceof FixRunResultContractError) {
-        return InfrastructureFailureReason.OutputUnavailable;
-    }
-    if (error instanceof LocalExecutionInfrastructureError) {
-        if (error.category === LocalInfrastructureFailureCategory.Provider) {
-            return InfrastructureFailureReason.LlmUnavailable;
-        }
-        if (error.category === LocalInfrastructureFailureCategory.Browser) {
-            return InfrastructureFailureReason.BrowserUnavailable;
-        }
-        if (error.category === LocalInfrastructureFailureCategory.Environment) {
-            return InfrastructureFailureReason.EnvironmentUnavailable;
-        }
-        if (error.category === LocalInfrastructureFailureCategory.InvestigationInput) {
-            return InfrastructureFailureReason.InputUnavailable;
-        }
-        if (
-            error.category === LocalInfrastructureFailureCategory.InvestigationOutput ||
-            error.category === LocalInfrastructureFailureCategory.ResultPublication
-        ) {
-            return InfrastructureFailureReason.OutputUnavailable;
-        }
-    }
-    return undefined;
 }
 
 /**
@@ -880,6 +797,36 @@ async function runLocalFixWithInput(
         const input = loadInput(workOutputDir);
         const issue = input.issue;
         const logger = createLogger({ verbose: options.verbose });
+        const runConfig = withPinnedKnowledgeBase(
+            loadLocalRunConfig(options.environment, options.runConfig, options.keepTemporaryFiles),
+            options.knowledgeBaseSha,
+        );
+        filtersRemoteUrl = runConfig.filters.remoteUrl;
+        failureStage = LocalFailureStage.Environment;
+        let preparedExtension: PreparedExtension | undefined;
+        if (runConfig.extensionBuild) {
+            try {
+                const build = await (
+                    dependencies.prepareHistoricalExtensionBuild ?? prepareHistoricalExtensionBuild
+                )({
+                    build: runConfig.extensionBuild,
+                    cacheRoot: labExtensionCacheRoot(process.cwd()),
+                    logger,
+                });
+                preparedExtension = await loadHistoricalBuildExtension(
+                    build.extensionDir,
+                    build.provenance,
+                );
+            } catch (error) {
+                logger.error({ err: error }, 'Historical reporter extension preparation failed');
+                throw new LocalExecutionInfrastructureError(
+                    LocalInfrastructureFailureCategory.Environment,
+                    error instanceof Error ? error.message : String(error),
+                    { cause: error },
+                );
+            }
+        }
+        failureStage = LocalFailureStage.Input;
         const intake = await extractIntakeFacts(issue, {
             llm: coreConfig.llm,
             ...(options.model !== undefined ? { model: options.model } : {}),
@@ -902,11 +849,6 @@ async function runLocalFixWithInput(
         if (facts.reportedSiteUrls[0]) {
             domain = new URL(facts.reportedSiteUrls[0]).hostname;
         }
-        const runConfig = withPinnedKnowledgeBase(
-            loadLocalRunConfig(options.environment, options.runConfig, options.keepTemporaryFiles),
-            options.knowledgeBaseSha,
-        );
-        filtersRemoteUrl = runConfig.filters.remoteUrl;
         const prepareFilters =
             dependencies.withPreparedFiltersCheckout ?? withPreparedFiltersCheckout;
         const prepareKnowledgeBase =
@@ -960,6 +902,12 @@ async function runLocalFixWithInput(
                         preparedCoreConfig,
                         { ...issue, facts },
                         {
+                            ...(preparedExtension
+                                ? {
+                                      preparedExtension,
+                                      redirectOriginPolicy: RedirectOriginPolicy.KeepRelatedHosts,
+                                  }
+                                : {}),
                             artifactsDir: join(workOutputDir, 'artifacts'),
                             browserMode: options.browserMode,
                             routingCheck: options.routingCheck,

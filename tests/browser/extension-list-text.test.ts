@@ -2,7 +2,11 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { readBundledListLines, sliceListText } from '../../src/browser/extension-list-text';
+import {
+    listBundledListIds,
+    readBundledListLines,
+    sliceListText,
+} from '../../src/browser/extension-list-text';
 
 const FILTER_ID = 2;
 
@@ -33,7 +37,23 @@ function writeUnpackedBuild(filterId: number, rules: unknown[]): string {
     const rulesetDir = join(root, 'filters', 'declarative', `ruleset_${filterId}`);
     mkdirSync(rulesetDir, { recursive: true });
     writeFileSync(join(rulesetDir, `ruleset_${filterId}.json`), JSON.stringify(rules));
+    writeManifest(root, [filterId]);
     return root;
+}
+
+function writeManifest(root: string, ids: number[]): void {
+    writeFileSync(
+        join(root, 'manifest.json'),
+        JSON.stringify({
+            declarative_net_request: {
+                rule_resources: ids.map((id) => ({
+                    id: `ruleset_${id}`,
+                    enabled: true,
+                    path: `filters/declarative/ruleset_${id}/ruleset_${id}.json`,
+                })),
+            },
+        }),
+    );
 }
 
 function metadataRule(filterContent: string): unknown {
@@ -65,6 +85,15 @@ afterEach(() => {
 });
 
 describe('readBundledListLines', () => {
+    it('reads the list text a 5.4 build keeps in rawFilterList', () => {
+        extensionPath = writeUnpackedBuild(FILTER_ID, [
+            { metadata: { rawFilterList: LIST_TEXT } },
+            REAL_RULE,
+        ]);
+
+        expect(readBundledListLines(extensionPath, FILTER_ID)).toEqual(LIST_LINES);
+    });
+
     it('returns the list text as lines, CRLF stripped and the final line break dropped', () => {
         extensionPath = writeUnpackedBuild(FILTER_ID, [metadataRule(LIST_TEXT), REAL_RULE]);
 
@@ -85,6 +114,28 @@ describe('readBundledListLines', () => {
 
         expect(() => readBundledListLines(extensionPath as string, FILTER_ID)).toThrow(
             new RegExp(`ruleset_${FILTER_ID}\\.json`),
+        );
+    });
+});
+
+describe('listBundledListIds', () => {
+    it('lists manifest ruleset ids in numeric order without unreferenced disk assets', () => {
+        extensionPath = writeUnpackedBuild(14, [metadataRule(LIST_TEXT), REAL_RULE]);
+        const declarativePath = join(extensionPath, 'filters', 'declarative');
+        mkdirSync(join(declarativePath, 'ruleset_1'));
+        mkdirSync(join(declarativePath, 'ruleset_99'));
+        writeFileSync(join(declarativePath, 'unrelated.json'), '{}');
+        writeFileSync(join(declarativePath, 'ruleset_7'), '{}');
+        writeManifest(extensionPath, [14, 1]);
+
+        expect(listBundledListIds(extensionPath)).toEqual([1, 14]);
+    });
+
+    it('throws with the path when the build has no manifest', () => {
+        extensionPath = mkdtempSync(join(tmpdir(), 'extension-list-text-'));
+
+        expect(() => listBundledListIds(extensionPath as string)).toThrow(
+            join(extensionPath, 'manifest.json'),
         );
     });
 });

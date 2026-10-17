@@ -25,7 +25,10 @@ import {
     createBlockerModuleRunIssue,
     type BlockerModuleRunIssueDependencies,
 } from '../../src/proxy-blocker/blocker-module-run-issue';
-import { loadLabBlockerModules } from '../local/blocker-modules';
+import {
+    loadLabBlockerModules,
+    refuseBlockerModulesInHistoricalRuns,
+} from '../local/blocker-modules';
 import {
     createPiRuntimeFromConfig,
     createConfiguredSingleShotClient,
@@ -123,6 +126,7 @@ async function runCommand(
     const logger = createLogger({ verbose: parsed.flags.verbose });
 
     if (parsed.command === CommandName.Fix) {
+        refuseBlockerModulesInHistoricalRuns(parsed.flags.environment, parsed.flags.blockerModules);
         const env = context.env as Record<string, string | undefined>;
         // Modules register their executors before resolution, so `--executors` may name them; a
         // manifest that cannot be read or a variable the environment lacks fails named.

@@ -7,6 +7,7 @@
  * declared here beside the registration that consumes it, so this leaf owns its own input and the
  * module graph stays one-directional.
  */
+import type { RedirectOriginPolicy } from '../browser/redirect-origin-policy';
 import * as v from 'valibot';
 import type { Finding } from '../types/site-analysis';
 import { FindingSchema } from '../types/site-analysis';
@@ -29,6 +30,11 @@ import { TraceArtifactStore } from '../tracer/artifact-store';
  * Optional browser-enabled configuration for createToolRegistry.
  */
 export interface BrowserToolOptions {
+    /**
+     * Policy deciding which redirect landing origins remain admitted after the current load.
+     */
+    redirectOriginPolicy?: RedirectOriginPolicy;
+
     /**
      * The active browser session for live page interaction.
      */
@@ -133,6 +139,7 @@ export async function registerBrowserTools(
         artifactsDir,
         allowedOrigin,
         openPageRetries: browserTools.openPageRetries,
+        redirectOriginPolicy: browserTools.redirectOriginPolicy,
         consentStrategy: browserTools.consentStrategy,
     });
 

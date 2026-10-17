@@ -13,9 +13,11 @@
  * nothing in common — a Chromium unpacked directory, or a Firefox signed XPI force-installed
  * through enterprise policies whose managed storage carries the user filters.
  */
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { access, stat } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
+import type { HistoricalExtensionBuildProvenance } from '../environment/environment-proofs';
 import {
     ExtensionLaunchFamily,
     type ChromiumExtensionLaunch,
@@ -47,6 +49,11 @@ export interface PreparedExtensionIdentity {
      * Release tag the build came from, when it is a release build.
      */
     extensionSourceTag?: string;
+
+    /**
+     * Release code and autobuild lists identifying a historical reporter build.
+     */
+    historicalBuild?: HistoricalExtensionBuildProvenance;
 }
 
 /**
@@ -215,6 +222,39 @@ export async function loadPreparedExtensionFromDirectory(
         extensionSourceSha256,
         ...(sourceTag === undefined ? {} : { extensionSourceTag: sourceTag }),
     };
+}
+
+/**
+ * Digest both independently pinned sources of a historical extension build.
+ *
+ * @param build - Release asset digest and autobuild commit identifying the assembled sources.
+ * @returns The lowercase SHA-256 of the release digest and commit separated by a newline.
+ */
+export function historicalBuildSourceSha256(build: HistoricalExtensionBuildProvenance): string {
+    return createHash('sha256')
+        .update(`${build.releaseSha256}\n${build.autobuildCommit}`, 'utf8')
+        .digest('hex');
+}
+
+/**
+ * Load the validated reporter build as a Chromium MV3 extension with its complete source identity.
+ *
+ * @param extensionDir - Unpacked directory assembled by the historical build preparer.
+ * @param build - Release code and autobuild lists used to assemble the directory.
+ * @returns The prepared Chromium extension carrying the historical build provenance.
+ */
+export async function loadHistoricalBuildExtension(
+    extensionDir: string,
+    build: HistoricalExtensionBuildProvenance,
+): Promise<PreparedExtension> {
+    const extension = await loadPreparedExtensionFromDirectory(
+        extensionDir,
+        PreparedExtensionSource.HistoricalBuild,
+        historicalBuildSourceSha256(build),
+        build.autobuildTag,
+        ExtensionManifestVersion.Mv3,
+    );
+    return { ...extension, historicalBuild: build };
 }
 
 /**

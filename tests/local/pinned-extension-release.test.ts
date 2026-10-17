@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -103,22 +103,6 @@ function servingFetch(body: Uint8Array, status = 200): { fetchImpl: typeof fetch
     };
 }
 
-/**
- * Path of the idempotency marker for a pinned tag, mirroring the decided cache layout
- * `extensions/prebuilt/<tag>/digest.json`.
- */
-function cachedReleaseMarkerPath(destinationRoot: string, tag: string): string {
-    return join(destinationRoot, 'extensions', 'prebuilt', tag, 'digest.json');
-}
-
-/**
- * Path the cached release zip is written to, mirroring the decided cache layout
- * `extensions/prebuilt/<tag>/download`.
- */
-function cachedReleaseZipPath(destinationRoot: string, tag: string): string {
-    return join(destinationRoot, 'extensions', 'prebuilt', tag, 'download');
-}
-
 describe('downloadPinnedExtensionRelease', () => {
     it('downloads, digest-verifies, unzips the pinned release, and reports provenance; the second call short-circuits to the cache without fetching', async () => {
         const destinationRoot = await newDestinationRoot();
@@ -161,7 +145,72 @@ describe('downloadPinnedExtensionRelease', () => {
         expect(urls).toHaveLength(1);
     });
 
-    it('fails named on a sha256 mismatch, names tag, asset, expected, and actual, and leaves no marker', async () => {
+    it('two concurrent downloads into one cache both return the same complete extension directory', async () => {
+        const destinationRoot = await newDestinationRoot();
+        const fixtureZip = join(FIXTURE_ROOT, `fixture-concurrent-${Date.now()}.zip`);
+        const entries = {
+            'manifest.json': TEST_MANIFEST,
+            'background.js': '/* complete background */',
+            'content.js': '/* complete content */',
+        };
+        await buildTestReleaseZip(fixtureZip, entries);
+        const fixtureBytes = await bytesOf(fixtureZip);
+        const pin = pinFor(fixtureBytes);
+        let startDownloads!: () => void;
+        const bothDownloadsStarted = new Promise<void>((resolve) => {
+            startDownloads = resolve;
+        });
+        let downloadCount = 0;
+        const fetchImpl: typeof fetch = async () => {
+            downloadCount += 1;
+            if (downloadCount === 2) {
+                startDownloads();
+            }
+            await bothDownloadsStarted;
+            return new Response(fixtureBytes);
+        };
+
+        const releases = await Promise.all(
+            Array.from({ length: 2 }, () =>
+                downloadPinnedExtensionRelease({
+                    destinationRoot,
+                    fetchImpl,
+                    pinnedRelease: pin,
+                    logger: capturingLogger(),
+                }),
+            ),
+        );
+
+        expect(releases[0].extensionDir).toBe(releases[1].extensionDir);
+        expect(releases.every((release) => !release.fromCache)).toBe(true);
+        for (const [name, content] of Object.entries(entries)) {
+            expect(await readFile(join(releases[0].extensionDir, name), 'utf8')).toBe(content);
+        }
+    });
+
+    it('a failed unpack leaves nothing a later call reuses', async () => {
+        const destinationRoot = await newDestinationRoot();
+        const fixtureZip = join(FIXTURE_ROOT, `fixture-truncated-${Date.now()}.zip`);
+        await buildTestReleaseZip(fixtureZip, { 'manifest.json': TEST_MANIFEST });
+        const fixtureBytes = await bytesOf(fixtureZip);
+        const truncatedBytes = fixtureBytes.slice(0, fixtureBytes.length / 2);
+        const pin = pinFor(truncatedBytes);
+        const { fetchImpl, urls } = servingFetch(truncatedBytes);
+
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+            await expect(
+                downloadPinnedExtensionRelease({
+                    destinationRoot,
+                    fetchImpl,
+                    pinnedRelease: pin,
+                    logger: capturingLogger(),
+                }),
+            ).rejects.toMatchObject({ code: PinnedReleaseFailureCode.UnpackFailed });
+        }
+        expect(urls).toHaveLength(2);
+    });
+
+    it('fails named on a sha256 mismatch, names tag, asset, expected, and actual, and downloads again on retry', async () => {
         const destinationRoot = await newDestinationRoot();
         const legitimateZip = join(FIXTURE_ROOT, `fixture-legitimate-${Date.now()}.zip`);
         await buildTestReleaseZip(legitimateZip, {
@@ -176,7 +225,7 @@ describe('downloadPinnedExtensionRelease', () => {
         });
         const substitutedBytes = await bytesOf(substitutedZip);
         const actualDigest = createHash('sha256').update(substitutedBytes).digest('hex');
-        const { fetchImpl } = servingFetch(substitutedBytes);
+        const { fetchImpl, urls } = servingFetch(substitutedBytes);
 
         const failure = await downloadPinnedExtensionRelease({
             destinationRoot,
@@ -192,9 +241,15 @@ describe('downloadPinnedExtensionRelease', () => {
         expect(digestError.message).toContain(pin.assetName);
         expect(digestError.message).toContain(pin.sha256);
         expect(digestError.message).toContain(actualDigest);
-        await expect(stat(cachedReleaseMarkerPath(destinationRoot, pin.tag))).rejects.toMatchObject(
-            { code: 'ENOENT' },
-        );
+        await expect(
+            downloadPinnedExtensionRelease({
+                destinationRoot,
+                fetchImpl,
+                pinnedRelease: pin,
+                logger: capturingLogger(),
+            }),
+        ).rejects.toMatchObject({ code: PinnedReleaseFailureCode.DigestMismatch });
+        expect(urls).toHaveLength(2);
     });
 
     it('fails named when the unpacked release carries no manifest.json', async () => {
@@ -217,9 +272,6 @@ describe('downloadPinnedExtensionRelease', () => {
         const manifestError = failure as PinnedReleaseError;
         expect(manifestError.code).toBe(PinnedReleaseFailureCode.ManifestMissing);
         expect(manifestError.message).toContain(pin.tag);
-        await expect(stat(cachedReleaseMarkerPath(destinationRoot, pin.tag))).rejects.toMatchObject(
-            { code: 'ENOENT' },
-        );
     });
 
     it('fails named with the release URL when the download does not answer with a 2xx', async () => {
@@ -258,9 +310,12 @@ describe('downloadPinnedExtensionRelease', () => {
             logger: capturingLogger(),
         });
 
-        expect(capturedLogLines.join('\n')).toContain(
-            cachedReleaseZipPath(destinationRoot, 'vtest.1.0'),
-        );
+        const unpackLog = capturedLogLines
+            .map((line) => JSON.parse(line))
+            .find((line) => line.unzipStdout !== undefined);
+        expect(unpackLog).toMatchObject({ unzipStdout: '', unzipStderr: '' });
+        expect(unpackLog.command[0]).toBe('unzip');
+        expect(unpackLog.command).toContain('-d');
     });
 
     it('ships an operator-verified pin whose digest and release URL shape are consistent', () => {

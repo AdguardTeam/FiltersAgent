@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
     FiltersPreparationError,
@@ -12,9 +12,10 @@ import {
     type FiltersPreparationDependencies,
 } from '../../src/local/filters-preparer';
 import type { FiltersPreparationConfig } from '../../src/local/run-config-types';
+import { ExtensionEnvironmentKind } from '../../src/types/extension-environment-kind';
+import { CheckoutSource } from '../../src/types/checkout-source';
 
 const CURRENT_COMMIT = '1111111111111111111111111111111111111111';
-const HISTORICAL_COMMIT = '2222222222222222222222222222222222222222';
 const OTHER_COMMIT = '3333333333333333333333333333333333333333';
 const LOCAL_SOURCE = '/repo/AdguardFilters';
 const REMOTE_URL = 'https://github.com/AdguardTeam/AdguardFilters.git';
@@ -23,7 +24,6 @@ const CHECKOUT_PATH = `${TEMP_ROOT}/source`;
 
 interface FakeEnvironmentOptions {
     localSourceExists?: boolean;
-    historicalObjectExists?: boolean;
     fetchedCommit?: string;
     headCommit?: string;
 }
@@ -76,13 +76,6 @@ function makeFakeEnvironment(options: FakeEnvironmentOptions = {}): {
             commandRunner: {
                 async run(command): Promise<FiltersCommandResult> {
                     commands.push(command);
-                    if (command.args[0] === 'cat-file') {
-                        return {
-                            exitCode: options.historicalObjectExists === false ? 1 : 0,
-                            stdout: '',
-                            stderr: '',
-                        };
-                    }
                     if (command.args[0] === 'rev-parse' && command.args[1] === 'FETCH_HEAD') {
                         return { exitCode: 0, stdout: `${fetchedCommit}\n`, stderr: '' };
                     }
@@ -158,57 +151,6 @@ describe('withPreparedFiltersCheckout', () => {
         });
         expect(provenance.source).toBe('remote-shallow-clone');
         expect(provenance.sourceLocation).toBe(REMOTE_URL);
-    });
-
-    it('checks out a historical commit already present in the local shared object store', async () => {
-        const { commands, dependencies } = makeFakeEnvironment({
-            fetchedCommit: HISTORICAL_COMMIT,
-            headCommit: HISTORICAL_COMMIT,
-            historicalObjectExists: true,
-        });
-
-        const provenance = await withPreparedFiltersCheckout(
-            makeConfig({ kind: 'historical', baseSha: HISTORICAL_COMMIT }),
-            async (prepared) => prepared.provenance,
-            dependencies,
-        );
-
-        expect(commands).toContainEqual({
-            executable: 'git',
-            args: ['cat-file', '-e', `${HISTORICAL_COMMIT}^{commit}`],
-            cwd: CHECKOUT_PATH,
-        });
-        expect(commands.some((command) => command.args[0] === 'fetch')).toBe(false);
-        expect(commands).toContainEqual({
-            executable: 'git',
-            args: ['checkout', '--detach', HISTORICAL_COMMIT],
-            cwd: CHECKOUT_PATH,
-        });
-        expect(provenance).toMatchObject({
-            environment: 'historical',
-            requestedRevision: HISTORICAL_COMMIT,
-            commit: HISTORICAL_COMMIT,
-        });
-    });
-
-    it('shallow-fetches an exact historical commit when the clone does not contain it', async () => {
-        const { commands, dependencies } = makeFakeEnvironment({
-            historicalObjectExists: false,
-            fetchedCommit: HISTORICAL_COMMIT,
-            headCommit: HISTORICAL_COMMIT,
-        });
-
-        await withPreparedFiltersCheckout(
-            makeConfig({ kind: 'historical', baseSha: HISTORICAL_COMMIT }),
-            async () => undefined,
-            dependencies,
-        );
-
-        expect(commands).toContainEqual({
-            executable: 'git',
-            args: ['fetch', '--depth', '1', '--no-tags', REMOTE_URL, HISTORICAL_COMMIT],
-            cwd: CHECKOUT_PATH,
-        });
     });
 
     it('rejects a detached HEAD mismatch and still cleans the disposable checkout', async () => {
@@ -350,6 +292,69 @@ function operatorFingerprint(path: string): string {
 }
 
 describe('withPreparedFiltersCheckout against real Git', () => {
+    it('prepares a historical checkout from a relative local source path', async () => {
+        const operator = createDirtyOperatorCheckout();
+        try {
+            await withPreparedFiltersCheckout(
+                makeConfig(
+                    { kind: ExtensionEnvironmentKind.Historical, baseSha: operator.firstCommit },
+                    {
+                        localSourcePath: relative(process.cwd(), operator.path),
+                        remoteUrl: 'https://example.org/unused.git',
+                    },
+                ),
+                async (prepared) => {
+                    expect(git(prepared.checkoutPath, 'rev-parse', 'HEAD').trim()).toBe(
+                        operator.firstCommit,
+                    );
+                    expect(readFileSync(join(prepared.filtersPath, GENERAL_FILE), 'utf8')).toBe(
+                        '! first\n',
+                    );
+                },
+            );
+        } finally {
+            rmSync(operator.path, { recursive: true, force: true });
+        }
+    });
+
+    it.each([CheckoutSource.LocalSharedClone, CheckoutSource.RemoteShallowClone])(
+        'prepares a historical checkout that holds only the base commit from %s',
+        async (source) => {
+            const operator = createDirtyOperatorCheckout();
+            const laterCommit = git(operator.path, 'rev-parse', 'HEAD').trim();
+            try {
+                await withPreparedFiltersCheckout(
+                    makeConfig(
+                        {
+                            kind: ExtensionEnvironmentKind.Historical,
+                            baseSha: operator.firstCommit,
+                        },
+                        {
+                            localSourcePath:
+                                source === CheckoutSource.LocalSharedClone
+                                    ? operator.path
+                                    : undefined,
+                            remoteUrl: operator.path,
+                        },
+                    ),
+                    async (prepared) => {
+                        expect(git(prepared.checkoutPath, 'rev-parse', 'HEAD').trim()).toBe(
+                            operator.firstCommit,
+                        );
+                        expect(() =>
+                            git(prepared.checkoutPath, 'cat-file', '-e', laterCommit),
+                        ).toThrow();
+                        expect(git(prepared.checkoutPath, 'for-each-ref').trim()).toBe('');
+                        expect(prepared.provenance.commit).toBe(operator.firstCommit);
+                        expect(prepared.provenance.source).toBe(source);
+                    },
+                );
+            } finally {
+                rmSync(operator.path, { recursive: true, force: true });
+            }
+        },
+    );
+
     it('preparing a source snapshot from a dirty operator checkout changes neither its files nor its index', async () => {
         const operator = createDirtyOperatorCheckout();
         const before = operatorFingerprint(operator.path);

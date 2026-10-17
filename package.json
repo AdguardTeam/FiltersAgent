@@ -17,6 +17,7 @@
         "typecheck": "tsc -p tsconfig.test.json",
         "build:adguard-cli": "node --import tsx scripts/build-adguard-cli-module.ts adguard-cli",
         "benchmark:case:add": "tsx lab/e2e/case-add.ts",
+        "benchmark:case:check": "tsx lab/e2e/case-check.ts",
         "benchmark:verify-run": "tsx lab/benchmark/verify-run.ts",
         "start": "tsx lab/main.ts",
         "test:e2e": "tsx lab/e2e/run.ts",

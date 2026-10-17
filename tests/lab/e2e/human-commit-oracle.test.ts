@@ -1,110 +1,10 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
-    buildHumanCommitFetchArgs,
-    extractHumanCommitFix,
     parseHumanCommitDiff,
-    type HumanCommitGitReader,
+    parseHumanCommitRuleLines,
 } from '../../../lab/e2e/human-commit-oracle';
 
-const HUMAN_COMMIT = '8e9ba459a4552df35b3edb1a4e4d8dd240095ce8';
-const FIRST_PARENT = '8e73dd6c67cb432e1d93bfb79326fd88b16fdbe5';
-const SECOND_PARENT = 'a'.repeat(40);
-
-const NETTG_DIFF = `diff --git a/BaseFilter/sections/foreign.txt b/BaseFilter/sections/foreign.txt
-index 9b32fb0..75e6e0b 100644
---- a/BaseFilter/sections/foreign.txt
-+++ b/BaseFilter/sections/foreign.txt
-@@ -7383 +7383 @@ tvrepublika.pl##.block--type-advertisement
--morizon.pl,prawo.pl,polski-tenis.pl##.banner
-+nettg.pl,morizon.pl,prawo.pl,polski-tenis.pl##.banner
-diff --git a/SpywareFilter/sections/specific.txt b/SpywareFilter/sections/specific.txt
-index 6f42604..49f93d2 100644
---- a/SpywareFilter/sections/specific.txt
-+++ b/SpywareFilter/sections/specific.txt
-@@ -90,0 +91 @@
-+||nettg.pl/store-view/api/track-page-view
-`;
-
 describe('human commit oracle extraction', () => {
-    it('fetches the complete two-commit diff without a lazy blob dependency', () => {
-        const args = buildHumanCommitFetchArgs(HUMAN_COMMIT);
-
-        expect(args).toEqual([
-            'fetch',
-            '--quiet',
-            '--depth',
-            '2',
-            '--no-tags',
-            'https://github.com/AdguardTeam/AdguardFilters.git',
-            HUMAN_COMMIT,
-        ]);
-        expect(args).not.toContain('--filter=blob:none');
-    });
-
-    it('uses the first parent and extracts every added filter change with file/edit metadata', async () => {
-        const git: HumanCommitGitReader = {
-            readParents: vi.fn().mockResolvedValue([FIRST_PARENT, SECOND_PARENT]),
-            readDiff: vi.fn().mockResolvedValue(NETTG_DIFF),
-        };
-
-        const fix = await extractHumanCommitFix(HUMAN_COMMIT, git);
-
-        expect(git.readParents).toHaveBeenCalledWith(HUMAN_COMMIT);
-        expect(git.readDiff).toHaveBeenCalledWith(FIRST_PARENT, HUMAN_COMMIT);
-        expect(fix).toEqual({
-            commit: HUMAN_COMMIT,
-            firstParent: FIRST_PARENT,
-            rawDiff: NETTG_DIFF,
-            removedRules: [],
-            candidates: [
-                {
-                    rule: 'nettg.pl##.banner',
-                    syntaxKind: 'element_hiding',
-                    filePath: 'BaseFilter/sections/foreign.txt',
-                    repositoryEdit: 'extend_domains',
-                    sourceRule: 'nettg.pl,morizon.pl,prawo.pl,polski-tenis.pl##.banner',
-                },
-                {
-                    rule: '||nettg.pl/store-view/api/track-page-view',
-                    syntaxKind: 'network',
-                    filePath: 'SpywareFilter/sections/specific.txt',
-                    repositoryEdit: 'insert',
-                    sourceRule: '||nettg.pl/store-view/api/track-page-view',
-                },
-            ],
-        });
-    });
-
-    it('preserves deletion-only rules separately from replayable added candidates', async () => {
-        const diff = `diff --git a/EnglishFilter/sections/specific.txt b/EnglishFilter/sections/specific.txt
---- a/EnglishFilter/sections/specific.txt
-+++ b/EnglishFilter/sections/specific.txt
-@@ -1 +0,0 @@
--||obsolete.example^$domain=reporter.example
-diff --git a/BaseFilter/sections/foreign.txt b/BaseFilter/sections/foreign.txt
---- a/BaseFilter/sections/foreign.txt
-+++ b/BaseFilter/sections/foreign.txt
-@@ -1,0 +2 @@
-+reporter.example##.ad
-`;
-        const git: HumanCommitGitReader = {
-            readParents: async () => [FIRST_PARENT],
-            readDiff: async () => diff,
-        };
-
-        const fix = await extractHumanCommitFix(HUMAN_COMMIT, git);
-
-        expect(fix.rawDiff).toBe(diff);
-        expect(fix.removedRules).toEqual([
-            {
-                rule: '||obsolete.example^$domain=reporter.example',
-                syntaxKind: 'network',
-                filePath: 'EnglishFilter/sections/specific.txt',
-            },
-        ]);
-        expect(fix.candidates).toHaveLength(1);
-    });
-
     it('ignores comments and extracts inserted rules from multiple hunks and files', () => {
         const diff = `diff --git a/BaseFilter/sections/foreign.txt b/BaseFilter/sections/foreign.txt
 --- a/BaseFilter/sections/foreign.txt
@@ -264,29 +164,54 @@ diff --git a/EnglishFilter/sections/antiadblock.txt b/EnglishFilter/sections/ant
         ]);
     });
 
-    it('rejects missing parents, malformed SHAs, and commits without rule candidates', async () => {
-        const missingParent: HumanCommitGitReader = {
-            readParents: async () => [],
-            readDiff: vi.fn(),
-        };
-        await expect(extractHumanCommitFix(HUMAN_COMMIT, missingParent)).rejects.toThrow(
-            /first parent/i,
-        );
-        await expect(extractHumanCommitFix('short', missingParent)).rejects.toThrow(
-            /40-character/i,
-        );
+    it('collects every actionable added and removed rule line of a diff', () => {
+        const diff = `diff --git a/BaseFilter/sections/specific.txt b/BaseFilter/sections/specific.txt
+--- a/BaseFilter/sections/specific.txt
++++ b/BaseFilter/sections/specific.txt
+@@ -1,3 +1,4 @@
+-! old comment
+-
+-example.com##.banner
++! new comment
++
++example.com,sub.example.com##.banner
+${'+  ||example.org/ads^  '}
+diff --git a/EnglishFilter/sections/specific.txt b/EnglishFilter/sections/specific.txt
+--- a/EnglishFilter/sections/specific.txt
++++ b/EnglishFilter/sections/specific.txt
+@@ -1 +1 @@
+-||example.com^$domain=example.org
++||example.com^$domain=example.org,script
+`;
 
-        const commentsOnly: HumanCommitGitReader = {
-            readParents: async () => [FIRST_PARENT],
-            readDiff: async () => `diff --git a/a.txt b/a.txt
---- a/a.txt
-+++ b/a.txt
-@@ -0,0 +1 @@
-+! comment only
-`,
-        };
-        await expect(extractHumanCommitFix(HUMAN_COMMIT, commentsOnly)).rejects.toThrow(
-            /no actionable filter rules/i,
-        );
+        expect(parseHumanCommitRuleLines(diff)).toEqual({
+            added: [
+                'example.com,sub.example.com##.banner',
+                '  ||example.org/ads^  ',
+                '||example.com^$domain=example.org,script',
+            ],
+            removed: ['example.com##.banner', '||example.com^$domain=example.org'],
+        });
+    });
+
+    it('preserves actionable hunk rules whose prefixes resemble file headers', () => {
+        const diff = `diff --git a/BaseFilter/sections/specific.txt b/BaseFilter/sections/specific.txt
+--- a/BaseFilter/sections/specific.txt
++++ b/BaseFilter/sections/specific.txt
+@@ -1 +1 @@
+---old-ad--
++++new-ad++
+diff --git a/EnglishFilter/sections/specific.txt b/EnglishFilter/sections/specific.txt
+--- a/EnglishFilter/sections/specific.txt
++++ b/EnglishFilter/sections/specific.txt
+@@ -1 +1 @@
+-||example.com/old-ad^
++||example.com/new-ad^
+`;
+
+        expect(parseHumanCommitRuleLines(diff)).toEqual({
+            added: ['++new-ad++', '||example.com/new-ad^'],
+            removed: ['--old-ad--', '||example.com/old-ad^'],
+        });
     });
 });

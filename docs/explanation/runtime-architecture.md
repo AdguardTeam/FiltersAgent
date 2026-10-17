@@ -31,6 +31,10 @@ and version come only from the selected adapter. Keep these fields separate in
 new tools, results, and reports. A reported browser the run did not drive is
 recorded as an approximation, never as an exact reproduction.
 
+Live runs load the pinned extension release. Historical lab runs assemble the
+reporter's build from `extensionBuild`, with `historical_build` provenance
+identifying its release code and autobuild filter lists.
+
 The extension route runs CloakBrowser's Chromium with the unpacked `chrome-mv3`
 build in three phases: A without the extension, B with the published rulesets,
 C with the same build and settings plus one candidate rule. A Firefox-family
@@ -157,8 +161,9 @@ mismatched ownership, manifest, or visibility state. There is no cleanup CLI.
   build keeps Chrome's declarative-match log only when that page is open while its engine is
   configured.
 - List slices (`settings.slice` of `launch_browser`): `src/browser/extension-list-text.ts` reads a
-  list's text from the build's own declarative ruleset (`metadata.filterContent`, byte-identical to
-  the published list) and cuts a line range from it, checksum lines dropped;
+  list's text from the build's own declarative ruleset (`metadata.filterContent` in 5.5 or
+  `metadata.rawFilterList` in 5.4, byte-identical to the published list) and cuts a line range from
+  it, checksum lines dropped;
   `src/local/loopback-text-server.ts` serves the slice on `127.0.0.1`;
   `src/browser/chrome-user-scripts-toggle.ts` flips Chromium's per-extension "Allow User Scripts"
   (Chromium 138+ exposes `chrome.userScripts` only behind it, and the pinned MV3 build runs no

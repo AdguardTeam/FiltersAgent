@@ -5,6 +5,8 @@
  * CLI included, joins only as a module.
  */
 import { join } from 'node:path';
+import { ConfigError } from '../../src/config/config';
+import { ExtensionEnvironmentKind } from '../../src/types/extension-environment-kind';
 import '../../src/orchestrator/extension-filtering-executor';
 import {
     BrowserExtensionExecutorName,
@@ -55,4 +57,23 @@ export function labExecutorSet(moduleExecutors: readonly ExecutorName[]): Execut
  */
 export function labFilterCacheDir(workspaceRoot: string): string {
     return join(workspaceRoot, 'tmp', 'filter-cache');
+}
+
+/**
+ * Refuse modules whose filter lists cannot yet be pinned to the reporter's date.
+ *
+ * @param environment - Product time horizon selected for the run.
+ * @param manifestPaths - Explicit blocker module manifests supplied by the operator.
+ * @returns Nothing when the selected modules can run in the requested environment.
+ * @throws {ConfigError} Historical runs cannot reproduce modules' filter list versions.
+ */
+export function refuseBlockerModulesInHistoricalRuns(
+    environment: ExtensionEnvironmentKind,
+    manifestPaths: readonly string[],
+): void {
+    if (environment === ExtensionEnvironmentKind.Historical && manifestPaths.length > 0) {
+        throw new ConfigError(
+            'Historical runs cannot pin blocker module filter lists to the reporter date. Remove --blocker-module.',
+        );
+    }
 }

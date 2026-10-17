@@ -3,7 +3,11 @@ import { join } from 'node:path';
 import { loadCoreConfig } from '../../src/config/config';
 import { createLogger } from '../../src/logger/logger';
 import { enableBlockerModules } from '../../src/proxy-blocker/blocker-module-loader';
-import { loadLabBlockerModules } from '../local/blocker-modules';
+import {
+    loadLabBlockerModules,
+    refuseBlockerModulesInHistoricalRuns,
+} from '../local/blocker-modules';
+import { ExtensionEnvironmentKind } from '../../src/types/extension-environment-kind';
 import { describeRunCost, formatUsd } from '../pricing/run-cost';
 import { loadUsagePricing } from '../pricing/usage-pricing';
 import { parseGoldenE2EArgs } from './golden-cli';
@@ -30,6 +34,10 @@ async function main(): Promise<void> {
 
     // Every load fails before the first case starts, so a missing variable, a broken price file
     // or a broken module manifest never costs a browser launch.
+    refuseBlockerModulesInHistoricalRuns(
+        ExtensionEnvironmentKind.Historical,
+        selection.blockerModules,
+    );
     const coreConfig = loadCoreConfig();
     const pricingSnapshot = loadUsagePricing(process.env, workspaceRoot) ?? undefined;
     const modules = loadLabBlockerModules(selection.blockerModules, workspaceRoot, process.env);

@@ -2,7 +2,14 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { GoldenRunSchemaVersion } from '../../../lab/e2e/golden-case';
 import { loadLocalRunConfig } from '../../../lab/local/run-config';
+
+const extensionBuild = {
+    version: '5.4.3.99',
+    releaseTag: 'v5.4.3.1',
+    autobuildCommit: 'a'.repeat(40),
+};
 
 describe('loadLocalRunConfig', () => {
     it('builds current source boundaries without preselecting a local clone', () => {
@@ -22,6 +29,7 @@ describe('loadLocalRunConfig', () => {
             configPath,
             JSON.stringify({
                 filtersBaseSha: '4e28093e719cbb2bab819b6d3a84c12f441343c6',
+                extensionBuild,
                 filtersRemoteUrl: 'https://github.com/fork-owner/AdguardFilters.git',
                 knowledgeBaseRemoteUrl: 'git@github.com:fork-owner/KnowledgeBase.git',
             }),
@@ -42,6 +50,7 @@ describe('loadLocalRunConfig', () => {
             configPath,
             JSON.stringify({
                 filtersBaseSha: '4e28093e719cbb2bab819b6d3a84c12f441343c6',
+                extensionBuild,
                 filtersRemoteUrl: '/tmp/mirror/list.git.bare',
             }),
         );
@@ -51,16 +60,17 @@ describe('loadLocalRunConfig', () => {
         );
     });
 
-    it('pins only the pre-issue filters base for a historical run', () => {
+    it('pins the pre-issue filters base and extension build for a historical run', () => {
         const directory = mkdtempSync(join(tmpdir(), 'local-run-config-'));
         const configPath = join(directory, 'historical.json');
         writeFileSync(
             configPath,
             JSON.stringify({
-                schemaVersion: 2,
+                schemaVersion: GoldenRunSchemaVersion.Current,
                 issueNumber: 4,
                 issueFile: 'issue/issue.json',
                 filtersBaseSha: '4e28093e719cbb2bab819b6d3a84c12f441343c6',
+                extensionBuild,
             }),
         );
 
@@ -70,9 +80,30 @@ describe('loadLocalRunConfig', () => {
             kind: 'historical',
             baseSha: '4e28093e719cbb2bab819b6d3a84c12f441343c6',
         });
+        expect(config.extensionBuild).toEqual(extensionBuild);
         expect(config.filters.keepTemporaryFiles).toBe(true);
         expect(config.knowledgeBase.keepTemporaryFiles).toBe(true);
         expect(config).not.toHaveProperty('requiredFilterIds');
+    });
+
+    it('refuses a historical config without extensionBuild and names benchmark:case:check', () => {
+        const directory = mkdtempSync(join(tmpdir(), 'local-run-config-missing-build-'));
+        const configPath = join(directory, 'historical.json');
+        writeFileSync(configPath, JSON.stringify({ filtersBaseSha: 'a'.repeat(40) }));
+
+        expect(() => loadLocalRunConfig('historical', configPath, false)).toThrow(
+            /benchmark:case:check/,
+        );
+    });
+
+    it('omits the extension build from current runs even when the config includes it', () => {
+        const directory = mkdtempSync(join(tmpdir(), 'local-run-config-current-build-'));
+        const configPath = join(directory, 'current.json');
+        writeFileSync(configPath, JSON.stringify({ extensionBuild }));
+
+        expect(loadLocalRunConfig('current', configPath, false)).not.toHaveProperty(
+            'extensionBuild',
+        );
     });
 
     it('requires filtersBaseSha for historical execution', () => {
@@ -92,6 +123,7 @@ describe('loadLocalRunConfig', () => {
             configPath,
             JSON.stringify({
                 filtersBaseSha: '4e28093e719cbb2bab819b6d3a84c12f441343c6',
+                extensionBuild,
                 filtersLocalSourcePath: '/tmp/filters-source',
                 filtersRemoteUrl: 'https://github.com/fork-owner/AdguardFilters.git',
             }),
@@ -114,6 +146,7 @@ describe('loadLocalRunConfig', () => {
             configPath,
             JSON.stringify({
                 filtersBaseSha: '4e28093e719cbb2bab819b6d3a84c12f441343c6',
+                extensionBuild,
                 instructionPath: 'AGENT-INSTRUCTION.md',
             }),
         );

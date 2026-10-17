@@ -52,6 +52,12 @@ export const PreparedExtensionSource = {
     PinnedRelease: 'pinned_release',
 
     /**
+     * The lab assembled the reporter's release code with its autobuild lists. The action never
+     * produces this source.
+     */
+    HistoricalBuild: 'historical_build',
+
+    /**
      * The operator supplied an unpacked directory (the `ADGUARD_EXTENSION_PATH` channel).
      *
      * Never emitted: the host reads no `ADGUARD_EXTENSION_PATH`, and a custom build goes through
