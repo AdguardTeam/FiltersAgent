@@ -75,6 +75,20 @@ const ACCEPTED_OUTCOMES: Record<string, Record<string, unknown>> = {
         summary: 'The site was unreachable.',
         rejectedCandidateValidationArtifactId: 'validation-0123456789ab',
     },
+    // A rule the review rejected only for the ad layout residue it left travels for review beside
+    // the artifact of that same rejection, so a maintainer sees the residue the review named.
+    analysisOnlyCarryingResidueRejection: {
+        outcome: FixOutcomeKind.AnalysisOnly,
+        reasoning: 'The only candidate left a blank column where the sidebar ad was.',
+        candidateForReview: {
+            rule: 'example.com##.banner',
+            placement: { filePath: 'BaseFilter/sections/specific.txt' },
+            unverifiedReason:
+                'The review rejected it only for ad layout residue: a blank column remains ' +
+                'where the sidebar ad was; page integrity intact, no damage observed.',
+        },
+        rejectedCandidateValidationArtifactId: 'validation-0123456789ab',
+    },
 };
 
 /**

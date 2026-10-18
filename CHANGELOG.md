@@ -44,6 +44,11 @@ The format is based on [Keep a Changelog], and this project adheres to
 - Changed benchmark runs to show the agent each issue as open, without `A:`
   labels or an assignee, and to refuse a case whose checkout loads a
   repository instruction.
+- Changed analysis-only reports of missed ads to carry a rule the visual
+  review rejected only for ad layout residue, with the page intact and
+  undamaged, as the candidate for review instead of dropping it.
+- Changed `apply_rule` to tell the agent how many candidate attempts the run
+  has left, so it tries further rules instead of stopping early.
 
 ### Removed
 
@@ -81,6 +86,9 @@ The format is based on [Keep a Changelog], and this project adheres to
   browser context.
 - Fixed redirects staying permitted after a page load returns an HTTP
   error.
+- Fixed benchmark cases ending as `not_reproduced` when the agent saw the
+  reported problem with the prepared blocker but verified no rule: the
+  unfiltered session and the candidate phase no longer decide reproduction.
 
 ## [1.0.1] - 2026-10-15
 

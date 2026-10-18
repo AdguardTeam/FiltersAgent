@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { applyRuleResultForModel } from '../../src/orchestrator/apply-rule-model-result';
+import { CandidateRefusalKind } from '../../src/orchestrator/candidate-refusals';
 import { MAX_TOOL_RESULT_BYTES } from '../../src/pi/tool-result-envelope';
 
 const REVIEW = { verdict: 'rejected', symptom: 'not_resolved', pageIntegrity: 'regressed' };
@@ -45,7 +46,14 @@ describe('applyRuleResultForModel', () => {
     });
 
     it('leaves a refusal as it is', () => {
-        const refusal = { validationSkipped: true, errorKind: 'guidance_required' };
+        // A refusal the environment gave after the candidate ledger: an earlier refusal never
+        // reaches the projection.
+        const refusal = {
+            validationSkipped: true,
+            error: 'This environment cannot edit a published line.',
+            errorKind: CandidateRefusalKind.OperationUnsupported,
+            retryable: false,
+        };
 
         expect(applyRuleResultForModel(refusal)).toEqual(refusal);
     });

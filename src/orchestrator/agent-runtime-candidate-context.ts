@@ -9,6 +9,24 @@ import { CandidateOperation } from '../environment/filtering-environment';
 import { FixOutcomeKind, type FixOutcome } from '../types/fix-outcome';
 
 /**
+ * Maximum distinct candidates one run may validate with `apply_rule`.
+ *
+ * Each candidate is a full A/B/C browser experiment plus a vision review, so the cap bounds the
+ * run's cost; three leaves room for a first rule and two corrections after its review.
+ */
+export const MAX_CANDIDATE_ATTEMPTS = 3;
+
+/**
+ * How many more distinct candidates a run may still validate.
+ *
+ * @param spentAttempts - Distinct candidates the run's ledger holds.
+ * @returns The unspent attempts, never below zero.
+ */
+export function remainingCandidateAttempts(spentAttempts: number): number {
+    return Math.max(0, MAX_CANDIDATE_ATTEMPTS - spentAttempts);
+}
+
+/**
  * Maximum browser-bound executions of one semantic candidate after transient vision failures.
  */
 export const MAX_CANDIDATE_VALIDATION_EXECUTIONS = 3;

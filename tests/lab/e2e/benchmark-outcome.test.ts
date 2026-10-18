@@ -7,8 +7,10 @@ import {
 } from '../../../lab/e2e/benchmark-outcome';
 import { INTAKE_SKIPPED_PREFIX } from '../../../lab/local/local-failure-stage';
 import { PROVIDER_REJECTION_PREFIX } from '../../../src/pi/single-shot';
-import type { FixRunResult } from '../../../src/types/fix-run-result';
+import { ExtensionMode, type FixRunResult } from '../../../src/types/fix-run-result';
 import { InfrastructureFailureReason } from '../../../src/types/infrastructure-failure-reason';
+import { ReporterSymptomPresence } from '../../../src/types/reporter-symptom-presence';
+import { PhaseLabel } from '../../../src/types/validation';
 import { VISUAL_REVIEW_UNAVAILABLE_PREFIX } from '../../../src/validator/candidate-visual-synthesis';
 
 function runResult(overrides: Partial<FixRunResult> = {}): FixRunResult {
@@ -30,9 +32,52 @@ const candidate = {
     filePath: 'BaseFilter/sections/specific.txt',
 } as NonNullable<FixRunResult['candidatePatch']>;
 
+function browserSession(extensionMode: ExtensionMode, symptomPresent: boolean) {
+    return {
+        extensionMode,
+        navigationVerified: true,
+        captures: [
+            {
+                visionVerified: true,
+                coverageComplete: true,
+                reporterSymptomPresence: symptomPresent
+                    ? ReporterSymptomPresence.Present
+                    : ReporterSymptomPresence.Absent,
+            },
+        ],
+    };
+}
+
+/**
+ * One apply_rule experiment as result assembly writes it: the A/B/C phases of the canonical
+ * execution, and the browser sessions projected from them in place of the agent's own sessions.
+ */
+function withExperiment(symptomPresent: Record<PhaseLabel, boolean>): Partial<FixRunResult> {
+    const labels = [PhaseLabel.A, PhaseLabel.B, PhaseLabel.C];
+    return {
+        environmentExecution: {
+            phases: labels.map((phase) => ({
+                phase,
+                completion: {
+                    kind: 'observed',
+                    navigationVerified: true,
+                    targetObservation: { symptomPresent: symptomPresent[phase], pageUsable: true },
+                },
+            })),
+        },
+        browserSessions: labels.map((phase) =>
+            browserSession(
+                phase === PhaseLabel.A ? ExtensionMode.None : ExtensionMode.Prepared,
+                symptomPresent[phase],
+            ),
+        ),
+    } as Partial<FixRunResult>;
+}
+
 describe('classifyAgentOutcome', () => {
     // Shapes as result assembly writes them: a candidate patch only on a verified patch_proposed
-    // result, an unverified rule only as the candidate carried for review.
+    // result, an unverified rule only as the candidate carried for review, and an indeterminate
+    // symptom observation on every analysis-only result.
     it.each([
         [
             BenchmarkCaseStatus.Verified,
@@ -46,18 +91,65 @@ describe('classifyAgentOutcome', () => {
         [
             BenchmarkCaseStatus.Proposed,
             runResult({
-                symptomObservation: 'reproduced',
                 candidateForReview: {
                     rule: candidate.rule,
                     unverifiedReason: 'The visual review found the banner still visible.',
                 },
             }),
         ],
-        [BenchmarkCaseStatus.Reproduced, runResult({ symptomObservation: 'reproduced' })],
-        [BenchmarkCaseStatus.NotReproduced, runResult({ symptomObservation: 'not_reproduced' })],
-        [BenchmarkCaseStatus.NotReproduced, runResult({ verificationStatus: 'verified' })],
+        [
+            BenchmarkCaseStatus.NotReproduced,
+            runResult({
+                runStatus: 'not_reproduced',
+                verificationStatus: 'verified',
+                symptomObservation: 'not_reproduced',
+                browserSessions: [
+                    browserSession(ExtensionMode.Prepared, false),
+                    browserSession(ExtensionMode.None, false),
+                ],
+            } as Partial<FixRunResult>),
+        ],
     ])('reads %s from the agent result', (status, result) => {
         expect(classifyAgentOutcome(result)).toEqual({ status, failureKind: null, detail: null });
+    });
+
+    it('counts reproduction from the baseline phase of a rejected candidate', () => {
+        // Every candidate was rejected, so the run ends analysis-only, yet the prepared blocker
+        // showed the reported ads before any candidate applied.
+        const result = runResult(withExperiment({ A: true, B: true, C: true }));
+
+        expect(classifyAgentOutcome(result).status).toBe(BenchmarkCaseStatus.Reproduced);
+    });
+
+    it('counts reproduction from a prepared session when no candidate ran', () => {
+        const result = runResult({
+            browserSessions: [
+                browserSession(ExtensionMode.None, true),
+                browserSession(ExtensionMode.Prepared, true),
+            ],
+        } as Partial<FixRunResult>);
+
+        expect(classifyAgentOutcome(result).status).toBe(BenchmarkCaseStatus.Reproduced);
+    });
+
+    it('does not count the symptom without the blocker or with the candidate applied', () => {
+        // The unfiltered control shows the site serves the ads, and the candidate phase shows what
+        // the candidate did: neither is the problem the reporter had with the blocker.
+        const experiment = runResult(withExperiment({ A: true, B: false, C: true }));
+        // A run that found the problem already fixed carries `reproduced` from the unfiltered
+        // control, beside a prepared session where the ads are gone.
+        const alreadyFixed = runResult({
+            runStatus: 'already_fixed_current',
+            verificationStatus: 'verified',
+            symptomObservation: 'reproduced',
+            browserSessions: [
+                browserSession(ExtensionMode.None, true),
+                browserSession(ExtensionMode.Prepared, false),
+            ],
+        } as Partial<FixRunResult>);
+
+        expect(classifyAgentOutcome(experiment).status).toBe(BenchmarkCaseStatus.NotReproduced);
+        expect(classifyAgentOutcome(alreadyFixed).status).toBe(BenchmarkCaseStatus.NotReproduced);
     });
 
     it('fails a run whose visual review could not run, naming what the provider did', () => {

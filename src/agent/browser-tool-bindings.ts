@@ -267,8 +267,9 @@ export async function registerBrowserTools(
                     'Returns raw browser facts plus runner-bound viewport and full-page ' +
                     'before/after evidence. When vision is available, the response includes ' +
                     'its typed final semantic verdict: verified, rejected, or inconclusive. ' +
-                    'Browser code does not judge page safety. At most three semantically ' +
-                    'distinct candidates are collected per run; duplicates are skipped.',
+                    'Browser code does not judge page safety. A run collects a limited number ' +
+                    'of semantically distinct candidates, and every answer states how many ' +
+                    'remain; duplicates are skipped.',
                 parameters: registeredParameters(ToolName.ApplyRule),
             },
         },

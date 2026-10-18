@@ -13,6 +13,8 @@
  * first, by a pointer to the persisted record. Nothing is lost — the full record is an artifact
  * `get_detail` reads — and the run's own bookkeeping keeps reading the unprojected result.
  */
+import { ToolName } from '../agent/tool-names';
+import type { ToolHandler } from '../agent/tool-registry';
 
 /**
  * Budget of the projected result, below the tool-result limit so the envelope never replaces it.
@@ -96,4 +98,31 @@ export function applyRuleResultForModel(result: Record<string, unknown>): Record
                     : 'The complete experiment record is preserved in the run evidence.'),
         },
     };
+}
+
+/**
+ * Make every `apply_rule` answer state how many distinct candidates the run may still validate.
+ *
+ * Stamped once at the handler boundary, after the handler settled: every exit — an experiment, a
+ * duplicate, the limit, a refusal — states the same count, already reflecting a slot this call
+ * spent or released. A model never told the budget stops before it has spent it. Every other tool
+ * keeps its handler unchanged.
+ *
+ * @param toolName - Name of the tool the handler serves.
+ * @param remainingAttempts - Reads the attempts left once the handler settled.
+ * @param handler - The tool's handler.
+ * @returns The handler, stamping `remainingCandidateAttempts` on every `apply_rule` answer.
+ */
+export function withRemainingCandidateAttempts(
+    toolName: string,
+    remainingAttempts: () => number,
+    handler: ToolHandler['handler'],
+): ToolHandler['handler'] {
+    if (toolName !== ToolName.ApplyRule) {
+        return handler;
+    }
+    return async (args) => ({
+        ...(await handler(args)),
+        remainingCandidateAttempts: remainingAttempts(),
+    });
 }

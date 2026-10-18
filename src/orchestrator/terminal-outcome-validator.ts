@@ -369,6 +369,7 @@ export function validateTerminalOutcome(
             guidance = [
                 'Use the visualReview returned by apply_rule as the only candidate verification verdict.',
                 'Choose a semantically different candidate when the review rejected the rule, otherwise finish analysis_only.',
+                'Once no distinct candidate or attempt is left, on an ads report a rule the review rejected only for ad layout residue (adLayoutResidue present, symptom resolved or unclear, remainingInstances empty, pageIntegrity intact, observedDamage empty) finishes analysis_only as candidateForReview, the residue named in unverifiedReason; on an incorrect-blocking report residue means the exception brought ads back, and the rule is not carried.',
                 'Do not substitute a manual analyze_screenshot opinion for the runner-bound visualReview.',
             ];
         }

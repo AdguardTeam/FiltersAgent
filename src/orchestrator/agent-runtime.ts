@@ -1,5 +1,5 @@
 import { RedirectOriginPolicy } from '../browser/redirect-origin-policy';
-import { applyRuleResultForModel } from './apply-rule-model-result';
+import { applyRuleResultForModel, withRemainingCandidateAttempts } from './apply-rule-model-result';
 import {
     CandidateRefusalMemo,
     candidateRefusal,
@@ -205,11 +205,13 @@ import {
     requestsUnsupportedProxyRegion,
 } from './launch-browser-arguments';
 import {
+    MAX_CANDIDATE_ATTEMPTS,
     MAX_CANDIDATE_VALIDATION_EXECUTIONS,
     MAX_TECHNICAL_BROWSER_FAILURES_PER_TARGET,
     bindAllowedTargetUrl,
     candidateLedgerKey,
     canonicalTargetUrl,
+    remainingCandidateAttempts,
     reportedDomainFromAllowedTargets,
     targetUrlMatchKey,
     type CandidateValidationOutcome,
@@ -4187,6 +4189,7 @@ export class AgentRuntime {
      * @param browserRegistry - Fresh registry bound to the active session.
      */
     private mergeBrowserTools(browserRegistry: ToolRegistry): void {
+        const remaining = (): number => remainingCandidateAttempts(this.candidateAttempts.size);
         for (const definition of browserRegistry.getDefinitions()) {
             const name = definition.function.name;
             if (this.baseToolNames.has(name)) {
@@ -4194,7 +4197,7 @@ export class AgentRuntime {
             }
             this.registry.register({
                 definition,
-                handler: async (args) => {
+                handler: withRemainingCandidateAttempts(name, remaining, async (args) => {
                     const activeState = this.activeSessionId
                         ? this.sessionStates.get(this.activeSessionId)
                         : undefined;
@@ -4371,11 +4374,11 @@ export class AgentRuntime {
                                 ...(revealPlan === undefined ? {} : { revealPlan }),
                             };
                         } else {
-                            if (this.candidateAttempts.size >= 3) {
+                            if (this.candidateAttempts.size >= MAX_CANDIDATE_ATTEMPTS) {
                                 return {
                                     validationSkipped: true,
                                     errorKind: 'candidate_limit_reached',
-                                    maximumAttempts: 3,
+                                    maximumAttempts: MAX_CANDIDATE_ATTEMPTS,
                                 };
                             }
                             const attemptNumber = this.candidateAttempts.size + 1;
@@ -4446,7 +4449,7 @@ export class AgentRuntime {
                         if (freshLedgerKey !== undefined && isCandidateRefusal(result.errorKind)) {
                             // A candidate refusal judged the request — its operation or the line it
                             // names — not the candidate's merit: release the slot registered by
-                            // this call so the three semantic attempts stay spendable on rules the
+                            // this call so the semantic attempts stay spendable on rules the
                             // environment can run.
                             this.candidateAttempts.delete(freshLedgerKey);
                             this.candidateAttemptSessionIds.delete(freshLedgerKey);
@@ -4464,7 +4467,7 @@ export class AgentRuntime {
                               ? this.withRedirectGuidance(result)
                               : result;
                     return forModel;
-                },
+                }),
             });
             this.activeBrowserToolNames.add(name);
         }

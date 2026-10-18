@@ -4,12 +4,10 @@ import {
     isTargetEnvironmentFallbackReason,
 } from '../../src/types/browser-fallback-origin';
 import { CandidateVisualVerdict } from '../../src/types/candidate-visual-review';
-import {
-    FixRunStatus,
-    SymptomObservation,
-    type FixRunResult,
-} from '../../src/types/fix-run-result';
+import { ExtensionMode, FixRunStatus, type FixRunResult } from '../../src/types/fix-run-result';
 import { InfrastructureFailureReason } from '../../src/types/infrastructure-failure-reason';
+import { ReporterSymptomPresence } from '../../src/types/reporter-symptom-presence';
+import { PhaseLabel } from '../../src/types/validation';
 import { VISUAL_REVIEW_UNAVAILABLE_PREFIX } from '../../src/validator/candidate-visual-synthesis';
 import { INTAKE_SKIPPED_PREFIX } from '../local/local-failure-stage';
 
@@ -31,7 +29,7 @@ export const BenchmarkCaseStatus = {
      */
     Proposed: 'proposed',
     /**
-     * The agent reproduced the reported problem but proposed no rule.
+     * The agent reproduced the reported problem with the prepared blocker but proposed no rule.
      */
     Reproduced: 'reproduced',
     /**
@@ -159,6 +157,55 @@ export function benchmarkFailureKind(runResult: FixRunResult | null): BenchmarkF
 }
 
 /**
+ * Whether the agent's own check with the prepared blocker counted the reported problem as present.
+ *
+ * The problem the reporter had is the one the prepared blocker leaves on the page before any
+ * candidate. The unfiltered session shows only that the site serves the ad, and phase C shows what
+ * the candidate did, so neither counts. Nor does `symptomObservation`: the run sets it from the
+ * terminal decision for the publication gate, so every analysis-only result carries
+ * `indeterminate`.
+ *
+ * The result carries `environmentExecution` as soon as `apply_rule` prepared the environment, and
+ * its browser sessions are then the projected phases in place of the sessions the agent launched.
+ * Such a result is read from an observed phase B of any experiment only: a run refused after
+ * preparation — an edit or a removal the environment cannot run, an environment that never became
+ * ready — or one whose phase B failed counts as not reproduced, even when the agent's own prepared
+ * session showed the problem. Only a result without `environmentExecution` is read from the
+ * prepared sessions the agent launched.
+ *
+ * The two sources hold different bars. Phase B counts when its `targetObservation.symptomPresent`
+ * is set, and the runner sets it unless vision found the symptom absent, so an indeterminate
+ * classification counts. A prepared session counts only with a vision-verified, complete capture
+ * classified `present`.
+ *
+ * @param result - Schema-validated result loaded from run-result.json.
+ * @returns Whether a baseline phase or a prepared session counted the reported problem as present.
+ */
+function preparedBlockerShowedSymptom(result: FixRunResult): boolean {
+    const execution = result.environmentExecution;
+    if (execution !== undefined) {
+        return execution.phases.some(
+            ({ phase, completion }) =>
+                phase === PhaseLabel.B &&
+                completion.kind === 'observed' &&
+                completion.navigationVerified &&
+                completion.targetObservation.symptomPresent,
+        );
+    }
+    return (result.browserSessions ?? []).some(
+        (session) =>
+            session.extensionMode === ExtensionMode.Prepared &&
+            session.navigationVerified &&
+            session.captures.some(
+                (capture) =>
+                    capture.visionVerified &&
+                    capture.coverageComplete &&
+                    capture.reporterSymptomPresence === ReporterSymptomPresence.Present,
+            ),
+    );
+}
+
+/**
  * Read the strongest milestone from the agent's own sealed result.
  *
  * A verified rule is a `patch_proposed` result, which the result schema admits only with a verified
@@ -184,10 +231,9 @@ export function classifyAgentOutcome(result: FixRunResult): AgentOutcome {
         return { status: BenchmarkCaseStatus.Proposed, failureKind: null, detail: null };
     }
     return {
-        status:
-            result.symptomObservation === SymptomObservation.Reproduced
-                ? BenchmarkCaseStatus.Reproduced
-                : BenchmarkCaseStatus.NotReproduced,
+        status: preparedBlockerShowedSymptom(result)
+            ? BenchmarkCaseStatus.Reproduced
+            : BenchmarkCaseStatus.NotReproduced,
         failureKind: null,
         detail: null,
     };

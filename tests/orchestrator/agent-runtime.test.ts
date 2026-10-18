@@ -1,4 +1,5 @@
 import { APPLY_RULE_TOOL_DEADLINE_MS } from '../../src/orchestrator/browser-tool-deadlines';
+import { MAX_CANDIDATE_ATTEMPTS } from '../../src/orchestrator/agent-runtime-candidate-context';
 import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -3050,6 +3051,7 @@ describe('AgentRuntime', () => {
             });
             expect(afterRefusals).toMatchObject({
                 errorKind: 'candidate_operation_unsupported',
+                remainingCandidateAttempts: MAX_CANDIDATE_ATTEMPTS,
             });
             expect(afterRefusals).not.toMatchObject({
                 errorKind: 'candidate_limit_reached',
@@ -5181,7 +5183,63 @@ describe('AgentRuntime', () => {
         await runtime.registry.dispatch('apply_rule', { candidateRule: 'nettg.pl##.banner3' });
         await expect(
             runtime.registry.dispatch('apply_rule', { candidateRule: 'nettg.pl##.banner4' }),
-        ).resolves.toMatchObject({ errorKind: 'candidate_limit_reached', maximumAttempts: 3 });
+        ).resolves.toMatchObject({
+            errorKind: 'candidate_limit_reached',
+            maximumAttempts: MAX_CANDIDATE_ATTEMPTS,
+        });
+    });
+
+    it('tells the model how many distinct candidates it may still validate', async () => {
+        // A model that is never told the budget stops early: a run rejected its first two
+        // candidates and finished with the third idea left as advice in its reasoning.
+        const browserRegistry = emptyRegistry();
+        browserRegistry.register({
+            definition: {
+                type: 'function',
+                function: {
+                    name: 'apply_rule',
+                    description: 'Collect candidate browser and vision evidence',
+                    parameters: { type: 'object', properties: {} },
+                },
+            },
+            handler: async () => ({ visualReview: { verdict: 'rejected' } }),
+        });
+        const runtime = await createExtensionRuntime(runtimeOptions(), {
+            createBaseRegistry: async () => registryWithScreenshotAnalysis(),
+            createBrowserSession: async () => ({ close: vi.fn() }) as unknown as BrowserSession,
+            createBrowserRegistry: async () => browserRegistry,
+        });
+        await runtime.registry.dispatch('launch_browser', {
+            extension: 'none',
+            targetUrl: 'https://nettg.pl/',
+            profile: browserProfile,
+        });
+        await runtime.registry.dispatch('analyze_screenshot', {
+            issueScreenshotIndex: 1,
+            prompt: 'Describe the reporter-visible defect.',
+        });
+        const apply = (candidateRule: string) =>
+            runtime.registry.dispatch('apply_rule', { candidateRule });
+
+        await expect(apply('nettg.pl##.banner')).resolves.toMatchObject({
+            visualReview: { verdict: 'rejected' },
+            remainingCandidateAttempts: MAX_CANDIDATE_ATTEMPTS - 1,
+        });
+        // Sending a validated candidate again spends nothing.
+        await expect(apply('nettg.pl##.banner')).resolves.toMatchObject({
+            errorKind: 'duplicate_candidate',
+            remainingCandidateAttempts: MAX_CANDIDATE_ATTEMPTS - 1,
+        });
+        await expect(apply('nettg.pl##.banner2')).resolves.toMatchObject({
+            remainingCandidateAttempts: MAX_CANDIDATE_ATTEMPTS - 2,
+        });
+        await expect(apply('nettg.pl##.banner3')).resolves.toMatchObject({
+            remainingCandidateAttempts: 0,
+        });
+        await expect(apply('nettg.pl##.banner4')).resolves.toMatchObject({
+            errorKind: 'candidate_limit_reached',
+            remainingCandidateAttempts: 0,
+        });
     });
 
     it('requires every unique reporter screenshot before a no-patch terminal decision', async () => {

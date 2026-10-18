@@ -173,7 +173,7 @@ A case whose human fix commit could not be read adds a third line,
 | --- | --- |
 | `verified` | The agent proposed a rule and verified it in the browser with `apply_rule` |
 | `proposed` | The agent found a rule it could not verify and carried it for review |
-| `reproduced` | The agent reproduced the problem but proposed no rule |
+| `reproduced` | The agent's check with the prepared blocker counted the problem as present, but it proposed no rule |
 | `not_reproduced` | The agent neither reproduced the problem nor proposed a rule |
 | `infrastructure_failure` | The run could not finish; the failure kind and the detail say why |
 | `site_unreachable` | The case site did not answer, so the agent did not start |
@@ -181,6 +181,19 @@ A case whose human fix commit could not be read adds a third line,
 The benchmark does not check the agent's rule against the maintainer's, and
 does not re-check the maintainer's fix on today's site. A case whose fix no
 longer applies shows up as a case that no model reproduces.
+
+Reproduction comes from the agent's own check with the prepared blocker. A
+symptom seen only without the blocker, or only with the agent's candidate
+applied, does not count.
+
+- Once `apply_rule` has prepared the environment, only the baseline phase of
+  an `apply_rule` experiment counts. It counts unless vision found the problem
+  absent there, so an indeterminate classification counts as reproduced. A run
+  refused after preparation, or whose baseline phase failed, is
+  `not_reproduced` even when the agent's own prepared session showed the
+  problem.
+- Without a prepared environment, a prepared session the agent launched counts
+  when its complete, vision-verified capture shows the problem.
 
 The exit code is 0 when every case reached one of the four agent statuses,
 and 3 when any case ended as `infrastructure_failure` or `site_unreachable`.

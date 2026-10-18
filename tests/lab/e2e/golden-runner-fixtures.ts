@@ -171,7 +171,38 @@ export function analysisOnlyRecord(): LocalRunRecord {
             effectiveMode: 'browser',
             verificationStatus: 'partial',
             reproductionSettingsStatus: 'applied',
-            symptomObservation: 'reproduced',
+            // An analysis-only result always carries an indeterminate observation; the reported
+            // ads show in the prepared session instead.
+            symptomObservation: 'indeterminate',
+            browserSessions: [
+                {
+                    sessionId: 'prepared-session',
+                    targetUrl: 'https://nettg.pl/',
+                    extensionMode: 'prepared',
+                    profile: {
+                        viewport: 'desktop',
+                        locale: 'pl-PL',
+                        timezone: 'Europe/Warsaw',
+                        userAgentProfile: 'chromium-desktop',
+                        consentStrategy: 'untouched',
+                    },
+                    navigationVerified: true,
+                    fullVisionVerified: true,
+                    captures: [
+                        {
+                            visionVerified: true,
+                            viewportArtifactId: 'prepared-viewport',
+                            viewport: '/tmp/prepared-viewport.png',
+                            fullPageOverviewArtifactId: 'prepared-full-page',
+                            fullPageOverview: '/tmp/prepared-full-page.png',
+                            tileArtifactIds: ['prepared-tile'],
+                            tiles: ['/tmp/prepared-tile.png'],
+                            coverageComplete: true,
+                            reporterSymptomPresence: 'present',
+                        },
+                    ],
+                },
+            ],
             fallbackReason: null,
             fallbackDetail: null,
             extensionProvenance: extension,
@@ -184,7 +215,11 @@ export function analysisOnlyRecord(): LocalRunRecord {
             },
             candidatePatch: null,
             artifactPaths: {
-                screenshots: [],
+                screenshots: [
+                    '/tmp/prepared-viewport.png',
+                    '/tmp/prepared-full-page.png',
+                    '/tmp/prepared-tile.png',
+                ],
                 domSnapshot: null,
                 har: null,
                 trace: null,
