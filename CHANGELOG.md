@@ -52,6 +52,8 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Removed
 
+- Removed `--blocker-module` from `pnpm test:e2e`: every benchmark case is
+  historical, and module filter lists cannot be pinned to the reporter's date.
 - Removed the benchmark statuses `pass`, `agent_regression` and
   `environment_drift`, exit codes 1 and 2, and `e2e-result.json`: the
   benchmark exits 0 when every case has an agent outcome and 3 otherwise, and
@@ -78,8 +80,8 @@ The format is based on [Keep a Changelog], and this project adheres to
   were retried.
 - Fixed historical benchmark and local historical `fix` runs using current
   lists instead of reporter builds pinned in `run.json` v3.
-- Fixed historical runs accepting `--blocker-module` when module lists
-  cannot be pinned to the reporter's date.
+- Fixed local historical `fix` runs accepting `--blocker-module` when module
+  lists cannot be pinned to the reporter's date.
 - Fixed historical investigations accessing later AdguardFilters commits
   or retaining unrelated redirect origins.
 - Fixed browser request checks missing popups and other pages in the same

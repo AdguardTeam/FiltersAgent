@@ -6,39 +6,16 @@ describe('parseGoldenE2EArgs', () => {
         expect(parseGoldenE2EArgs(['--case', 'nettg-pl-235988'])).toEqual({
             selection: 'case',
             caseName: 'nettg-pl-235988',
-            blockerModules: [],
             outputRoot: null,
             knowledgeBaseSha: null,
         });
         expect(parseGoldenE2EArgs(['--all'])).toEqual({
             selection: 'all',
-            blockerModules: [],
             outputRoot: null,
             knowledgeBaseSha: null,
         });
         expect(() => parseGoldenE2EArgs([])).toThrow(/--case.*--all/i);
         expect(() => parseGoldenE2EArgs(['--case', 'one', '--all'])).toThrow(/exactly one/i);
-    });
-
-    it('collects every repeated --blocker-module manifest for the selected cases', () => {
-        expect(
-            parseGoldenE2EArgs([
-                '--all',
-                '--blocker-module',
-                'adguard-cli/blocker-module.json',
-                '--blocker-module',
-                '/opt/demo-module/blocker-module.json',
-            ]),
-        ).toEqual({
-            selection: 'all',
-            outputRoot: null,
-            knowledgeBaseSha: null,
-            blockerModules: [
-                'adguard-cli/blocker-module.json',
-                '/opt/demo-module/blocker-module.json',
-            ],
-        });
-        expect(() => parseGoldenE2EArgs(['--all', '--blocker-module'])).toThrow(/value/i);
     });
 
     it('parses --output-root', () => {

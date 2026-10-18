@@ -37,7 +37,7 @@ historical issues as a benchmark.
   developer machines (macOS, Linux) for the local CLI and the benchmark.
 - **Project Type**: GitHub Action (container) plus a local CLI tool and a benchmark harness. A
   pluggable blocker module (`adguard-cli/`) is generated from the sources and committed; the
-  action, the local CLI and the benchmark plug it in by manifest.
+  action and the local CLI plug it in by manifest.
 - **Performance Goals**: N/A — a run is bounded by `AGENT_INVESTIGATION_BUDGET_MS`.
 - **Constraints**: an LLM endpoint speaking the OpenAI chat-completions or the Anthropic Messages
   API, configured in full; the CloakBrowser binary must not be redistributed; the repository is
@@ -202,9 +202,9 @@ lab/ (local CLI, benchmark)        src/action/ (GitHub Action)
   (enforced by the `local/no-lab-imports` oxlint rule).
 - Blocker modules plug in through the module protocol only: a manifest
   (`src/proxy-blocker/blocker-module-manifest.ts`) and a process on stdio. The action
-  (`blockerModules` input), the local CLI and the benchmark (`--blocker-module`) load manifests
-  through one loader, `src/proxy-blocker/blocker-module-loader.ts`. The browser extension is the
-  only executor registered in-process.
+  (`blockerModules` input) and the local CLI (`--blocker-module`) load manifests through one
+  loader, `src/proxy-blocker/blocker-module-loader.ts`. The benchmark plugs in no module. The
+  browser extension is the only executor registered in-process.
 - `src/adguard-cli/` is one such module: `pnpm build:adguard-cli` bundles it into `adguard-cli/`
   with its manifest. Apart from its tests, only `scripts/build-adguard-cli-module.ts` imports it —
   do not register it in-process from `lab/` or `src/`. The `adguard_cli` name MUST NOT appear in

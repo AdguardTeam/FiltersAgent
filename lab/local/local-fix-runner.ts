@@ -171,12 +171,6 @@ export interface RunLocalFixOptions {
      * Trusted campaign-wide KnowledgeBase commit used instead of resolving moving master.
      */
     knowledgeBaseSha?: string;
-
-    /**
-     * The blocker modules this run's locked selections start, keyed by executor name; the run locks
-     * the browser extension and every module listed here.
-     */
-    executorDependencies?: Readonly<Record<ExecutorName, BlockerModuleRunDependencies>>;
 }
 
 /**

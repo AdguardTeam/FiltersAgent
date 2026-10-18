@@ -4,13 +4,6 @@ import { describeBrowserBuild, readAgentRevision } from './benchmark-environment
 import { CLOAKBROWSER_AUTO_UPDATE_VAR } from '../../src/browser/cloakbrowser-auto-update';
 import { resolveCloakBrowserAutoUpdate } from '../local/cloakbrowser-auto-update';
 import { loadCoreConfig } from '../../src/config/config';
-import { createLogger } from '../../src/logger/logger';
-import { enableBlockerModules } from '../../src/proxy-blocker/blocker-module-loader';
-import {
-    loadLabBlockerModules,
-    refuseBlockerModulesInHistoricalRuns,
-} from '../local/blocker-modules';
-import { ExtensionEnvironmentKind } from '../../src/types/extension-environment-kind';
 import { describeRunCost, formatUsd } from '../pricing/run-cost';
 import { loadUsagePricing } from '../pricing/usage-pricing';
 import { parseGoldenE2EArgs } from './golden-cli';
@@ -37,21 +30,9 @@ async function main(): Promise<void> {
     }
 
     const coreConfig = loadCoreConfig(process.env);
-    // Every load fails before the first case starts, so a missing variable, a broken price file
-    // or a broken module manifest never costs a browser launch.
-    refuseBlockerModulesInHistoricalRuns(
-        ExtensionEnvironmentKind.Historical,
-        selection.blockerModules,
-    );
+    // Every load fails before the first case starts, so a missing variable or a broken price file
+    // never costs a browser launch.
     const pricingSnapshot = loadUsagePricing(process.env, workspaceRoot) ?? undefined;
-    const modules = loadLabBlockerModules(selection.blockerModules, workspaceRoot, process.env);
-    // A case locks the browser extension and every plugged-in module, so each one is enabled.
-    const blockerModules = enableBlockerModules(
-        modules.map((module) => module.manifest.executor),
-        modules,
-        process.env,
-        createLogger(),
-    );
     const layout = goldenOutputLayout(workspaceRoot, selection.outputRoot);
     const suite = await runGoldenE2ESuite(coreConfig, {
         runEnvironment: {
@@ -66,7 +47,6 @@ async function main(): Promise<void> {
         knowledgeBaseSha: selection.knowledgeBaseSha ?? undefined,
         onKnowledgeBaseResolved: (sha) => process.stdout.write(`KnowledgeBase: ${sha}\n`),
         pricingSnapshot,
-        blockerModules,
     });
     for (const entry of suite.results) {
         const { status, failureKind, detail } = entry.record.outcome;

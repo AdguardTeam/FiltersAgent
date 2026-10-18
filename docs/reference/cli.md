@@ -130,8 +130,8 @@ A blocker module adds an executor beside the built-in browser extension. It is
 a process that speaks the blocker protocol on stdio, described by a JSON
 manifest. Current `fix issue` and `backlog` runs take
 `--blocker-module <manifest>`; the action takes the same manifests in its
-`blockerModules` input. Historical local runs and the benchmark refuse
-`--blocker-module` because module lists cannot be pinned to the reporter's date.
+`blockerModules` input. Historical local runs refuse `--blocker-module` because
+module lists cannot be pinned to the reporter's date.
 
 - A relative manifest path resolves against the working directory, which is
   the repository root under `pnpm start`.

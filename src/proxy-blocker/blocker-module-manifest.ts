@@ -2,8 +2,8 @@
  * The manifest a blocker module ships beside its code: the executor it registers, the routing
  * guidance the model reads, the command that starts it, and the environment variables it needs or
  * can use. A run plugs a module in by naming its manifest (the action's `blockerModules` input, the
- * local CLI's and the benchmark's `--blocker-module`); the run reads the manifest, registers the
- * executor, and starts the module per issue with exactly the variables the manifest lists.
+ * local CLI's `--blocker-module`); the run reads the manifest, registers the executor, and starts
+ * the module per issue with exactly the variables the manifest lists.
  *
  * A manifest comes from whatever repository the run is pointed at, so it is validated here, once.
  */

@@ -653,7 +653,20 @@ describe('runLocalFix', () => {
             const filtersPath = join(caseDir, 'filters');
             mkdirSync(join(filtersPath, 'BaseFilter', 'sections'), { recursive: true });
             writeFileSync(join(filtersPath, 'BaseFilter/sections/foreign.txt'), '', 'utf8');
-            writeFileSync(issueFile, JSON.stringify(buildLocalIssueSnapshot(issue, [])), 'utf8');
+            writeFileSync(
+                issueFile,
+                JSON.stringify(
+                    buildExportedIssueRevision({
+                        repository: 'example/lab',
+                        issueNumber: 4,
+                        sourceUpdatedAt: '2026-07-23T10:02:00.000Z',
+                        capturedAt: '2026-07-23T10:03:00.000Z',
+                        snapshot: buildLocalIssueSnapshot(issue, []),
+                    }),
+                ),
+                'utf8',
+            );
+            const revision = loadVerifiedExportedIssueRevision(issueFile);
             const piRuntime = await scriptedPiRuntime([
                 toolCall('fetch_issue', { issueNumber: 4 }),
                 toolCall('select_environment', selectionArguments(kind)),
@@ -668,11 +681,11 @@ describe('runLocalFix', () => {
             const vision = sealedVisionClient().vision;
             const unpackedExtension = writeUnpackedExtensionFixture(caseDir);
 
-            const paths = await runLocalFix(
+            const paths = await runLocalFixFromRevision(
                 coreConfig,
+                revision,
                 {
                     issueNumber: 4,
-                    issueFile,
                     environment: 'current',
                     outputDir,
                     keepTemporaryFiles: false,

@@ -376,8 +376,8 @@ The action image leaves `src/adguard-cli/` out, so the action itself never
 carries the CLI code. Current local CLI runs load the bundle through
 `--blocker-module adguard-cli/blocker-module.json`; see
 [Run the AdGuard CLI executor](#run-the-adguard-cli-executor). Historical
-local runs and the benchmark (`pnpm test:e2e`) refuse `--blocker-module`
-because module lists cannot be pinned to the reporter's date.
+local runs refuse `--blocker-module`, and the benchmark (`pnpm test:e2e`) runs
+without modules, because module lists cannot be pinned to the reporter's date.
 
 ### Try a change on a fork of AdguardFilters
 

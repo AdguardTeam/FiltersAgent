@@ -24,14 +24,9 @@ export type GoldenE2ESelection =
       };
 
 /**
- * The parsed manual E2E command line: the case selection and the blocker modules every case plugs
- * in.
+ * The parsed manual E2E command line: the case selection and the run options.
  */
 export type GoldenE2EArgs = GoldenE2ESelection & {
-    /**
-     * Manifest paths of the blocker modules every case plugs in, in the order given.
-     */
-    blockerModules: string[];
     /**
      * Optional isolated root for model run and evaluation artifacts.
      */
@@ -62,7 +57,7 @@ function optionValue(args: readonly string[], index: number): string {
  * Parse the intentionally small manual E2E command line.
  *
  * @param argv - Arguments following the script name.
- * @returns Validated explicit case selection and the plugged-in module manifests.
+ * @returns Validated explicit case selection and the run options.
  */
 export function parseGoldenE2EArgs(argv: readonly string[]): GoldenE2EArgs {
     const args = argv.filter((argument) => argument !== '--');
@@ -70,7 +65,6 @@ export function parseGoldenE2EArgs(argv: readonly string[]): GoldenE2EArgs {
     let all = false;
     let outputRoot: string | null = null;
     let knowledgeBaseSha: string | null = null;
-    const blockerModules: string[] = [];
     for (let index = 0; index < args.length; index += 1) {
         const argument = args[index];
         if (argument === '--all') {
@@ -95,11 +89,6 @@ export function parseGoldenE2EArgs(argv: readonly string[]): GoldenE2EArgs {
             index += 1;
             continue;
         }
-        if (argument === '--blocker-module') {
-            blockerModules.push(optionValue(args, index));
-            index += 1;
-            continue;
-        }
         throw new Error(`Unknown golden E2E argument: ${argument}`);
     }
     if (Boolean(caseName) === all) {
@@ -109,6 +98,6 @@ export function parseGoldenE2EArgs(argv: readonly string[]): GoldenE2EArgs {
         throw new Error(`Invalid golden E2E case name: ${caseName}`);
     }
     return caseName
-        ? { selection: 'case', caseName, blockerModules, outputRoot, knowledgeBaseSha }
-        : { selection: 'all', blockerModules, outputRoot, knowledgeBaseSha };
+        ? { selection: 'case', caseName, outputRoot, knowledgeBaseSha }
+        : { selection: 'all', outputRoot, knowledgeBaseSha };
 }

@@ -15,7 +15,7 @@ import {
 import { probeSiteReachability, reportedSiteUrl, type SiteProbe } from './case-site';
 import { pinnedReport } from './pinned-report';
 import { BrowserMode } from '../../src/types/browser-mode';
-import { realpathSync, rmSync } from 'node:fs';
+import { realpathSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import {
     canonicalProspectiveDirectory,
@@ -26,12 +26,6 @@ import { createLogger, type Logger } from '../../src/logger/logger';
 import { ExtensionEnvironmentKind } from '../../src/types/extension-environment-kind';
 import type { UsageRatesTable } from '../../src/types/usage-summary';
 import { runLocalFix } from '../local/local-fix-runner';
-import { labFilterCacheDir } from '../local/blocker-modules';
-import {
-    blockerModuleRunDependencies,
-    type EnabledBlockerModule,
-} from '../../src/proxy-blocker/blocker-module-run-issue';
-import { reservePrivateWorkspace } from '../../src/proxy-blocker/private-workspace';
 import {
     clearLocalRunOutputDir,
     materializeLocalRunOutputDir,
@@ -88,10 +82,6 @@ export interface RunGoldenE2ECaseOptions {
      * The user's price table the run is priced from; absent, the run computes no cost.
      */
     pricingSnapshot?: UsageRatesTable;
-    /**
-     * The blocker modules the case plugs in; absent plugs in none.
-     */
-    blockerModules?: readonly EnabledBlockerModule[];
 }
 
 /**
@@ -118,82 +108,6 @@ export interface GoldenE2ERunnerDependencies {
      * Destination of the stack of an unexpected case failure.
      */
     logger?: Logger;
-}
-
-/**
- * Directories and the lifecycle one case's agent run uses.
- */
-interface CaseAgentRunContext {
-    /**
-     * Workspace the run's repository roots belong to.
-     */
-    workspaceRoot: string;
-    /**
-     * Agent artifact directory.
-     */
-    outputDirectory: string;
-    /**
-     * Benchmark record directory, kept apart from the blocker modules' files.
-     */
-    evaluationDirectory: string;
-    /**
-     * Standard GitHub-independent local fix lifecycle.
-     */
-    execute: typeof runLocalFix;
-}
-
-/**
- * Run the agent on one case whose site answered, with the case's blocker modules plugged in.
- *
- * @param coreConfig - GitHub-independent LLM and headless browser configuration.
- * @param options - Case options.
- * @param loaded - Loaded case pins and paths.
- * @param context - Directories and the lifecycle to run.
- * @returns Nothing once the run has sealed its output.
- */
-async function runCaseAgent(
-    coreConfig: CoreConfig,
-    options: RunGoldenE2ECaseOptions,
-    loaded: LoadedGoldenRunCase,
-    context: CaseAgentRunContext,
-): Promise<void> {
-    const { workspaceRoot, outputDirectory, evaluationDirectory } = context;
-    const blockerModules = options.blockerModules ?? [];
-    // The modules keep their files outside every repository and output root, and only for this
-    // case's run.
-    const modulesWorkspace =
-        blockerModules.length > 0
-            ? reservePrivateWorkspace([workspaceRoot, outputDirectory, evaluationDirectory])
-            : null;
-    try {
-        await context.execute(coreConfig, {
-            issueNumber: loaded.config.issueNumber,
-            knowledgeBaseSha: options.knowledgeBaseSha,
-            issueFile: loaded.issueFile,
-            neutralIssueInput: true,
-            refuseRepositoryInstruction: true,
-            environment: ExtensionEnvironmentKind.Historical,
-            outputDir: outputDirectory,
-            runConfig: loaded.runConfigPath,
-            keepTemporaryFiles: false,
-            browserMode: BrowserMode.On,
-            verbose: options.verbose ?? false,
-            pricingSnapshot: options.pricingSnapshot,
-            ...(modulesWorkspace === null
-                ? {}
-                : {
-                      executorDependencies: blockerModuleRunDependencies(
-                          blockerModules,
-                          modulesWorkspace,
-                          labFilterCacheDir(workspaceRoot),
-                      ),
-                  }),
-        });
-    } finally {
-        if (modulesWorkspace !== null) {
-            rmSync(modulesWorkspace, { recursive: true, force: true });
-        }
-    }
 }
 
 /**
@@ -262,11 +176,19 @@ export async function runGoldenE2ECase(
         siteCheckedAt = now();
         if (site.reachable) {
             try {
-                await runCaseAgent(coreConfig, options, loaded, {
-                    workspaceRoot,
-                    outputDirectory,
-                    evaluationDirectory,
-                    execute: dependencies.runLocalFix ?? runLocalFix,
+                await (dependencies.runLocalFix ?? runLocalFix)(coreConfig, {
+                    issueNumber: loaded.config.issueNumber,
+                    knowledgeBaseSha: options.knowledgeBaseSha,
+                    issueFile: loaded.issueFile,
+                    neutralIssueInput: true,
+                    refuseRepositoryInstruction: true,
+                    environment: ExtensionEnvironmentKind.Historical,
+                    outputDir: outputDirectory,
+                    runConfig: loaded.runConfigPath,
+                    keepTemporaryFiles: false,
+                    browserMode: BrowserMode.On,
+                    verbose: options.verbose ?? false,
+                    pricingSnapshot: options.pricingSnapshot,
                 });
             } finally {
                 runReturnedAt = now();

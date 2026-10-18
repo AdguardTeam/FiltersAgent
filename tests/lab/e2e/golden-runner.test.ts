@@ -7,7 +7,6 @@ import {
     symlinkSync,
     writeFileSync,
 } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pino } from 'pino';
 import { describe, expect, it, vi } from 'vitest';
@@ -292,35 +291,6 @@ describe('runGoldenE2ECase', () => {
         expect(savedRecord(layout.evaluationDirectory).outcome.status).toBe(
             BenchmarkCaseStatus.InfrastructureFailure,
         );
-    });
-
-    it('starts a plugged-in module in the case run from a private workspace it removes after', async () => {
-        const layout = caseLayout('golden-runner-module-');
-        const startBlocker = vi.fn();
-        let moduleWorkspace = '';
-
-        await runGoldenE2ECase(
-            coreConfig,
-            caseOptions({
-                caseName: 'plugged-module',
-                ...layout,
-                blockerModules: [{ executor: 'demo_proxy', startBlocker }],
-            }),
-            offline({
-                runLocalFix: vi.fn(async (_config, options) => {
-                    const module = options.executorDependencies?.['demo_proxy'];
-                    expect(module?.startBlocker).toBe(startBlocker);
-                    moduleWorkspace = module?.workspaceDir ?? '';
-                    expect(moduleWorkspace.startsWith(realpathSync(tmpdir()))).toBe(true);
-                    const resultPath = join(layout.outputDirectory, 'result.json');
-                    writeFileSync(resultPath, '{"invalid":true}', 'utf8');
-                    return localOutputPaths(layout.outputDirectory, resultPath);
-                }),
-            }),
-        );
-
-        expect(moduleWorkspace).not.toBe('');
-        expect(existsSync(join(moduleWorkspace, '..'))).toBe(false);
     });
 
     it('clears all prior owned run output before validating the next case input', async () => {

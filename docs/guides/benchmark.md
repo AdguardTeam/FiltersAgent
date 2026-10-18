@@ -36,7 +36,7 @@ You need:
 You do not need a browser install: the stealth Chromium build is downloaded
 on the first run. You do not need the AdGuard CLI either: every case is a
 Chrome MV3 browser extension report, and a case runs only the browser
-extension. Historical cases refuse `--blocker-module`: module filter lists
+extension. The benchmark plugs in no blocker module: module filter lists
 cannot yet be pinned to the reporter's date.
 
 Install the dependencies from the repository root:
