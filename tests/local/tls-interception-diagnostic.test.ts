@@ -5,7 +5,10 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createServer as createTlsServer, type Server as TlsServer } from 'node:tls';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { probeTlsInterception } from '../../src/local/tls-interception-diagnostic';
+import {
+    probeTlsInterception,
+    TlsInterceptionOutcome,
+} from '../../src/local/tls-interception-diagnostic';
 
 const TARGET = 'https://probe.interception.test/';
 
@@ -110,21 +113,67 @@ function derBase64(pem: Buffer): string {
 }
 
 /**
+ * How the fixture proxy treats a tunnel once it is open.
+ */
+const ProxyBehaviour = {
+    /**
+     * Terminate TLS with the given chain and answer the request, as a filtering proxy does.
+     */
+    Answer: 'answer',
+
+    /**
+     * Terminate TLS but never answer the request.
+     */
+    Silent: 'silent',
+
+    /**
+     * Close the tunnel as soon as the client speaks, as AdGuard CLI does for a host it refuses.
+     */
+    Close: 'close',
+
+    /**
+     * Terminate TLS and answer only a request that looks like a browser's, as a site that drops
+     * other clients does.
+     */
+    BrowsersOnly: 'browsers_only',
+} as const;
+
+type ProxyBehaviour = (typeof ProxyBehaviour)[keyof typeof ProxyBehaviour];
+
+/**
  * Start an interception proxy that terminates TLS with the given chain.
  *
  * @param chain - Certificate chain the proxy presents.
+ * @param behaviour - What the proxy does with an open tunnel.
  * @returns Proxy URL and a shutdown function.
  */
-async function startInterceptionProxy(chain: Buffer): Promise<{ proxyUrl: string; close(): void }> {
+async function startInterceptionProxy(
+    chain: Buffer,
+    behaviour: ProxyBehaviour = ProxyBehaviour.Answer,
+): Promise<{ proxyUrl: string; close(): void }> {
     const tls: TlsServer = createTlsServer({ key: material!.leafKey, cert: chain }, (socket) =>
         socket.on('error', () => undefined),
     );
-    const inner: Server = createHttpServer((_request, response) => response.end('ok'));
+    const inner: Server = createHttpServer((request, response) => {
+        const fromBrowser =
+            request.headers['user-agent']?.startsWith('Mozilla/5.0') === true &&
+            request.headers.accept?.includes('text/html') === true;
+        if (
+            behaviour === ProxyBehaviour.Answer ||
+            (behaviour === ProxyBehaviour.BrowsersOnly && fromBrowser)
+        ) {
+            response.end('ok');
+        }
+    });
     tls.on('secureConnection', (socket) => inner.emit('connection', socket));
     const proxy = createHttpServer((_request, response) => response.end('ok'));
     proxy.on('connect', (_request, clientSocket, head) => {
         clientSocket.on('error', () => undefined);
         clientSocket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+        if (behaviour === ProxyBehaviour.Close) {
+            clientSocket.once('data', () => clientSocket.destroy());
+            return;
+        }
         if (head.length > 0) {
             clientSocket.unshift(head);
         }
@@ -138,8 +187,10 @@ async function startInterceptionProxy(chain: Buffer): Promise<{ proxyUrl: string
     return {
         proxyUrl: `http://127.0.0.1:${address.port}/`,
         close() {
+            proxy.closeAllConnections();
             proxy.close();
             tls.close();
+            inner.closeAllConnections();
             inner.close();
         },
     };
@@ -158,13 +209,12 @@ afterAll(() => {
 });
 
 /*
- * A browser certificate rejection can only ever say that some authority was unknown. Deciding
- * between "the trust installation did not reach the browser" and "the proxy is presenting a
- * different authority than the one this route generated" needs the chain the proxy actually
- * presented — so the run must capture it, or the next failure is another blind rerun.
+ * A route may call its environment ready only after an HTTPS request really went through the
+ * filtering proxy under the route's own authority. A proxy that tunnels a host raw, refuses it, or
+ * never answers leaves the run on unfiltered traffic, and each of those must be named.
  */
 describe('tls interception diagnostic', () => {
-    it('records the chain the proxy presented and that it was issued by the route authority', async () => {
+    it('proves an HTTPS request went through the proxy under the route authority', async () => {
         if (!material) {
             return;
         }
@@ -175,7 +225,8 @@ describe('tls interception diagnostic', () => {
                 TARGET,
                 derBase64(material.caPem),
             );
-            expect(observed.outcome).toBe('presented');
+            expect(observed.outcome).toBe(TlsInterceptionOutcome.Filtered);
+            expect(observed.statusCode).toBe(200);
             expect(observed.chain).toHaveLength(1);
             expect(observed.chain[0].subjectCommonName).toBe('probe.interception.test');
             expect(observed.chain[0].issuerCommonName).toBe('Interception Probe ca');
@@ -186,7 +237,7 @@ describe('tls interception diagnostic', () => {
         }
     }, 30_000);
 
-    it('reports a foreign authority as neither present nor issuing', async () => {
+    it('reports a proxy presenting another authority as not intercepting', async () => {
         if (!material) {
             return;
         }
@@ -197,7 +248,8 @@ describe('tls interception diagnostic', () => {
                 TARGET,
                 derBase64(material.otherCaPem),
             );
-            expect(observed.outcome).toBe('presented');
+            expect(observed.outcome).toBe(TlsInterceptionOutcome.NotIntercepted);
+            expect(observed.statusCode).toBeNull();
             expect(observed.leafIssuedByExpectedCa).toBe(false);
             expect(observed.expectedCaPresentInChain).toBe(false);
         } finally {
@@ -218,7 +270,7 @@ describe('tls interception diagnostic', () => {
                 TARGET,
                 derBase64(material.caPem),
             );
-            expect(observed.outcome).toBe('presented');
+            expect(observed.outcome).toBe(TlsInterceptionOutcome.Filtered);
             expect(observed.chain).toHaveLength(2);
             expect(observed.expectedCaPresentInChain).toBe(true);
             expect(observed.chain[1].spkiSha256Base64).toBe(observed.expectedSpkiSha256Base64);
@@ -227,6 +279,63 @@ describe('tls interception diagnostic', () => {
         }
     }, 30_000);
 
+    it('reports a proxy that closes the tunnel it opened as a failed handshake', async () => {
+        if (!material) {
+            return;
+        }
+        const proxy = await startInterceptionProxy(material.leafPem, ProxyBehaviour.Close);
+        try {
+            const observed = await probeTlsInterception(
+                proxy.proxyUrl,
+                TARGET,
+                derBase64(material.caPem),
+                2_000,
+            );
+            expect(observed.outcome).toBe(TlsInterceptionOutcome.HandshakeFailed);
+            expect(observed.statusCode).toBeNull();
+            expect(observed.failure).not.toBeNull();
+        } finally {
+            proxy.close();
+        }
+    }, 30_000);
+
+    it('is answered by a site that drops clients other than browsers', async () => {
+        if (!material) {
+            return;
+        }
+        const proxy = await startInterceptionProxy(material.leafPem, ProxyBehaviour.BrowsersOnly);
+        try {
+            const observed = await probeTlsInterception(
+                proxy.proxyUrl,
+                TARGET,
+                derBase64(material.caPem),
+                1_000,
+            );
+            expect(observed.outcome).toBe(TlsInterceptionOutcome.Filtered);
+        } finally {
+            proxy.close();
+        }
+    }, 30_000);
+
+    it('reports an intercepted request that is never answered as no response', async () => {
+        if (!material) {
+            return;
+        }
+        const proxy = await startInterceptionProxy(material.leafPem, ProxyBehaviour.Silent);
+        try {
+            const observed = await probeTlsInterception(
+                proxy.proxyUrl,
+                TARGET,
+                derBase64(material.caPem),
+                1_000,
+            );
+            expect(observed.outcome).toBe(TlsInterceptionOutcome.NoResponse);
+            expect(observed.leafIssuedByExpectedCa).toBe(true);
+            expect(observed.statusCode).toBeNull();
+        } finally {
+            proxy.close();
+        }
+    }, 30_000);
     it('leaves no live handle behind, so the run it observes can still exit', async () => {
         if (!material) {
             return;
@@ -238,7 +347,7 @@ describe('tls interception diagnostic', () => {
                 `import { createServer as http } from 'node:http';`,
                 `import { createServer as tls } from 'node:tls';`,
                 `import { readFileSync } from 'node:fs';`,
-                `import { probeTlsInterception } from ${JSON.stringify(
+                `import { probeTlsInterception, TlsInterceptionOutcome } from ${JSON.stringify(
                     resolve('src/local/tls-interception-diagnostic.ts'),
                 )};`,
                 `const dir = ${JSON.stringify(workspace)};`,
@@ -264,7 +373,7 @@ describe('tls interception diagnostic', () => {
                 `    ${JSON.stringify(TARGET)},`,
                 `    der,`,
                 `);`,
-                `if (observed.outcome !== 'presented') throw new Error(observed.outcome);`,
+                `if (observed.outcome !== TlsInterceptionOutcome.Filtered) throw new Error(observed.outcome);`,
                 `proxy.close();`,
                 `secure.close();`,
                 `inner.close();`,
@@ -295,7 +404,7 @@ describe('tls interception diagnostic', () => {
             derBase64(material.caPem),
             1_000,
         );
-        expect(observed.outcome).toBe('proxy_connect_failed');
+        expect(observed.outcome).toBe(TlsInterceptionOutcome.ProxyConnectFailed);
         expect(observed.chain).toHaveLength(0);
     }, 30_000);
 });

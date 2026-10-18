@@ -6,7 +6,11 @@
 # shares as one device, so AdGuard CLI runs need not wait for each other. Without a seed each run
 # activates the licence itself and resets it at the end. `seedHome: 'true'` makes the seed instead.
 #
-# The release pins are `releaseUrl` and `releaseSha256` below: bump them together.
+# The release pins are `releaseUrl` and `releaseSha256` below: bump them together, and only to a
+# stable release (a `v<major>.<minor>.<patch>-release` tag). The install refuses a pre-release.
+# The pin is 1.4.13, the newest stable release: 1.5 exists only as pre-releases (rc, nightly) so
+# far. Move to 1.5 once it ships as a release; it brings CoreLibs 1.23, which fixes filtering on
+# sites that rely on service workers.
 name: 'filters-agent AdGuard CLI module'
 description: >-
     Installs the AdGuard CLI blocker module for the filters-agent action: the official AdGuard CLI
@@ -20,14 +24,15 @@ inputs:
         default: .filters-agent/adguard-cli
     releaseUrl:
         description: >-
-            AdGuard CLI release archive to install; change it together with releaseSha256.
+            Stable AdGuard CLI release archive to install; change it together with releaseSha256.
+            A pre-release (rc, beta, nightly) is refused.
         required: false
-        default: https://github.com/AdguardTeam/AdGuardCLI/releases/download/v1.5.0-rc.1/adguard-cli-1.5.0-rc.1-linux-x86_64.tar.gz
+        default: https://github.com/AdguardTeam/AdGuardCLI/releases/download/v1.4.13-release/adguard-cli-1.4.13-linux-x86_64.tar.gz
     releaseSha256:
         description: >-
             SHA-256 of the release archive.
         required: false
-        default: f782aa950be96ea6817d935bfe55a8f445bc972d10c4eee5b9db6c15a88dbfa1
+        default: 0575c9a2397fc1537d9c8213811f0d79867a7953f2481f3e9677bd3f0a2cf88c
     seedHome:
         description: >-
             'true' activates the licence from ADGUARD_LICENSE_KEY in this step's env once and saves

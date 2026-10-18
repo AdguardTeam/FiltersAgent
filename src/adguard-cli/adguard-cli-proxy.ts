@@ -4,7 +4,8 @@
  * What the release forces on top of the shared proxy lifecycle lives here: a short sandboxed HOME
  * the release keeps its configuration, licence state and authority in; a licence activation before
  * the first filtering command and a reset when the run ends; and the authority the release mints
- * itself, which the browser trusts by SPKI pin instead of the system store.
+ * itself, which no system trust store learns: the browser accepts it only after the run proved the
+ * proxy decrypts HTTPS under it.
  *
  * The run's filter files go into `filters:` as absolute paths instead of `flm://`, so the release
  * executes exactly the lists the run downloaded.
@@ -199,7 +200,11 @@ function renderCliConfig(
         '    filter_ev_certificates: false',
         '    enable_tls13: true',
         '    ocsp_check_enabled: false',
-        '    enforce_certificate_transparency: false',
+        // On, the CLI's own default. Off, the 1.5 pre-releases (CoreLibs 1.23) cannot satisfy the
+        // extra SCT constraints they attach to some roots (USERTrust RSA, GlobalSign Root R3),
+        // call every chain to those roots invalid and tunnel the site unfiltered; on keeps those
+        // sites filtered whichever release the module pins.
+        '    enforce_certificate_transparency: true',
         '    http3_filtering_enabled: false',
         '    exclusions: https_exclusions.txt',
         '    filter_secure_dns_mode: off',
@@ -434,7 +439,8 @@ function createAdguardCliEngine(input: CreateAdguardCliProxyHostInput): ProxyEng
             }
 
             // `cert` asks whether to install the authority into the system store; the answer is
-            // no: the browser trusts it by SPKI, no system trust store is touched.
+            // no: no system trust store is touched, and the browser accepts the authority only
+            // once the run proved the proxy decrypts HTTPS under it.
             const generated = await runCommand(['cert'], 'n\n');
             const certificatePath = join(
                 requireDataDir(),

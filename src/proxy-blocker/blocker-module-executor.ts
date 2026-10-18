@@ -25,6 +25,7 @@ import { EVIDENCE_ROUTE_CAPABILITIES } from '../environment/environment-selectio
 import type { ExecutorName } from '../environment/executor-name';
 import type { ExecutorPreparationOutcome } from '../environment/executor-preparation';
 import { FilterBaselineStatus } from '../environment/filter-baseline-status';
+import { TlsInterceptionOutcome } from '../local/tls-interception-diagnostic';
 import type {
     ExecutorActivationContext,
     ExecutorAdapterContext,
@@ -34,12 +35,10 @@ import {
     ProxyBlockerPreparationLimitationCode,
     ProxyBlockerPreparationStage,
 } from './preparation-limitation';
+import type { HttpsFilteringProof } from './https-filtering-proof';
 import { ProxyBlockerEnvironmentAdapter } from './proxy-environment-adapter';
-import {
-    createProxyBlockerEvidenceRoute,
-    evidenceRouteFilterIds,
-    type CreateProxyBlockerEvidenceRouteInput,
-} from './proxy-evidence-route';
+import { createProxyBlockerEvidenceRoute, evidenceRouteFilterIds } from './proxy-evidence-route';
+import type { CreateProxyBlockerEvidenceRouteInput } from './proxy-evidence-route-contract';
 
 /**
  * Source label the published preparation provenance carries for a blocker module.
@@ -194,7 +193,8 @@ export function createBlockerModuleExecutor(
         preparationState: EnvironmentPreparationState.Preparable,
         limitationCode: null,
         capabilities: [EnvironmentCapability.CliInstallation, EnvironmentCapability.CliActivation],
-        // The evidence route grants these once it is ready (`attachCliEvidenceRouteReady`).
+        // Granted once preparation proved the route filters HTTPS for the target and the first
+        // session launched (`attachCliEvidenceRouteReady`).
         preparedCapabilities: [
             EnvironmentCapability.CliInstallation,
             EnvironmentCapability.CliActivation,
@@ -246,6 +246,37 @@ export function createBlockerModuleExecutor(
                 ProxyBlockerPreparationStage.Route,
                 ProxyBlockerPreparationLimitationCode.RouteConfigurationFailed,
                 'The evidence route over the blocker module could not be configured.',
+            );
+        }
+        // A running proxy is not yet a filtering one: the environment is ready only once an HTTPS
+        // request to the target went through the filter. The proof starts the proxy, and its
+        // failure is logged with what the probe saw and the blocker's own reason.
+        let proof: HttpsFilteringProof;
+        try {
+            proof = await route.proveHttpsFiltering(context.targetUrl);
+        } catch (error) {
+            console.error('blocker module proxy did not start', error);
+            await stopQuietly(blocker);
+            return limited(
+                ProxyBlockerPreparationStage.Filtering,
+                ProxyBlockerPreparationLimitationCode.BlockerStartFailed,
+                'The blocker module did not start its filtering proxy.',
+            );
+        }
+        if (!proof.proven) {
+            await stopQuietly(blocker);
+            // A tunnel the proxy never opened says the target did not answer, not that the
+            // blocker refused to filter it.
+            const detail =
+                proof.outcome === TlsInterceptionOutcome.ProxyConnectFailed
+                    ? `${proof.host} did not answer through the ${description.product} proxy ` +
+                      `(${proof.outcome}), so HTTPS filtering could not be proven for it.`
+                    : `${description.product} did not filter an HTTPS request to ${proof.host} ` +
+                      `(${proof.outcome}), so nothing this run observed there would be filtered.`;
+            return limited(
+                ProxyBlockerPreparationStage.Filtering,
+                ProxyBlockerPreparationLimitationCode.HttpsFilteringUnproven,
+                detail,
             );
         }
         context.runtime.activateEvidenceRoute(route, evidenceRouteFilterIds(reporterFilterIds));

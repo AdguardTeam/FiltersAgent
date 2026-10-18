@@ -114,10 +114,10 @@ export interface BrowserSessionConfig {
      * The SPKI allowlist can only match an authority the proxy actually presents, and the AdGuard
      * CLI proxy presents the leaf alone — its authority never appears in the chain, so the
      * allowlist can never match and every navigation fails. Callers that have independently proven
-     * the tunnel belongs to their own authority (see `probeTlsInterception`: the presented leaf
-     * verifies under the route certificate) may set this to let evidence collection reach the
-     * reported page and its third-party subresources. Only ever set it after that proof: it
-     * disables certificate verification for the isolated per-run profile.
+     * the proxy decrypts HTTPS under their own authority — a request answered through the proxy
+     * under the route certificate — may set this to let evidence collection reach the reported page
+     * and its third-party subresources. Only ever set it after that proof: it disables certificate
+     * verification for the isolated per-run profile.
      */
     strictRouteAcceptProxyAuthority?: boolean;
 

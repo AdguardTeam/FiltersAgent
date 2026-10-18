@@ -18,7 +18,9 @@ import {
     createBlockerModuleExecutor,
     type BlockerModuleRunDependencies,
 } from '../../src/proxy-blocker/blocker-module-executor';
+import { TlsInterceptionOutcome } from '../../src/local/tls-interception-diagnostic';
 import type { IssueFacts } from '../../src/types/issue-facts';
+import { probed } from './https-filtering-proof-fixtures';
 
 const EXECUTOR = 'fake_proxy';
 
@@ -58,13 +60,25 @@ function description(overrides: Partial<BlockerDescription> = {}): BlockerDescri
     };
 }
 
-function fakeBlocker(describeModule: () => Promise<BlockerDescription>): BlockerContract {
+function fakeBlocker(
+    describeModule: () => Promise<BlockerDescription>,
+    start: BlockerContract['start'] = async () => ({
+        revision: 1,
+        route: { proxyUrl: 'http://127.0.0.1:3129', certificateDerBase64: 'Y2E=' },
+    }),
+): BlockerContract {
     return {
         describe: describeModule,
-        start: vi.fn(),
+        start: vi.fn(start),
         apply: vi.fn(),
-        state: vi.fn(),
-        log: vi.fn(),
+        state: vi.fn(async () => ({
+            running: true,
+            revision: 1,
+            port: 3129,
+            lists: [],
+            userRules: [],
+        })),
+        log: vi.fn(async () => ({ revision: 1, cursor: '0', events: [] })),
         stop: vi.fn(async () => ({ licenceReleased: false })),
     };
 }
@@ -104,6 +118,7 @@ async function activate(
     blocker: BlockerContract | null,
     activateEvidenceRoute = vi.fn(),
     requiredCapabilities: EnvironmentCapability[] = [],
+    probeOutcome: TlsInterceptionOutcome = TlsInterceptionOutcome.Filtered,
 ): Promise<EnvironmentSelectionHost> {
     const host = lockedHost(requiredCapabilities);
     const workspaceDir = await mkdtemp(join(tmpdir(), 'module-executor-'));
@@ -127,6 +142,8 @@ async function activate(
                           ],
                           unavailableFilterIds: [],
                       }),
+                      probeInterception: async (_proxyUrl, targetUrl) =>
+                          probed(targetUrl, probeOutcome),
                   },
               };
     const context: ExecutorActivationContext = {
@@ -235,6 +252,62 @@ describe('createBlockerModuleExecutor', () => {
         expect(host.snapshot()?.cliPreparation).toMatchObject({
             limitation: { code: 'module_failed', stage: 'module' },
         });
+        expect(blocker.stop).toHaveBeenCalledOnce();
+    });
+
+    it('calls the environment ready only after an HTTPS request went through the blocker', async () => {
+        const blocker = fakeBlocker(async () => description());
+        const activateEvidenceRoute = vi.fn();
+        const host = await activate(blocker, activateEvidenceRoute);
+
+        expect(blocker.start).toHaveBeenCalledOnce();
+        expect(host.snapshot()?.state).toBe('ready');
+        expect(activateEvidenceRoute).toHaveBeenCalledOnce();
+    });
+
+    it.each([
+        TlsInterceptionOutcome.HandshakeFailed,
+        TlsInterceptionOutcome.NotIntercepted,
+        TlsInterceptionOutcome.NoResponse,
+        TlsInterceptionOutcome.ProxyConnectFailed,
+    ])(
+        'ends capability-limited and stops the blocker when HTTPS is %s for the target',
+        async (outcome) => {
+            // The CLI once tunneled the reported site raw while the run called its environment
+            // ready, and the report drew conclusions from traffic nothing had filtered.
+            const blocker = fakeBlocker(async () => description());
+            const activateEvidenceRoute = vi.fn();
+            const host = await activate(blocker, activateEvidenceRoute, [], outcome);
+
+            expect(host.snapshot()).toMatchObject({
+                state: 'capability_limited',
+                cliPreparation: {
+                    state: 'limited',
+                    limitation: { stage: 'filtering', code: 'https_filtering_unproven' },
+                },
+            });
+            expect(host.snapshot()?.cliPreparation).toMatchObject({
+                limitation: { detail: expect.stringContaining('example.test') },
+            });
+            expect(activateEvidenceRoute).not.toHaveBeenCalled();
+            expect(blocker.stop).toHaveBeenCalledOnce();
+        },
+    );
+
+    it('ends capability-limited when the blocker cannot start its proxy', async () => {
+        const blocker = fakeBlocker(
+            async () => description(),
+            async () => {
+                throw new Error('The AdGuard CLI licence did not activate.');
+            },
+        );
+        const activateEvidenceRoute = vi.fn();
+        const host = await activate(blocker, activateEvidenceRoute);
+
+        expect(host.snapshot()?.cliPreparation).toMatchObject({
+            limitation: { stage: 'filtering', code: 'blocker_start_failed' },
+        });
+        expect(activateEvidenceRoute).not.toHaveBeenCalled();
         expect(blocker.stop).toHaveBeenCalledOnce();
     });
 

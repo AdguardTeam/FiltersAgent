@@ -1437,7 +1437,11 @@ function renderCliConfig(port, filterPaths, accessLogPath) {
     "    filter_ev_certificates: false",
     "    enable_tls13: true",
     "    ocsp_check_enabled: false",
-    "    enforce_certificate_transparency: false",
+    // On, the CLI's own default. Off, the 1.5 pre-releases (CoreLibs 1.23) cannot satisfy the
+    // extra SCT constraints they attach to some roots (USERTrust RSA, GlobalSign Root R3),
+    // call every chain to those roots invalid and tunnel the site unfiltered; on keeps those
+    // sites filtered whichever release the module pins.
+    "    enforce_certificate_transparency: true",
     "    http3_filtering_enabled: false",
     "    exclusions: https_exclusions.txt",
     "    filter_secure_dns_mode: off",

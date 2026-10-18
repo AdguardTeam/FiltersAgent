@@ -486,11 +486,9 @@ export class EnvironmentSelectionHost {
     /**
      * Mark the proxied CLI evidence route ready and grant the capabilities it executes.
      *
-     * This is the live-run counterpart of a canary `route_result`: that receipt proves filtering
-     * through the fixed ID-2 canary matrix, which a live investigation never runs. Here the proof
-     * is the run's own: a confirmed activation, a filtering foreground the Host started, and an
-     * interception probe showing the proxy presenting this run's authority. Both paths grant the
-     * same capabilities because both end with the CLI actually filtering the controlled browser.
+     * The proof is the run's own: preparation activated the route only after an HTTPS request to
+     * the run's target went through the proxy's filter under the proxy's own authority, and a
+     * session now runs on that route.
      *
      * @param kind - Locked environment the route belongs to.
      */

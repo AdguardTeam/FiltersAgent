@@ -31,8 +31,8 @@ export const SOLE_EXECUTOR_RATIONALE = 'Sole executor available for this run';
 export const SOLE_EXECUTOR_INTENT_RATIONALE = 'No executor choice was offered for this run.';
 
 /**
- * Capabilities the AdGuard CLI evidence route grants once its first session proves the proxy
- * filters the controlled browser.
+ * Capabilities the AdGuard CLI evidence route grants once its first session launches. The route
+ * exists only after preparation proved the proxy filters an HTTPS request to the run's target.
  *
  * A prepared executor advertises installation and activation only; these arrive with the route.
  * Preparation therefore treats them as pending rather than missing, and the route grants them.

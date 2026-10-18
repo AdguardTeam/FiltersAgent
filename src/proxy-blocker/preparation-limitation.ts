@@ -17,6 +17,11 @@ export const ProxyBlockerPreparationStage = {
      * Downloading the lists and configuring the evidence route over the started module.
      */
     Route: 'route',
+
+    /**
+     * Starting the blocker's proxy and proving it filters an HTTPS request to the run's target.
+     */
+    Filtering: 'filtering',
 } as const;
 
 /**
@@ -48,6 +53,17 @@ export const ProxyBlockerPreparationLimitationCode = {
      * The evidence route over the module could not be configured.
      */
     RouteConfigurationFailed: 'route_configuration_failed',
+
+    /**
+     * The blocker's proxy did not start.
+     */
+    BlockerStartFailed: 'blocker_start_failed',
+
+    /**
+     * The proxy ran, but an HTTPS request to the run's target did not go through its filter: the
+     * run would only see traffic nothing filtered.
+     */
+    HttpsFilteringUnproven: 'https_filtering_unproven',
 } as const;
 
 /**

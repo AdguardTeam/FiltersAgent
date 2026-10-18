@@ -6,7 +6,7 @@
  *
  * Callers pass the pinned release URL and checksum — the AdGuard CLI module's setup action takes
  * them from its `releaseUrl` and `releaseSha256` inputs — so every install of one pin runs the same
- * verified binary.
+ * verified binary. The pin must be a stable release; a pre-release is refused before the download.
  *
  * Usage: fetch-adguard-cli.mjs <archive-url> <sha256> <destination-dir>
  */
@@ -21,9 +21,31 @@ import { join } from 'node:path';
  */
 const ADGUARD_RELEASE_PUBLIC_KEY = 'MCowBQYDK2VwAyEAN0NPZFtolGN+Cjyorh4Wo91vnBlLLQiWkbujeHDYbok=';
 
+/**
+ * The release tag in a GitHub release download URL.
+ */
+const RELEASE_TAG = /\/releases\/download\/([^/]+)\//u;
+
+/**
+ * The tag AdGuard gives a stable AdGuard CLI release (`v1.4.13-release`). Every stable release so
+ * far carries it and no pre-release (rc, beta, nightly) does, and the archive name cannot tell them
+ * apart: `v1.4.14-beta` ships `adguard-cli-1.4.14-…`.
+ */
+const STABLE_RELEASE_TAG = /^v\d+\.\d+\.\d+-release$/u;
+
 const [url, expectedSha256, destination] = process.argv.slice(2);
 if (!url || !expectedSha256 || !destination) {
     console.error('Usage: fetch-adguard-cli.mjs <archive-url> <sha256> <destination-dir>');
+    process.exit(2);
+}
+
+// A pre-release CLI rejected certificate chains the stable release accepts, so the run analyzed
+// traffic nothing had filtered. Only a stable release is installed.
+const tag = RELEASE_TAG.exec(new URL(url).pathname)?.[1] ?? null;
+if (tag === null || !STABLE_RELEASE_TAG.test(tag)) {
+    console.error(
+        `AdGuard CLI ${tag ?? url} is not a stable release; pin a v<major>.<minor>.<patch>-release archive.`,
+    );
     process.exit(2);
 }
 

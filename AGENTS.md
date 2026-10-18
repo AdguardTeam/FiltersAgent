@@ -338,6 +338,10 @@ Write few, durable, high-value tests — not tests for everything.
 - Minimize the dependency count; justify every addition.
 - When adding a dependency, check the registry for the latest stable version instead of copying a
   version number from memory.
+- The AdGuard CLI the module installs MUST be a stable release, tagged
+  `v<major>.<minor>.<patch>-release`, never a pre-release (rc, beta, nightly):
+  `scripts/fetch-adguard-cli.mjs` refuses any other tag. Bump `releaseUrl` and `releaseSha256` in
+  `modules/adguard-cli/action.yml` together, then run `pnpm build:adguard-cli`.
 
 ### Configuration & Documentation
 

@@ -10,6 +10,7 @@ import { Viewport, type ReproProfile } from '../types/repro-profile';
 import { launchStrictRoutePieces } from './strict-route-launch';
 import { readBrowserProcessPid } from './browser-kill-handle';
 import { BrowserLaunchError, BrowserConfigurationError } from './browser-launch-errors';
+import { CHROMIUM_VERSION, chromiumUserAgent, DESKTOP_PLATFORM } from './browser-identity';
 
 /**
  * The launched browser artifacts a family launch hands back to {@link BrowserSession.create}.
@@ -65,13 +66,11 @@ export interface LaunchedSessionPieces {
  */
 export function resolveUserAgent(profile: ReproProfile): string {
     const mobile = profile.viewport === Viewport.Mobile;
-    const platform = mobile ? 'Linux; Android 14; Pixel 8' : 'Windows NT 10.0; Win64; x64';
-    const chromium =
-        `Mozilla/5.0 (${platform}) AppleWebKit/537.36 (KHTML, like Gecko) ` +
-        `Chrome/145.0.0.0 ${mobile ? 'Mobile ' : ''}Safari/537.36`;
+    const platform = mobile ? 'Linux; Android 14; Pixel 8' : DESKTOP_PLATFORM;
+    const chromium = chromiumUserAgent(platform, mobile);
     const family = profile.userAgentProfile.trim().toLowerCase();
     if (family.includes('edge')) {
-        return `${chromium} Edg/145.0.0.0`;
+        return `${chromium} Edg/${CHROMIUM_VERSION}`;
     }
     if (family.includes('opera')) {
         return `${chromium} OPR/126.0.0.0`;

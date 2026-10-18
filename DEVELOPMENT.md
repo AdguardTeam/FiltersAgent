@@ -140,9 +140,10 @@ module needs two variables:
 
 To run it locally:
 
-1. Download the official release for your platform from
-   https://github.com/AdguardTeam/AdGuardCLI/releases and extract it. Do not run
-   its installer.
+1. Download a stable release for your platform from
+   https://github.com/AdguardTeam/AdGuardCLI/releases, one tagged
+   `v<major>.<minor>.<patch>-release`, and extract it. Do not use a
+   pre-release (rc, beta, nightly), and do not run its installer.
 2. Set both variables in `.env` or in the environment, and name the module:
 
    ```bash
@@ -177,13 +178,25 @@ What a run does with the CLI (`src/adguard-cli/adguard-cli-proxy.ts`):
 - It writes `proxy.yaml` in manual proxy mode on a loopback port. The run's
   filter lists and the agent's rules go into `filters:` as files instead of
   `flm://`, so the CLI executes exactly the lists the run downloaded.
+  Certificate transparency stays on, the CLI's own default: with it off, the
+  1.5 pre-releases reject valid chains to roots that carry extra SCT
+  constraints and tunnel those sites unfiltered.
 - It runs `adguard-cli activate <key>` and checks `adguard-cli license`:
   `activate` exits 0 even when it only printed a login link. Then it runs
-  `adguard-cli cert` and declines the system-store install. The browser trusts
-  the CLI's authority by SPKI pin; no keychain or system trust store is
-  touched.
+  `adguard-cli cert` and declines the system-store install; no keychain or
+  system trust store is touched.
 - It starts `adguard-cli start --no-fork` and restarts it for every rule or
   list change.
+- Before the run gets the environment, it starts the CLI with no list and no
+  rule and sends up to two HTTPS requests to the issue's site through it
+  (`src/proxy-blocker/https-filtering-proof.ts`). Only when the CLI answers one
+  under its own authority is the environment ready, and only then does the
+  browser accept that authority. An `http:` site that serves no HTTPS at all
+  passes with a plain HTTP answer that does not redirect to HTTPS; one whose
+  HTTPS the CLI passes through unread does not.
+  Otherwise the preparation ends with `https_filtering_unproven`, the run stays
+  analysis-only, and the run log names what the requests saw and the CLI's own
+  reason.
 - It runs `adguard-cli reset-license` when the run stops, and also when its own
   preparation fails after the activation, then deletes the HOME.
 

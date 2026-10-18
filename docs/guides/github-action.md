@@ -214,7 +214,7 @@ The setup step's inputs and outputs:
 | Name | Kind | Description |
 | --- | --- | --- |
 | `path` | Input | Workspace-relative directory the module is installed into; defaults to `.filters-agent/adguard-cli`. |
-| `releaseUrl` | Input | AdGuard CLI release archive to install; defaults to the pinned release. Change it together with `releaseSha256`. |
+| `releaseUrl` | Input | Stable AdGuard CLI release archive to install; defaults to the pinned release. Change it together with `releaseSha256`. A pre-release (rc, beta, nightly) is refused. |
 | `releaseSha256` | Input | SHA-256 of the release archive. |
 | `seedHome` | Input | `'true'` activates the licence once and saves the seed instead of preparing a run. |
 | `manifest` | Output | Workspace-relative path of the module manifest; pass it as `blockerModules`. |

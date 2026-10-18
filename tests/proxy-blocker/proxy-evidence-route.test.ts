@@ -12,10 +12,11 @@ import { prepareProxyBlockerPublishedBaseline } from '../../src/proxy-blocker/pu
 import { createAdguardCliBlocker } from '../../src/adguard-cli/adguard-cli-blocker';
 import { createProxyBlockerEvidenceRoute } from '../../src/proxy-blocker/proxy-evidence-route';
 import { createProxyHost, type ProxyHostInput } from '../../src/adguard-cli/proxy-host';
-import type { probeTlsInterception } from '../../src/local/tls-interception-diagnostic';
+import { TlsInterceptionOutcome } from '../../src/local/tls-interception-diagnostic';
 import { PERSISTENT_CA_TEST_CERTIFICATE_PEM } from '../adguard-cli/fixtures/persistent-ca-test-authority';
 import type { DownloadedOfficialFilter } from '../../src/local/official-filter-downloader';
 import { AppliedRulesReadKind, type AppliedRulesReport } from '../../src/environment/applied-rules';
+import { probed } from './https-filtering-proof-fixtures';
 
 const temporaryRoots: string[] = [];
 
@@ -122,11 +123,13 @@ interface RouteFixture {
  * browser.
  *
  * @param createBrowserSession - The browser the route launches; a closable stand-in when omitted.
+ * @param probeOutcome - What the HTTPS probe sees through the proxy.
  * @returns Route plus seams observing what the proxy would execute.
  */
 async function routeFixture(
     createBrowserSession: typeof BrowserSession.create = async () =>
         ({ close: async () => undefined }) as unknown as BrowserSession,
+    probeOutcome: TlsInterceptionOutcome = TlsInterceptionOutcome.Filtered,
 ): Promise<RouteFixture> {
     const fixtureRoot = await mkdtemp(join(tmpdir(), 'adguard-cli-route-'));
     const workspaceDir = join(fixtureRoot, 'workspace');
@@ -190,10 +193,7 @@ async function routeFixture(
                 unavailableFilterIds: [],
             }),
             createBrowserSession,
-            probeInterception: (async () => ({
-                outcome: 'intercepted',
-                leafIssuedByExpectedCa: true,
-            })) as unknown as typeof probeTlsInterception,
+            probeInterception: async (_proxyUrl, targetUrl) => probed(targetUrl, probeOutcome),
             reserveBrowserRoot: async () => {
                 const root = await mkdtemp(join(tmpdir(), 'adguard-cli-browser-'));
                 temporaryRoots.push(root);
@@ -215,6 +215,29 @@ async function routeFixture(
 }
 
 /**
+ * The process the preparation proof starts before any session. It runs no list and no rule, so the
+ * first phase that enables a list restarts it, and a phase that enables none rides it.
+ */
+const PROOF_STARTS = 1;
+
+/**
+ * The page every fixture session opens.
+ */
+const TARGET_URL = 'https://coucounews.com/b/5JMZm0';
+
+/**
+ * Prepare the route the way the executor does before it hands the route to the run: configure it,
+ * then prove the proxy filters HTTPS for the target.
+ *
+ * @param fixture - Route fixture.
+ */
+async function prepareRoute(fixture: RouteFixture): Promise<void> {
+    await fixture.route.prepareConfiguration();
+    const proof = await fixture.route.proveHttpsFiltering(TARGET_URL);
+    expect(proof.proven).toBe(true);
+}
+
+/**
  * Launch one evidence session through the route with fixed session facts.
  *
  * @param fixture - Prepared route fixture.
@@ -225,7 +248,7 @@ async function launchSession(fixture: RouteFixture): Promise<BrowserSession> {
     temporaryRoots.push(artifactsDir);
     try {
         return await fixture.route.launchEvidenceSession({
-            targetUrl: 'https://coucounews.com/b/5JMZm0',
+            targetUrl: TARGET_URL,
             reproProfile: PROFILE,
             artifactsDir,
             headless: true,
@@ -241,9 +264,60 @@ async function launchSession(fixture: RouteFixture): Promise<BrowserSession> {
 }
 
 describe('createProxyBlockerEvidenceRoute', () => {
+    it('launches a session only after proving HTTPS filtering, trusting the proxy authority', async () => {
+        const created: Parameters<typeof BrowserSession.create>[0][] = [];
+        const fixture = await routeFixture(async (config) => {
+            created.push(config);
+            return { close: async () => undefined } as unknown as BrowserSession;
+        });
+        await fixture.route.prepareConfiguration();
+
+        await expect(launchSession(fixture)).rejects.toThrow();
+        expect(created).toHaveLength(0);
+
+        expect(await fixture.route.proveHttpsFiltering(TARGET_URL)).toMatchObject({
+            proven: true,
+        });
+        await launchSession(fixture);
+        expect(created).toHaveLength(1);
+        expect(created[0]?.strictRouteAcceptProxyAuthority).toBe(true);
+        await fixture.route.stop?.();
+    });
+
+    it('proves HTTPS filtering with no list running, so a list blocking the target cannot fail it', async () => {
+        // A report that a site does not open names a site some list blocks outright; with the lists
+        // running, the proxy refused the probe at the handshake and the run lost its environment.
+        const fixture = await routeFixture();
+        await prepareRoute(fixture);
+
+        const proofConfig = await fixture.readConfig();
+        expect(proofConfig).not.toContain('filter-2.txt');
+        expect(proofConfig).not.toContain('filter-14.txt');
+        await fixture.route.stop?.();
+    });
+
+    it('refuses sessions when the proxy did not decrypt HTTPS for the target', async () => {
+        // The CLI once tunneled the reported site raw; the browser then rejected every leaf the CLI
+        // minted for the other hosts, and nothing the run saw had been filtered.
+        const created: unknown[] = [];
+        const fixture = await routeFixture(async (config) => {
+            created.push(config);
+            return { close: async () => undefined } as unknown as BrowserSession;
+        }, TlsInterceptionOutcome.HandshakeFailed);
+        await fixture.route.prepareConfiguration();
+
+        expect(await fixture.route.proveHttpsFiltering(TARGET_URL)).toMatchObject({
+            proven: false,
+            outcome: TlsInterceptionOutcome.HandshakeFailed,
+        });
+        await expect(launchSession(fixture)).rejects.toThrow();
+        expect(created).toHaveLength(0);
+        await fixture.route.stop?.();
+    });
+
     it('byte-attributes every requested filter of the published baseline', async () => {
         const fixture = await routeFixture();
-        await fixture.route.prepareConfiguration();
+        await prepareRoute(fixture);
         const ports = fixture.route.environmentPorts();
 
         // The adapter folds this into its state digest under a pinned sha256 schema, so a route
@@ -269,7 +343,7 @@ describe('createProxyBlockerEvidenceRoute', () => {
 
     it('executes only the filters the established phase enabled', async () => {
         const fixture = await routeFixture();
-        await fixture.route.prepareConfiguration();
+        await prepareRoute(fixture);
         const ports = fixture.route.environmentPorts();
         await prepareProxyBlockerPublishedBaseline(
             { environment: 'adguard_cli', requestedFilterIds: [2, 14], acquiredAt: ACQUIRED_AT },
@@ -285,7 +359,7 @@ describe('createProxyBlockerEvidenceRoute', () => {
         expect(controlConfig).not.toContain('filter-2.txt');
         expect(controlConfig).not.toContain('filter-14.txt');
         expect(controlConfig).toContain('user.txt');
-        expect(fixture.spawnedConfigs).toHaveLength(1);
+        expect(fixture.spawnedConfigs).toHaveLength(PROOF_STARTS);
 
         // The baseline phase re-enables the requested set; its session must execute both lists.
         await ports.baselineHost.runBaselineAction('enable_filter', 2);
@@ -294,18 +368,18 @@ describe('createProxyBlockerEvidenceRoute', () => {
         const baselineConfig = await fixture.readConfig();
         expect(baselineConfig).toContain('filter-2.txt');
         expect(baselineConfig).toContain('filter-14.txt');
-        expect(fixture.spawnedConfigs).toHaveLength(2);
+        expect(fixture.spawnedConfigs).toHaveLength(PROOF_STARTS + 1);
 
         // The same enabled set must not restart the proxy again: reconciliation acts on drift
         // alone, so back-to-back sessions of one phase ride one process.
         await launchSession(fixture);
-        expect(fixture.spawnedConfigs).toHaveLength(2);
+        expect(fixture.spawnedConfigs).toHaveLength(PROOF_STARTS + 1);
         await fixture.route.stop?.();
     });
 
     it('keeps the enabled subset while a candidate rule is applied and revoked', async () => {
         const fixture = await routeFixture();
-        await fixture.route.prepareConfiguration();
+        await prepareRoute(fixture);
         const ports = fixture.route.environmentPorts();
         await prepareProxyBlockerPublishedBaseline(
             { environment: 'adguard_cli', requestedFilterIds: [2, 14], acquiredAt: ACQUIRED_AT },
@@ -327,7 +401,7 @@ describe('createProxyBlockerEvidenceRoute', () => {
 
     it('replaces one published line in the executed list and restores the locked bytes', async () => {
         const fixture = await routeFixture();
-        await fixture.route.prepareConfiguration();
+        await prepareRoute(fixture);
         const ports = fixture.route.environmentPorts();
         const prepared = await prepareProxyBlockerPublishedBaseline(
             { environment: 'adguard_cli', requestedFilterIds: [2, 14], acquiredAt: ACQUIRED_AT },
@@ -366,20 +440,20 @@ describe('createProxyBlockerEvidenceRoute', () => {
             published.replace('||ads.coucounews.com^\n', '||ads.coucounews.com^$third-party\n'),
         );
         expect(await fixture.readFilter(14)).toContain('example.org##.cookie');
-        expect(fixture.spawnedConfigs).toHaveLength(2);
+        expect(fixture.spawnedConfigs).toHaveLength(PROOF_STARTS + 2);
 
         expect(await ports.revokeBaselineEdit()).toBe(locked.sha256);
         expect(await fixture.readFilter(2)).toBe(published);
-        expect(fixture.spawnedConfigs).toHaveLength(3);
+        expect(fixture.spawnedConfigs).toHaveLength(PROOF_STARTS + 3);
         // Nothing is in effect any more, so a second revoke restarts nothing.
         expect(await ports.revokeBaselineEdit()).toBeNull();
-        expect(fixture.spawnedConfigs).toHaveLength(3);
+        expect(fixture.spawnedConfigs).toHaveLength(PROOF_STARTS + 3);
         await fixture.route.stop?.();
     });
 
     it('restores the locked bytes on a retry after the first restore failed', async () => {
         const fixture = await routeFixture();
-        await fixture.route.prepareConfiguration();
+        await prepareRoute(fixture);
         const ports = fixture.route.environmentPorts();
         const prepared = await prepareProxyBlockerPublishedBaseline(
             { environment: 'adguard_cli', requestedFilterIds: [2, 14], acquiredAt: ACQUIRED_AT },
@@ -406,7 +480,7 @@ describe('createProxyBlockerEvidenceRoute', () => {
 
     it('deletes one published line from the executed list', async () => {
         const fixture = await routeFixture();
-        await fixture.route.prepareConfiguration();
+        await prepareRoute(fixture);
         const ports = fixture.route.environmentPorts();
         await prepareProxyBlockerPublishedBaseline(
             { environment: 'adguard_cli', requestedFilterIds: [2, 14], acquiredAt: ACQUIRED_AT },
@@ -429,7 +503,7 @@ describe('createProxyBlockerEvidenceRoute', () => {
 
     it('refuses a line it cannot attribute to exactly one executed list', async () => {
         const fixture = await routeFixture();
-        await fixture.route.prepareConfiguration();
+        await prepareRoute(fixture);
         const ports = fixture.route.environmentPorts();
         await prepareProxyBlockerPublishedBaseline(
             { environment: 'adguard_cli', requestedFilterIds: [2, 14], acquiredAt: ACQUIRED_AT },
@@ -451,14 +525,14 @@ describe('createProxyBlockerEvidenceRoute', () => {
             refusal: 'baseline_line_not_found',
         });
         // A refusal changed nothing: the blocker never restarted and there is nothing to restore.
-        expect(fixture.spawnedConfigs).toHaveLength(1);
+        expect(fixture.spawnedConfigs).toHaveLength(PROOF_STARTS + 1);
         expect(await ports.revokeBaselineEdit()).toBeNull();
         await fixture.route.stop?.();
     });
 
     it('reads what the proxy logged for a session until the proxy restarts', async () => {
         const fixture = await routeFixture();
-        await fixture.route.prepareConfiguration();
+        await prepareRoute(fixture);
         await launchSession(fixture);
         const accessLog = join(fixture.workspaceDir, 'access.log');
         await writeFile(
@@ -526,7 +600,7 @@ describe('createProxyBlockerEvidenceRoute', () => {
                     },
                 }),
         );
-        await fixture.route.prepareConfiguration();
+        await prepareRoute(fixture);
         const accessLog = join(fixture.workspaceDir, 'access.log');
         // Blocked before the session launched: another session's request.
         await writeFile(

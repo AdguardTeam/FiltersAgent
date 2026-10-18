@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { BrowserSession } from '../browser/browser-session';
 import { createBlockerAppliedRulesLog } from '../blocker-contract/blocker-applied-rules';
 import type {
-    BlockerContract,
+    BlockerApplyRequest,
     BlockerDescription,
     BlockerFilterList,
     BlockerRoute,
@@ -20,7 +20,6 @@ import type { Logger } from '../logger/logger';
 import { createPreparedStrictBrowserRoute } from '../browser/strict-browser-route';
 import type {
     BaselineEditOutcome,
-    EvidenceRouteHost,
     EvidenceRoutePorts,
     EvidenceRouteSnapshot,
     EvidenceSessionRequest,
@@ -30,7 +29,13 @@ import {
     EvidenceRouteFailureCode,
     EvidenceRouteState,
 } from '../local/evidence-route-contract';
+import { probePlainHttp } from '../local/plain-http-probe';
 import { probeTlsInterception } from '../local/tls-interception-diagnostic';
+import { proveBlockerHttpsFiltering, type HttpsFilteringProof } from './https-filtering-proof';
+import type {
+    CreateProxyBlockerEvidenceRouteInput,
+    ProxyBlockerEvidenceRoute,
+} from './proxy-evidence-route-contract';
 import {
     createProxyBlockerBaselineHost,
     type ProxyBlockerBaselineHost,
@@ -44,6 +49,17 @@ import {
  * Milliseconds a minted evidence route stays consumable before the strict route rejects it.
  */
 const EVIDENCE_ROUTE_LIFETIME_MS = 10 * 60_000;
+
+/**
+ * What the proxy executes while the route proves it decrypts HTTPS: no list and no rule. The proof
+ * asks whether the proxy reads the target's traffic, not what the lists decide about it: a list
+ * that blocks the target host would end the request before it proved anything.
+ */
+const PROOF_CONFIGURATION: BlockerApplyRequest = {
+    enabledListIds: [],
+    userRules: [],
+    listReplacement: null,
+};
 
 /**
  * The text of one list as the blocker and the baseline host both write it: ending in a newline, so
@@ -88,75 +104,19 @@ export function evidenceRouteFilterIds(reporterFilterIds: readonly number[]): nu
 }
 
 /**
- * Construction input for one run-owned AdGuard CLI evidence route.
- */
-export interface CreateProxyBlockerEvidenceRouteInput {
-    /**
-     * Exact cycle identity, retained for route binding.
-     */
-    cycleId: string;
-
-    /**
-     * The blocker the route drives through the contract.
-     */
-    blocker: BlockerContract;
-
-    /**
-     * Directory the route owns for the baseline catalog and browser profiles.
-     */
-    workspaceDir: string;
-
-    /**
-     * Directory holding cached official filter lists across runs.
-     */
-    filterCacheDir: string;
-
-    /**
-     * Official filter identifiers the reporter had enabled.
-     */
-    reporterFilterIds?: readonly number[];
-
-    /**
-     * Host wall-clock source.
-     */
-    now?: () => string;
-
-    /**
-     * Optional deterministic seams.
-     */
-    dependencies?: {
-        /**
-         * Filter list downloader.
-         */
-        downloadFilters?: typeof downloadOfficialFilters;
-        /**
-         * Strict-route browser session factory.
-         */
-        createBrowserSession?: typeof BrowserSession.create;
-        /**
-         * Interception probe proving whose authority the proxy presents.
-         */
-        probeInterception?: typeof probeTlsInterception;
-        /**
-         * Private browser-root reservation.
-         */
-        reserveBrowserRoot?: () => Promise<string>;
-    };
-}
-
-/**
- * Create the proxy-blocker evidence route.
+ * Create the evidence route over one blocker module's proxy.
  *
- * It satisfies the same contract as the AdGuard CLI route, so the runtime drives both alike, but it
- * needs no licence, fetches nothing in the background, and executes exactly the filter files the
- * run supplied — which is what makes its baseline attributable and its phases comparable.
+ * The route executes exactly the filter files the run supplied — which is what makes its baseline
+ * attributable and its phases comparable — and launches sessions only once it proved the proxy
+ * filters HTTPS for the run's target.
  *
- * @param input - Binary, engine choice, workspace, reporter filters, and optional seams.
- * @returns Evidence route host.
+ * @param input - The blocker, the cycle identity, the workspace and filter cache directories, the
+ *   reporter's filters, and optional seams.
+ * @returns The route, with the HTTPS filtering proof the executor runs on it first.
  */
 export function createProxyBlockerEvidenceRoute(
     input: CreateProxyBlockerEvidenceRouteInput,
-): EvidenceRouteHost {
+): ProxyBlockerEvidenceRoute {
     const now = input.now ?? (() => new Date().toISOString());
     const downloadFilters = input.dependencies?.downloadFilters ?? downloadOfficialFilters;
     const createSession = input.dependencies?.createBrowserSession ?? BrowserSession.create;
@@ -166,7 +126,8 @@ export function createProxyBlockerEvidenceRoute(
     let description: BlockerDescription | null = null;
     let filters: readonly DownloadedOfficialFilter[] = [];
     let unavailableFilterIds: readonly number[] = [];
-    let interception: Awaited<ReturnType<typeof probeTlsInterception>> | null = null;
+    // Set once an HTTPS request to the target went through the proxy's filter.
+    let httpsFilteringProven = false;
     // How the browser reaches the running proxy, and the revision it runs at; null until started.
     let route: BlockerRoute | null = null;
     let revision = 0;
@@ -196,18 +157,32 @@ export function createProxyBlockerEvidenceRoute(
         baselineHost === null ? null : baselineHost.enabledFilterIds();
 
     /**
-     * Ask the blocker to execute the current lists and rules, starting it on first use, and record
-     * where it runs now.
+     * The lists and rules the current phase executes.
      *
+     * @returns The configuration to ask the blocker for.
+     */
+    const currentConfiguration = (): BlockerApplyRequest => {
+        return {
+            enabledListIds: executedFilterIds(),
+            userRules,
+            listReplacement,
+        };
+    };
+
+    /**
+     * Ask the blocker to execute a configuration, starting it on first use, and record where it
+     * runs now.
+     *
+     * @param configuration - What to execute; the current phase's lists and rules by default.
      * @returns Whether the proxy restarted.
      */
-    const reconcile = async (): Promise<boolean> => {
+    const reconcile = async (
+        configuration: BlockerApplyRequest = currentConfiguration(),
+    ): Promise<boolean> => {
         if (route === null) {
             const started = await input.blocker.start({
                 lists: filters.map((filter) => ({ id: filter.filterId, content: filter.content })),
-                enabledListIds: executedFilterIds(),
-                userRules,
-                listReplacement,
+                ...configuration,
             });
             route = started.route;
             revision = started.revision;
@@ -215,11 +190,7 @@ export function createProxyBlockerEvidenceRoute(
             state = EvidenceRouteState.ForegroundRunning;
             return false;
         }
-        const applied = await input.blocker.apply({
-            enabledListIds: executedFilterIds(),
-            userRules,
-            listReplacement,
-        });
+        const applied = await input.blocker.apply(configuration);
         route = applied.route;
         revision = applied.revision;
         port = (await input.blocker.state()).port;
@@ -334,9 +305,36 @@ export function createProxyBlockerEvidenceRoute(
             }
         },
 
+        async proveHttpsFiltering(targetUrl: string): Promise<HttpsFilteringProof> {
+            if (!description) {
+                throw fail(EvidenceRouteFailureCode.RouteUnavailable);
+            }
+            try {
+                await reconcile(PROOF_CONFIGURATION);
+            } catch (error) {
+                // The public code is finite; the blocker's own failure is only diagnosable here.
+                console.error('blocker evidence route foreground start failed', error);
+                throw fail(EvidenceRouteFailureCode.ForegroundFailed, error);
+            }
+            const proof = await proveBlockerHttpsFiltering({
+                blocker: input.blocker,
+                route: route!,
+                targetUrl,
+                probe: input.dependencies?.probeInterception ?? probeTlsInterception,
+                probePlain: input.dependencies?.probePlainHttp ?? probePlainHttp,
+            });
+            httpsFilteringProven = proof.proven;
+            return proof;
+        },
+
         async launchEvidenceSession(request: EvidenceSessionRequest) {
             if (!description) {
                 throw fail(EvidenceRouteFailureCode.RouteUnavailable);
+            }
+            if (!httpsFilteringProven) {
+                throw new Error(
+                    'An evidence session launched before HTTPS filtering was proven for the route.',
+                );
             }
             try {
                 // The session must ride a proxy executing exactly the filters the current phase
@@ -367,23 +365,6 @@ export function createProxyBlockerEvidenceRoute(
                 throw fail(EvidenceRouteFailureCode.ForegroundFailed, error);
             }
             const certificate = route!;
-            if (!interception) {
-                // The proxy presents a leaf alone, so the browser can only accept it once the Host
-                // has verified the leaf is signed by this run's own authority.
-                const probe = input.dependencies?.probeInterception ?? probeTlsInterception;
-                interception = await probe(
-                    certificate.proxyUrl,
-                    request.targetUrl,
-                    certificate.certificateDerBase64,
-                ).catch(() => null);
-                request.logger.info(
-                    {
-                        outcome: interception?.outcome,
-                        leafIssuedByExpectedCa: interception?.leafIssuedByExpectedCa,
-                    },
-                    'blocker evidence route interception probe',
-                );
-            }
             try {
                 const browserRoot = await reserveBrowserRoot();
                 const certificateDer = Buffer.from(certificate.certificateDerBase64, 'base64');
@@ -421,7 +402,10 @@ export function createProxyBlockerEvidenceRoute(
                     noSandbox: request.noSandbox,
                     strictRoute,
                     strictRouteTargetUrl: request.targetUrl,
-                    strictRouteAcceptProxyAuthority: interception?.leafIssuedByExpectedCa === true,
+                    // The proxy presents its leaf alone, so the browser accepts it only by
+                    // accepting the proxy's authority; proveHttpsFiltering showed that authority
+                    // decrypting a request to the target.
+                    strictRouteAcceptProxyAuthority: true,
                     engineBlockedRequests: follower.read,
                 });
             } catch (error) {

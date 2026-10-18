@@ -54,6 +54,9 @@ The format is based on [Keep a Changelog], and this project adheres to
   intact and undamaged, as the candidate for review instead of dropping it.
 - Changed `apply_rule` to tell the agent how many candidate attempts the run
   has left, so it tries further rules instead of stopping early.
+- Changed the AdGuard CLI module to install the stable AdGuard CLI 1.4.13
+  instead of 1.5.0-rc.1, and to refuse a pre-release `releaseUrl`. Seed the
+  CLI home again after upgrading.
 
 ### Removed
 
@@ -132,6 +135,13 @@ The format is based on [Keep a Changelog], and this project adheres to
 - Fixed analysis-only results reporting the settings of the last
   `defaults_plus_required` comparison instead of the reporter-profile
   session, which the benchmark counted as `agent_mismatch`.
+- Fixed the AdGuard CLI route tunneling sites unfiltered when their
+  certificate chain ends at a root with SCT constraints, such as USERTrust RSA
+  or GlobalSign Root R3.
+- Fixed the AdGuard CLI route reporting a ready environment while it decrypted
+  no HTTPS: preparation now sends an HTTPS request to the issue's site through
+  the CLI, and a run whose request does not go through the filter ends
+  capability-limited with `https_filtering_unproven`.
 
 ## [1.0.1] - 2026-10-15
 

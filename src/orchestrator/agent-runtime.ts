@@ -3009,10 +3009,10 @@ export class AgentRuntime {
                     this.environmentHost,
                     this.cliEvidenceRoute.snapshot(),
                 );
-                // Granted only now: the session exists, so the foreground started and the probe
-                // accepted this run's authority. Before that the environment has installation and
-                // activation only, exactly as its descriptor advertises. The route exists only
-                // for the lock that activated it, so the grant names the locked selection.
+                // Granted only now: preparation proved the proxy filters the target's HTTPS, and
+                // the session exists. Before that the environment has installation and activation
+                // only, exactly as its descriptor advertises. The route exists only for the lock
+                // that activated it, so the grant names the locked selection.
                 const lockedKind = this.environmentHost.snapshot()?.selectedKind;
                 if (
                     !lockedKind ||
