@@ -46,6 +46,21 @@ their phase. Missing
 provenance, an unsupported candidate operation, or incomplete cleanup fails
 closed and cannot produce a verified candidate.
 
+On the extension route a run has one validation baseline. The environment is
+built from the session whose `apply_rule` runs the first experiment, and every
+later experiment replays that session's filter lists, Stealth Mode state and
+browser profile. A call refused before the environment is built, such as an
+edit the extension route cannot run, binds nothing. When the issue carries a
+reporter settings import and the blocker takes settings at launch, only a
+`reported_on_current` session with it can bind a verdict, so a call from any
+other session is refused before the build and the locked baseline is always
+one a verdict can come from. A Firefox-family blocker takes no settings, so
+the import binds nothing there. A later session that differs from the locked
+baseline gets a `validation_baseline_locked` refusal naming both baselines, so
+a verdict is never read as one for a session it did not run in. The CLI route
+has no such lock: its lists come from the activated CLI selection and its
+browser profile from the latest session.
+
 ## Issue revisions and limits
 
 A live issue and an `export issue` bundle enter the same verified-revision

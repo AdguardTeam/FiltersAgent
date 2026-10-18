@@ -165,13 +165,14 @@ export function benchmarkFailureKind(runResult: FixRunResult | null): BenchmarkF
  * terminal decision for the publication gate, so every analysis-only result carries
  * `indeterminate`.
  *
- * The result carries `environmentExecution` as soon as `apply_rule` prepared the environment, and
- * its browser sessions are then the projected phases in place of the sessions the agent launched.
- * Such a result is read from an observed phase B of any experiment only: a run refused after
- * preparation — an edit or a removal the environment cannot run, an environment that never became
- * ready — or one whose phase B failed counts as not reproduced, even when the agent's own prepared
- * session showed the problem. Only a result without `environmentExecution` is read from the
- * prepared sessions the agent launched.
+ * The result carries `environmentExecution` as soon as an `apply_rule` experiment prepared the
+ * environment, and its browser sessions are then the projected phases in place of the sessions the
+ * agent launched. Such a result is read from an observed phase B of any experiment only: a run
+ * refused after preparation — an environment that never became ready — or one whose phase B failed
+ * counts as not reproduced, even when the agent's own prepared session showed the problem. A call
+ * refused before the environment is built, such as an edit the extension route cannot run or a call
+ * from a session without the reporter's settings import, prepares nothing. Only a result without
+ * `environmentExecution` is read from the prepared sessions the agent launched.
  *
  * The two sources hold different bars. Phase B counts when its `targetObservation.symptomPresent`
  * is set, and the runner sets it unless vision found the symptom absent, so an indeterminate

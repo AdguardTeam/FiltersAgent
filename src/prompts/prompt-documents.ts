@@ -116,6 +116,13 @@ export const PromptDocumentName = {
     RejectionCliRouteLaunch: 'rejections/cli-route-launch',
 
     /**
+     * Guidance of an `apply_rule` refusal from a session without the reporter's settings import on
+     * an issue that carries one: launch that profile and run the experiment there. One guidance
+     * line per document line.
+     */
+    RejectionReporterSettingsExperiment: 'rejections/reporter-settings-experiment',
+
+    /**
      * Built-in AdGuard application instruction — the options-page steps that apply the reporter's
      * settings and the candidate to user filters, plus the verification declaration the host reads
      * back.

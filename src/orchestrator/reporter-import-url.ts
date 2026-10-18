@@ -14,7 +14,13 @@ import {
     parseReporterSettingsImportUrl,
     TRUSTED_REPORT_SETTINGS_HOSTS,
 } from '../browser/adguard-settings-import-url';
+import {
+    parseImportExpectations,
+    type AdGuardExtensionSettingsProfile,
+} from '../browser/adguard-extension-settings';
 import type { RawIssue } from '../github/fetch-issue';
+import { createLogger } from '../logger/logger';
+import { SettingsProfileKind } from '../types/settings-profile-kind';
 
 /**
  * Bounded HTTPS URL candidates extracted only to detect explicit reporter settings provenance.
@@ -139,4 +145,32 @@ export function reporterImportUrlRefusal(
             'carry are skipped at launch and recorded as a filter-selection approximation.',
         ],
     };
+}
+
+/**
+ * The import-URL digest of one prepared session's `reported_on_current` settings request.
+ *
+ * The request profile is the surviving provenance of what the session's application steps were
+ * asked to perform; the digest binds it to the trusted reporter URL terms in the issue text.
+ *
+ * @param profile - The settings profile the session launched with.
+ * @param verbose - Whether the run logs at debug level.
+ * @returns The canonical import digest, or undefined outside a parseable reporter request.
+ */
+export function reportedOnCurrentImportDigest(
+    profile: AdGuardExtensionSettingsProfile | undefined,
+    verbose: boolean,
+): string | undefined {
+    if (profile?.kind !== SettingsProfileKind.ReportedOnCurrent) {
+        return undefined;
+    }
+    try {
+        return parseImportExpectations(profile.importUrl).importUrlSha256;
+    } catch (error) {
+        createLogger({ verbose }).warn(
+            { error: error instanceof Error ? error.message : String(error) },
+            'the reported_on_current settings profile carries an unparseable import URL',
+        );
+        return undefined;
+    }
 }

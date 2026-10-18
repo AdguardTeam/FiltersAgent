@@ -94,6 +94,15 @@ The format is based on [Keep a Changelog], and this project adheres to
 - Fixed benchmark cases ending as `not_reproduced` when the agent saw the
   reported problem with the prepared blocker but verified no rule: the
   unfiltered session and the candidate phase no longer decide reproduction.
+- Fixed `apply_rule` running a session's experiment on the filter lists,
+  Stealth Mode state and browser profile of the session that ran the first
+  experiment, while reporting the verdict as this session's: such a call is
+  now refused with both baselines named. A call refused before its
+  experiment locks nothing, and on an issue with a reporter settings import
+  only the `reported_on_current` session runs experiments.
+- Fixed Firefox-family runs never verifying a rule when the issue carries an
+  AdGuard settings import: the blocker takes no settings, so the import no
+  longer binds its verdicts.
 - Fixed report comments cutting the reproduced symptom, the policy rationale
   and long rules mid-word: text up to 2,000 characters now renders whole,
   longer text ends at a sentence and says it was shortened, and rules are

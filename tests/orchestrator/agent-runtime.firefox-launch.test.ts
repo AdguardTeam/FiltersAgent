@@ -11,6 +11,7 @@ import type { LoadedInstruction } from '../../src/knowledge/instruction-loader';
 import type { PreparedExtension } from '../../src/local/prepared-extension';
 import { AgentRuntime, type AgentRuntimeOptions } from '../../src/orchestrator/agent-runtime';
 import { extensionFilteringExecutor } from '../../src/orchestrator/extension-filtering-executor';
+import { REPORTER_SETTINGS_SESSION_REQUIRED } from '../../src/orchestrator/validation-baseline-lock';
 import {
     FilteringExecutorRegistry,
     type ExecutorAdapterContext,
@@ -373,6 +374,70 @@ describe('AgentRuntime Firefox-family launch', () => {
                 declaredListKeys: ['declared:ublock-filters', 'declared:user-filters'],
             });
             expect(adapter.prepare).toHaveBeenCalledWith({ requestedLists: [] });
+        } finally {
+            await runtime.dispose();
+            await runtime.releaseHostState();
+        }
+    });
+
+    it('verifies rules on an issue that carries an AdGuard settings import', async () => {
+        // A uBlock Origin session takes no settings, so an AdGuard import in the issue names
+        // nothing it could reproduce: the declared baseline stays the one that verifies rules.
+        const importUrl =
+            'https://reports.adguard.com/settings/import.html?scheme_version=4&' +
+            'product_version=5.4.3.99&regular_filters=2,3&stealth.enabled=0';
+        const checkout = mkdtempSync(join(tmpdir(), 'firefox-import-checkout-'));
+        const adapterContexts: ExecutorAdapterContext[] = [];
+        const registry = new FilteringExecutorRegistry();
+        const { createAdapter: _production, ...registration } = extensionFilteringExecutor;
+        void _production;
+        registry.register({
+            ...registration,
+            createAdapter: (context) => {
+                adapterContexts.push(context);
+                return notReadyAdapter();
+            },
+        });
+        const runtime = await AgentRuntime.create(
+            {
+                ...firefoxRunOptions(checkout),
+                issue: { ...rawIssue, body: `${rawIssue.body}\n\nSettings: ${importUrl}` },
+                recorder: new TraceRecorder({
+                    runId: 'agent-runtime-firefox-import-test',
+                    issueNumber: rawIssue.number,
+                    mode: 'fix',
+                }),
+            },
+            {
+                createBaseRegistry: async () => baseRegistryWithGuidance(),
+                createBrowserSession: async () => ({ close: vi.fn() }) as unknown as BrowserSession,
+                createBrowserRegistry: async () => browserRegistryWithApplyRule(),
+                filteringExecutors: registry,
+            },
+        );
+        try {
+            const declaredFile = join(runtime.getHostStateRoot(), DECLARED_USER_FILTERS);
+            mkdirSync(dirname(declaredFile), { recursive: true });
+            writeFileSync(declaredFile, '', 'utf8');
+            await runtime.registry.dispatch('fetch_issue', { issueNumber: rawIssue.number });
+            await runtime.registry.dispatch('lookup_rule_guidance', {});
+            const launched = await runtime.registry.dispatch('launch_browser', {
+                extension: 'prepared',
+                targetUrl: 'https://example.test/article',
+                profile: browserProfile,
+            });
+
+            // The declared-baseline session is one a verdict can bind to.
+            expect(runtime.getLatestVerifiedSettingsEnvironment()?.sessionId).toBe(
+                (launched as { sessionId: string }).sessionId,
+            );
+
+            const applied = await runtime.registry.dispatch('apply_rule', {
+                candidateRule: 'example.test##.articleAdSlot',
+            });
+
+            expect(applied.errorKind).not.toBe(REPORTER_SETTINGS_SESSION_REQUIRED);
+            expect(adapterContexts).toHaveLength(1);
         } finally {
             await runtime.dispose();
             await runtime.releaseHostState();

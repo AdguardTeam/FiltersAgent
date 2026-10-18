@@ -3,9 +3,14 @@ import { applyRuleResultForModel, withRemainingCandidateAttempts } from './apply
 import {
     CandidateRefusalMemo,
     candidateRefusal,
-    isCandidateRefusal,
     unsupportedCandidateOperationRefusal,
 } from './candidate-refusals';
+import {
+    extensionBaselineSettingsFor,
+    refusalSparesCandidateAttempt,
+    reporterSettingsSessionRefusal,
+    ValidationBaselineLock,
+} from './validation-baseline-lock';
 import { createHash, randomUUID } from 'node:crypto';
 import * as v from 'valibot';
 import { withToolDeadline } from '../pi/session-tools';
@@ -22,10 +27,7 @@ import {
     inspectFullPageVisualCapture,
 } from '../analyzer/full-page-capture-inspection';
 import { visionOverviewRefusal } from '../pi/single-shot-input';
-import {
-    parseImportExpectations,
-    type AdGuardExtensionSettingsProfile,
-} from '../browser/adguard-extension-settings';
+import type { AdGuardExtensionSettingsProfile } from '../browser/adguard-extension-settings';
 import {
     readBundledFilterCatalogIds,
     requestedSettingsFilterIds,
@@ -66,7 +68,6 @@ import { ExtensionLaunchFamily } from '../environment/extension-launch';
 import {
     BrowserExtensionEnvironmentOptions,
     type BrowserExtensionSessionRequest,
-    type ExtensionBaselineSettings,
     type BrowserExtensionCreatedSession,
     type EnvironmentPhaseConfigurationResult,
 } from '../environment/browser-extension-environment';
@@ -157,7 +158,11 @@ import {
 import { extractBrowserLaunchSignal } from './browser-launch-signal';
 import { PhaseLabel } from '../types/validation';
 import { withCliExperimentVerdict } from './cli-candidate-experiment';
-import { reporterImportUrlRefusal, reporterSettingsImportUrls } from './reporter-import-url';
+import {
+    reportedOnCurrentImportDigest,
+    reporterImportUrlRefusal,
+    reporterSettingsImportUrls,
+} from './reporter-import-url';
 import { ReporterSettingsLimits } from './reporter-settings-limits';
 import { SettingsProfileKind } from '../types/settings-profile-kind';
 import {
@@ -201,6 +206,8 @@ import {
     launchBrowserAdvertisement,
     launchBrowserRefusal,
     launchBrowserRequestSchema,
+    launchBrowserSettingsPolicy,
+    LaunchBrowserSettingsPolicy,
     normalizeLaunchBrowserArguments,
     requestsUnsupportedProxyRegion,
 } from './launch-browser-arguments';
@@ -225,7 +232,6 @@ import {
     type AgentRuntimeScreenshotEvidence,
     type AgentRuntimeSessionState,
 } from './agent-runtime-session-evidence';
-import { extensionBaselineSettingsFromStateRead } from './phase-application-wiring';
 import {
     preparedExtensionActualContext,
     preparedExtensionLaunchChannel,
@@ -1152,6 +1158,11 @@ export class AgentRuntime {
      * Sole common execution recorder paired with the selected adapter.
      */
     private filteringEnvironmentRecorder?: environmentExecution.FilteringEnvironmentExecutionRecorder;
+
+    /**
+     * The session baseline the adapter replays, locked by the run's first experiment.
+     */
+    private readonly validationBaseline = new ValidationBaselineLock();
 
     /**
      * Provisional disposition updated after each common experiment.
@@ -2090,39 +2101,20 @@ export class AgentRuntime {
     /**
      * Determine whether this run requires exact reporter settings at termination.
      *
-     * @returns Whether trusted prompt-safe reporter text supplies a complete settings import URL
-     *   and no launch has yet proven that its filter set cannot run within the MV3 limits.
+     * A blocker that runs its declared baseline takes no settings at launch, so an AdGuard import
+     * in the issue names nothing its sessions could reproduce and requires nothing.
+     *
+     * @returns Whether the run's blocker takes model-selected settings, trusted prompt-safe
+     *   reporter text supplies a complete settings import URL, and no launch has yet proven that
+     *   its filter set cannot run within the MV3 limits.
      */
     private requiresCurrentReporterSettings(): boolean {
         return (
+            launchBrowserSettingsPolicy(this.preparedExtension) ===
+                LaunchBrowserSettingsPolicy.ModelSelected &&
             reporterSettingsImportUrls(this.options.issue).size > 0 &&
             !this.reporterSettingsLimits.parityProvenImpossible()
         );
-    }
-
-    /**
-     * The import-URL digest of one prepared session's `reported_on_current` settings request.
-     *
-     * The request profile is the surviving provenance of what the session's application steps were
-     * asked to perform; the digest binds it to the trusted reporter URL terms in the issue text.
-     *
-     * @param state - Prepared browser session whose request profile is inspected.
-     * @returns The canonical import digest, or undefined outside a parseable reporter request.
-     */
-    private reportedOnCurrentImportDigest(state: AgentRuntimeSessionState): string | undefined {
-        const profile = state.settingsProfile;
-        if (profile?.kind !== SettingsProfileKind.ReportedOnCurrent) {
-            return undefined;
-        }
-        try {
-            return parseImportExpectations(profile.importUrl).importUrlSha256;
-        } catch (error) {
-            createLogger({ verbose: this.options.verbose ?? false }).warn(
-                { error: error instanceof Error ? error.message : String(error) },
-                'the reported_on_current settings profile carries an unparseable import URL',
-            );
-            return undefined;
-        }
     }
 
     /**
@@ -2130,8 +2122,8 @@ export class AgentRuntime {
      *
      * Controlled profiles remain useful diagnostics. When the reporter supplied an explicit
      * settings import, only a prepared session whose request profile is `reported_on_current` with
-     * that same import provides reporter parity; without an import URL — or once a launch proved
-     * the reporter's set exceeds the MV3 limits — every verified prepared session qualifies.
+     * that same import provides reporter parity; whenever the run does not require that import (see
+     * `requiresCurrentReporterSettings`), every verified prepared session qualifies.
      *
      * @param state - Prepared browser session being considered for terminal evidence.
      * @returns Whether the prepared extension and required settings provenance are both verified.
@@ -2143,11 +2135,13 @@ export class AgentRuntime {
         const expectedImportDigests = reporterSettingsImportUrls(this.options.issue);
         const requestImportDigest =
             state.selectedSettingsProfileKind === SettingsProfileKind.ReportedOnCurrent
-                ? this.reportedOnCurrentImportDigest(state)
+                ? reportedOnCurrentImportDigest(
+                      state.settingsProfile,
+                      this.options.verbose ?? false,
+                  )
                 : undefined;
         return (
-            expectedImportDigests.size === 0 ||
-            this.reporterSettingsLimits.parityProvenImpossible() ||
+            !this.requiresCurrentReporterSettings() ||
             (requestImportDigest !== undefined && expectedImportDigests.has(requestImportDigest))
         );
     }
@@ -3431,26 +3425,6 @@ export class AgentRuntime {
     }
 
     /**
-     * The browser-observed settings the adapter locks and rechecks its baseline with.
-     *
-     * The host read-back taken at launch is the source of truth.
-     *
-     * @param state - Active prepared Extension session with its read-back record.
-     * @returns The observed filter identity sets.
-     * @throws When the session never recorded a launch read-back.
-     */
-    private extensionBaselineSettingsFor(
-        state: AgentRuntimeSessionState,
-    ): ExtensionBaselineSettings {
-        if (state.extensionBaselineReadBack) {
-            return extensionBaselineSettingsFromStateRead(state.extensionBaselineReadBack);
-        }
-        throw new Error(
-            'A verified prepared Extension session requires the launch read-back record.',
-        );
-    }
-
-    /**
      * Classify and record one failed phase-session bootstrap.
      *
      * Only infrastructure-shaped failures are recorded: browser launch faults and settings-apply
@@ -3576,10 +3550,10 @@ export class AgentRuntime {
     private async ensureFilteringEnvironment(
         state: AgentRuntimeSessionState,
     ): Promise<EnvironmentAdapterLimitation | null> {
-        // This runs both eagerly after activation and lazily from the candidate path, so it must
-        // be idempotent. Building a second adapter re-binds the actual execution context, which
-        // the environment host refuses — a run would reach apply_rule and lose it to exactly
-        // that, after the whole investigation had already been paid for.
+        // This runs from every candidate that reaches an experiment, so it must be idempotent.
+        // Building a second adapter re-binds the actual execution context, which the environment
+        // host refuses; the first adapter keeps the session it was built from, and the validation
+        // baseline lock answers a later session that differs from it.
         if (this.filteringEnvironmentAdapter && this.filteringEnvironmentRecorder) {
             return this.filteringEnvironmentDisposition?.failure ?? null;
         }
@@ -3634,7 +3608,7 @@ export class AgentRuntime {
         let firefoxExtensionOptions: FirefoxExtensionEnvironmentOptions | undefined;
         try {
             const environmentCallbacks = {
-                extensionBaselineSettingsFor: () => this.extensionBaselineSettingsFor(state),
+                extensionBaselineSettingsFor: () => extensionBaselineSettingsFor(state),
                 createSession: async (request: BrowserExtensionSessionRequest) =>
                     await this.createFilteringPhaseSession(state, request),
                 phaseConfiguration: this.phaseConfigurationFor(state),
@@ -3840,20 +3814,11 @@ export class AgentRuntime {
                 requiredAction: 'launch_prepared_extension',
             };
         }
-        const preparationLimitation = await this.ensureFilteringEnvironment(state);
-        if (preparationLimitation) {
-            return {
-                validationSkipped: true,
-                errorKind: 'environment_capability_limited',
-                retryable: false,
-                limitation: preparationLimitation,
-            };
-        }
-        const adapter = this.filteringEnvironmentAdapter!;
-        const recorder = this.filteringEnvironmentRecorder!;
         // Baseline mutation needs an environment that can edit its published baseline; the
         // browser-extension route cannot, so the refusal is typed and terminal for the shape
-        // instead of demoting the environment lock through an experiment limitation.
+        // instead of demoting the environment lock through an experiment limitation. It, the
+        // remembered refusals and the reporter-settings refusal below come before the environment
+        // is built: a call that runs no experiment must not bind the run's baseline to its session.
         if (candidate.operation !== CandidateOperation.Add && !this.cliEvidenceRoute) {
             return unsupportedCandidateOperationRefusal(
                 candidate.operation,
@@ -3875,10 +3840,33 @@ export class AgentRuntime {
                         rule: candidate.rule,
                         originalRule: candidate.originalRule!,
                     };
-        const knownRefusal = this.candidateRefusals.recall(environmentCandidate);
-        if (knownRefusal) {
-            return knownRefusal;
+        const earlyRefusal =
+            this.candidateRefusals.recall(environmentCandidate) ??
+            reporterSettingsSessionRefusal(
+                state,
+                !this.cliEvidenceRoute && this.requiresCurrentReporterSettings(),
+                this.isTerminalCurrentPreparedState(state),
+            );
+        if (earlyRefusal) {
+            return earlyRefusal;
         }
+        const preparationLimitation = await this.ensureFilteringEnvironment(state);
+        if (preparationLimitation) {
+            return {
+                validationSkipped: true,
+                errorKind: 'environment_capability_limited',
+                retryable: false,
+                limitation: preparationLimitation,
+            };
+        }
+        // The extension environment replays the session it was built from in every experiment,
+        // so a later session with other lists, Stealth Mode or profile is refused, not run on it.
+        const baselineRefusal = this.cliEvidenceRoute ? null : this.validationBaseline.admit(state);
+        if (baselineRefusal) {
+            return baselineRefusal;
+        }
+        const adapter = this.filteringEnvironmentAdapter!;
+        const recorder = this.filteringEnvironmentRecorder!;
         const candidateRule = candidate.rule;
         // The baseline is recomputed at the verdict, after the host has written the candidate into
         // the declared blocker-state file; that file lives in the run's host-state root, so both
@@ -4446,10 +4434,13 @@ export class AgentRuntime {
                         }
                     }
                     if (name === 'apply_rule' && pendingCandidate) {
-                        if (freshLedgerKey !== undefined && isCandidateRefusal(result.errorKind)) {
-                            // A candidate refusal judged the request — its operation or the line it
-                            // names — not the candidate's merit: release the slot registered by
-                            // this call so the semantic attempts stay spendable on rules the
+                        if (
+                            freshLedgerKey !== undefined &&
+                            refusalSparesCandidateAttempt(result.errorKind)
+                        ) {
+                            // The refusal judged the request — its operation, the line it names or
+                            // its session — not the candidate's merit: release the slot registered
+                            // by this call so the semantic attempts stay spendable on rules the
                             // environment can run.
                             this.candidateAttempts.delete(freshLedgerKey);
                             this.candidateAttemptSessionIds.delete(freshLedgerKey);

@@ -186,12 +186,13 @@ Reproduction comes from the agent's own check with the prepared blocker. A
 symptom seen only without the blocker, or only with the agent's candidate
 applied, does not count.
 
-- Once `apply_rule` has prepared the environment, only the baseline phase of
-  an `apply_rule` experiment counts. It counts unless vision found the problem
-  absent there, so an indeterminate classification counts as reproduced. A run
-  refused after preparation, or whose baseline phase failed, is
-  `not_reproduced` even when the agent's own prepared session showed the
-  problem.
+- Once an `apply_rule` experiment has prepared the environment, only the
+  baseline phase of an experiment counts. It counts unless vision found the
+  problem absent there, so an indeterminate classification counts as
+  reproduced. A run refused after preparation, or whose baseline phase failed,
+  is `not_reproduced` even when the agent's own prepared session showed the
+  problem. An `apply_rule` call refused before the environment is built
+  prepares nothing.
 - Without a prepared environment, a prepared session the agent launched counts
   when its complete, vision-verified capture shows the problem.
 
