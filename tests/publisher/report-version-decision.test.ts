@@ -5,7 +5,18 @@ import {
     VersionUpdateDecision,
 } from '../../src/publisher/report-version-decision';
 import type { VersionUpdateDecisionInput } from '../../src/publisher/report-version-decision';
-import { SymptomObservation } from '../../src/types/fix-run-result';
+import {
+    buildReportTemplateValues,
+    renderReportComment,
+    summarizeReportOutcome,
+    type ReportRunResultInput,
+} from '../../src/publisher/report-render';
+import { BUILT_IN_REPORT_TEMPLATE } from '../../src/publisher/report-template';
+import {
+    ExtensionManifestVersion,
+    PreparedExtensionSource,
+} from '../../src/environment/extension-preparation';
+import { FixRunStatus, SymptomObservation } from '../../src/types/fix-run-result';
 
 // `Report`-shaped environment fixture mirroring the intake field this decision consumes
 // (`environment.version`, verbatim); the tests feed the plain string extracted from it below,
@@ -183,5 +194,81 @@ describe('renderVersionUpdateHint', () => {
         expect(renderVersionUpdateHint(reproduced)).toBe('');
         expect(renderVersionUpdateHint(equalVersion)).toBe('');
         expect(renderVersionUpdateHint(unparsedVersion)).toBe('');
+    });
+});
+
+const ARTIFACTS_LINK = 'https://github.com/owner/repo/actions/runs/42#artifacts';
+
+/**
+ * Fix the run shape the version-update hint decision rides on: an executor build whose version tag
+ * the report names as the current version, with the symptom observation as the caller decides it.
+ */
+function olderReportedRun(symptomObservation: SymptomObservation): ReportRunResultInput {
+    return {
+        runStatus: FixRunStatus.NotReproduced,
+        fallbackReason: null,
+        fallbackDetail: null,
+        symptomObservation,
+        candidatePatch: null,
+        extensionProvenance: {
+            source: PreparedExtensionSource.PinnedRelease,
+            extensionPath: '/run/extension',
+            manifestVersion: ExtensionManifestVersion.Mv3,
+            extensionSourceSha256: 'c'.repeat(64),
+            // A real pinned release's tag, never a bare dotted-numeric version; the hint must
+            // compare against environmentSelection.actual.productVersion below, not this display
+            // value.
+            extensionSourceTag: 'v4.6.0',
+        },
+        environmentSelection: { actual: { productVersion: '4.6.0' } },
+    };
+}
+
+describe('version update hint in the report', () => {
+    it('renders the update suggestion into the built-in report for an older version that does not reproduce', () => {
+        const summary = summarizeReportOutcome(
+            olderReportedRun(SymptomObservation.NotReproduced),
+            {},
+            ARTIFACTS_LINK,
+            REPORTED_VERSION,
+        );
+        const values = buildReportTemplateValues(summary);
+
+        expect(values.versionUpdateHint.length).toBeGreaterThan(0);
+        expect(values.versionUpdateHint).toContain('4.1.2');
+        expect(values.versionUpdateHint).toContain('4.6.0');
+
+        const rendered = renderReportComment(BUILT_IN_REPORT_TEMPLATE, values);
+        expect(rendered).toContain('4.1.2');
+        expect(rendered).toContain('4.6.0');
+    });
+
+    it('keeps the hint empty and the current version named when the symptom reproduces', () => {
+        const summary = summarizeReportOutcome(
+            olderReportedRun(SymptomObservation.Reproduced),
+            {},
+            ARTIFACTS_LINK,
+            REPORTED_VERSION,
+        );
+        const values = buildReportTemplateValues(summary);
+
+        expect(values.versionUpdateHint).toBe('');
+        // The display executor version is still the provenance tag, unaffected by the hint's own
+        // (unused, since the symptom reproduced) comparison input.
+        expect(values.executorVersion).toBe('v4.6.0');
+
+        const rendered = renderReportComment(BUILT_IN_REPORT_TEMPLATE, values);
+        expect(rendered).toContain('4.6.0');
+    });
+
+    it('leaves the hint empty when the run carries no reported version', () => {
+        const summary = summarizeReportOutcome(
+            olderReportedRun(SymptomObservation.NotReproduced),
+            {},
+            ARTIFACTS_LINK,
+        );
+
+        expect(summary.versionUpdateHint).toBe('');
+        expect(buildReportTemplateValues(summary).versionUpdateHint).toBe('');
     });
 });

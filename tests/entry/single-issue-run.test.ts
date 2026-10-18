@@ -1,41 +1,23 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Octokit } from '@octokit/rest';
-import * as v from 'valibot';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import {
-    EffectiveMode,
-    FixRunStatus,
-    SymptomObservation,
-    VerificationStatus,
-} from '../../src/types/fix-run-result';
+import { FixRunStatus, SymptomObservation } from '../../src/types/fix-run-result';
 import type { FixRunResult } from '../../src/types/fix-run-result';
-import { BrowserMode } from '../../src/types/browser-mode';
 import {
     ExtensionManifestVersion,
     PreparedExtensionSource,
 } from '../../src/environment/extension-preparation';
-import { IssueState } from '../../src/types/issue-state';
 import type { RawIssue } from '../../src/github/fetch-issue';
 import { AUTOMATIC_UPSTREAM_PROMPT_TEXT_LIMITS } from '../../src/github/prompt-safety';
-import { IntakeExtractionKind, type IntakeExtraction } from '../../src/intake/extract-report';
-import type { ExtractReport } from '../../src/intake/extract-issue-facts';
-import { ReportSchema, ReportProblemType, type Report } from '../../src/intake/report';
+import { IntakeExtractionKind } from '../../src/intake/extract-report';
 import type { Logger } from '../../src/logger/logger';
 import {
     DefaultSingleIssueFailure,
     type DefaultSingleIssueDependencies,
 } from '../../src/entry/single-issue-run-types';
 import type { FixCoreIssueInput, FixCoreOptions } from '../../src/orchestrator/fix-core-inputs';
-import type {
-    FiltersCommand,
-    FiltersPreparationDependencies,
-} from '../../src/local/filters-preparer';
-import type { VerifiedIssueRevision } from '../../src/local/issue-revision';
-import { loadVerifiedExportedIssueRevision } from '../../src/local/issue-revision';
-import { buildExportedIssueRevision } from '../../src/local/issue-revision';
-import { buildLocalIssueSnapshot } from '../../src/local/issue-snapshot';
+import type { FiltersCommand } from '../../src/local/filters-preparer';
 import {
     REPORT_COMMENT_MARKER_PREFIX,
     parseReportRevisionMarker,
@@ -49,338 +31,21 @@ import { testCoreConfig } from '../config/test-core-config';
 import { runDefaultSingleIssue } from '../../src/entry/single-issue-run';
 import { fetchedIssueRevisionDigest } from '../../src/entry/single-issue-revision-digest';
 import { renderReportRevisionMarker } from '../../src/publisher/report-publisher';
-
-/**
- * The detached checkout commit every faked git run resolves to; a full 40-character SHA so the
- * preparer's own verification accepts it.
- */
-const ISSUE_COMMIT_FIXTURE = 'a'.repeat(40);
-
-/**
- * The derived remote URL the entry must hand the preparer for the named repository.
- */
-const REPOSITORY_REMOTE_URL_FIXTURE = 'https://github.com/remote-owner/remote-list.git';
-
-/**
- * Directories created for the running scenario, removed after each test.
- */
-const createdDirs: string[] = [];
-
-/**
- * Create one throwaway directory for the running scenario.
- *
- * @param prefix - Directory name prefix.
- * @returns Absolute path to the created directory.
- */
-function scratchDir(prefix: string): string {
-    const dir = mkdtempSync(join(tmpdir(), prefix));
-    createdDirs.push(dir);
-    return dir;
-}
-
-afterEach(() => {
-    for (const dir of createdDirs.splice(0)) {
-        rmSync(dir, { recursive: true, force: true });
-    }
-});
-
-/**
- * Build one raw prompt-safe issue fixture for the named number.
- *
- * @param number - Issue number the fixture carries.
- * @returns The validated-shape raw issue.
- */
-function rawIssueFixture(number: number): RawIssue {
-    return {
-        number,
-        reporterAuthor: 'reporter',
-        updatedAt: '2026-09-09T10:00:00.000Z',
-        url: `https://github.com/source-owner/source-list/issues/${String(number)}`,
-        title: 'Ad banner stays visible',
-        body: 'Repro steps spell the reported defect.',
-        state: IssueState.Open,
-        labels: [],
-        assignee: null,
-        comments: [],
-    };
-}
-
-/**
- * Build a stable terminal investigation result for the named number.
- *
- * @param issueNumber - Issue the investigation examined.
- * @returns Complete core result in the no-patch half.
- */
-function processedRunResult(issueNumber: number): FixRunResult {
-    return {
-        issueNumber,
-        domain: 'example.com',
-        runStatus: FixRunStatus.NotReproduced,
-        requestedBrowserMode: BrowserMode.Auto,
-        effectiveMode: EffectiveMode.Browser,
-        verificationStatus: VerificationStatus.NotAttempted,
-        fallbackReason: null,
-        fallbackDetail: null,
-        candidatePatch: null,
-        artifactPaths: { screenshots: [], domSnapshot: null, har: null, trace: null },
-        reasoning: 'The reported symptom was absent.',
-        repository: null,
-        baseSha: null,
-    };
-}
-
-/**
- * Build the instruction text a fixture checkout carries.
- *
- * @returns Instruction Markdown with a report template section.
- */
-function fixtureInstruction(): string {
-    return ['# Guidance', '## Report template', 'Outcome: {{outcome}}', ''].join('\n');
-}
-
-/**
- * One faked filters workspace: the git flow runs scripted, the temporary lifecycle is in-memory,
- * and the prepared checkout root optionally carries an AGENTS.md.
- */
-interface PreparedWorkspace {
-    /**
-     * Local source the request names, existing only when `localSourceAvailable` was set.
-     */
-    localSourcePath: string;
-
-    /**
-     * Checkout root the prepared checkout hands to the run.
-     */
-    checkoutRoot: string;
-
-    /**
-     * Command and filesystem seams wired for the filters preparer.
-     */
-    dependencies: FiltersPreparationDependencies;
-
-    /**
-     * Git commands the preparer issued, in order.
-     */
-    commands: FiltersCommand[];
-
-    /**
-     * Paths the disposable lifecycle removed.
-     */
-    removedPaths: string[];
-}
-
-/**
- * Prepare one faked filters workspace.
- *
- * @param options - Whether the local source exists, whether the checkout carries an AGENTS.md, and
- *   an optional failing answer for the remote default-ref resolution.
- * @returns The wired workspace.
- */
-function preparedWorkspace(options: {
-    localSourceAvailable: boolean;
-    withInstruction: boolean;
-    lsRemoteFailure?: { exitCode: number; stderr: string };
-}): PreparedWorkspace {
-    const localSourcePath = scratchDir('single-issue-case-');
-    const checkoutRoot = join(localSourcePath, 'source');
-    mkdirSync(checkoutRoot, { recursive: true });
-    if (options.withInstruction) {
-        const instructionPath = join(checkoutRoot, DEFAULT_INSTRUCTION_PATH);
-        mkdirSync(dirname(instructionPath), { recursive: true });
-        writeFileSync(instructionPath, fixtureInstruction(), 'utf8');
-    }
-    const commands: FiltersCommand[] = [];
-    const removedPaths: string[] = [];
-    return {
-        localSourcePath,
-        checkoutRoot,
-        commands,
-        removedPaths,
-        dependencies: {
-            commandRunner: {
-                run: async (command) => {
-                    commands.push(command);
-                    if (command.args[0] === 'ls-remote') {
-                        if (options.lsRemoteFailure !== undefined) {
-                            return {
-                                exitCode: options.lsRemoteFailure.exitCode,
-                                stdout: '',
-                                stderr: options.lsRemoteFailure.stderr,
-                            };
-                        }
-                        return {
-                            exitCode: 0,
-                            stdout: `ref: refs/heads/main\tHEAD\n${ISSUE_COMMIT_FIXTURE}\tHEAD\n`,
-                            stderr: '',
-                        };
-                    }
-                    if (command.args[0] === 'rev-parse') {
-                        return {
-                            exitCode: 0,
-                            stdout: `${ISSUE_COMMIT_FIXTURE}\n`,
-                            stderr: '',
-                        };
-                    }
-                    return { exitCode: 0, stdout: '', stderr: '' };
-                },
-            },
-            fileSystem: {
-                createTemporaryDirectory: async () => localSourcePath,
-                exists: async (path) => path === localSourcePath && options.localSourceAvailable,
-                remove: async (path) => {
-                    removedPaths.push(path);
-                },
-            },
-        },
-    };
-}
-
-/**
- * One exported issue revision bundle on disk.
- *
- * @param issueNumber - Issue the bundle exports.
- * @returns The portable path and the verified revision.
- */
-function exportedIssueFixture(issueNumber: number): {
-    issueFile: string;
-    revision: VerifiedIssueRevision;
-} {
-    const dir = scratchDir('single-issue-export-');
-    const issueFile = join(dir, 'issue.json');
-    const snapshot = buildLocalIssueSnapshot(rawIssueFixture(issueNumber), []);
-    const envelope = buildExportedIssueRevision({
-        repository: 'example/lab',
-        issueNumber,
-        sourceUpdatedAt: '2026-09-09T10:02:00.000Z',
-        capturedAt: '2026-09-09T10:03:00.000Z',
-        snapshot,
-    });
-    writeFileSync(issueFile, JSON.stringify(envelope), 'utf8');
-    return { issueFile, revision: loadVerifiedExportedIssueRevision(issueFile) };
-}
-
-/**
- * The issue-read API the publication guard drives, answering an open issue with an empty timeline.
- *
- * @returns The `issues.get`/`listEventsForTimeline` fakes and the `paginate` that drains them.
- */
-function openIssueApi(): {
-    issues: Record<string, ReturnType<typeof vi.fn>>;
-    paginate: ReturnType<typeof vi.fn>;
-} {
-    return {
-        issues: {
-            get: vi.fn().mockResolvedValue({
-                data: { state: 'open', assignees: [], labels: [] },
-            }),
-            listEventsForTimeline: vi.fn(),
-        },
-        paginate: vi.fn().mockResolvedValue([]),
-    };
-}
-
-/**
- * Build the fake issue-comment API the real publisher drives.
- *
- * @returns Octokit recording the issue-comment calls.
- */
-function issueCommentOctokit(): Octokit {
-    const issueApi = openIssueApi();
-    return {
-        paginate: issueApi.paginate,
-        rest: {
-            issues: {
-                ...issueApi.issues,
-                listComments: vi.fn().mockResolvedValue({ data: [] }),
-                createComment: vi.fn().mockResolvedValue({
-                    data: {
-                        id: 501,
-                        html_url:
-                            'https://github.com/remote-owner/remote-list/issues/4#issuecomment-501',
-                    },
-                }),
-            },
-            users: {
-                getAuthenticated: vi.fn().mockResolvedValue({ data: { login: 'agent-bot' } }),
-            },
-        },
-    } as unknown as Octokit;
-}
-
-/**
- * The platform's own refusal message the fake comment write rejects with; the failed run must carry
- * it verbatim into `failureDetail` instead of swallowing the publication failure.
- */
-const PLATFORM_WRITE_REFUSAL = 'platform write refused: report comment rejected';
-
-/**
- * Build the issue-comment API whose write is refused by the platform, so the real
- * `publishReportOnce` dedupe runs its full path into a rejecting `createComment`.
- *
- * @returns Octokit whose `createComment` rejects.
- */
-function refusedCommentOctokit(): Octokit {
-    const issueApi = openIssueApi();
-    return {
-        paginate: issueApi.paginate,
-        rest: {
-            issues: {
-                ...issueApi.issues,
-                listComments: vi.fn().mockResolvedValue({ data: [] }),
-                createComment: vi.fn().mockRejectedValue(new Error(PLATFORM_WRITE_REFUSAL)),
-            },
-            users: {
-                getAuthenticated: vi.fn().mockResolvedValue({ data: { login: 'agent-bot' } }),
-            },
-        },
-    } as unknown as Octokit;
-}
-
-/**
- * Build one schema-valid report fixture a scripted intake extraction resolves to.
- *
- * @param version - Optional product version to carry in the environment payload.
- * @returns The validated report.
- */
-function fixtureReport(version?: string): Report {
-    return v.parse(ReportSchema, {
-        siteUrls: ['https://example.com/watch?v=1'],
-        problemType: ReportProblemType.Ads,
-        screenshots: [],
-        environment: {
-            product: 'AdGuard Ad Filter',
-            ...(version !== undefined ? { version } : {}),
-        },
-        enabledLists: [{ name: 'BaseFilter' }],
-        userRules: [],
-        reproductionSteps: ['Open the page'],
-    });
-}
-
-/**
- * Script the intake extraction seam so every call resolves to one fixed outcome.
- *
- * @param outcome - The extraction outcome each call returns.
- * @returns The extraction callable wired as a Vitest mock.
- */
-function scriptedExtractReport(outcome: IntakeExtraction): ExtractReport {
-    return vi.fn(async () => outcome);
-}
-
-/**
- * Build the dependency spread every scenario injects so the run's intake extraction never builds a
- * real provider client.
- *
- * @returns The dependencies fragment carrying the scripted extraction seam.
- */
-function extractedReportSeam(): { extractReport: ExtractReport } {
-    return {
-        extractReport: scriptedExtractReport({
-            kind: IntakeExtractionKind.Report,
-            report: fixtureReport(),
-        }),
-    };
-}
+import {
+    exportedIssueFixture,
+    extractedReportSeam,
+    fixtureReport,
+    issueCommentOctokit,
+    PLATFORM_WRITE_REFUSAL,
+    preparedWorkspace,
+    processedRunResult,
+    rawIssueFixture,
+    refusedCommentOctokit,
+    removeScratchDirs,
+    REPOSITORY_REMOTE_URL_FIXTURE,
+    scratchDir,
+    scriptedExtractReport,
+} from './single-issue-run-fixtures';
 
 /**
  * One counting logger fake: the pino level methods a diagnosis assertion reads, each spied.
@@ -517,6 +182,50 @@ async function runSealedWithStatus(
     );
 }
 
+afterEach(removeScratchDirs);
+
+/**
+ * Run one issue labelled in progress, forced or not, against a fresh workspace.
+ *
+ * @param force - Whether the run is forced past the in-progress label.
+ * @returns The run result and the issue-comment fake it posted through.
+ */
+async function runOnInProgressIssue(force: boolean) {
+    const workspace = preparedWorkspace({
+        localSourceAvailable: true,
+        withInstruction: false,
+    });
+    const octokit = issueCommentOctokit();
+    vi.mocked(octokit.rest.issues.get as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+        data: { state: 'open', assignees: [], labels: [{ name: 'a: in progress' }] },
+    });
+    const result = await runDefaultSingleIssue(
+        {
+            config: testCoreConfig(),
+            slug: { owner: 'remote-owner', repo: 'remote-list' },
+            checkoutPath: workspace.localSourcePath,
+            issueNumber: 4,
+            token: 'test-token',
+            commentsEnabled: true,
+            screenshotsBranch: 'filters-agent-screenshots',
+            inProgressLabels: ['A: In progress'],
+            force,
+            artifactsDir: join(scratchDir('single-issue-artifacts-'), 'out'),
+        },
+        {
+            preparationDependencies: workspace.dependencies,
+            ...extractedReportSeam(),
+            octokit,
+            investigate: async () => processedRunResult(4),
+            fetchIssue: async (config, issueNumber) => {
+                void config;
+                return rawIssueFixture(issueNumber);
+            },
+        },
+    );
+    return { result, octokit };
+}
+
 describe('runDefaultSingleIssue', () => {
     it('investigates a checkout-sourced issue with the threaded options and posts no comment when publishing is disabled', async () => {
         const workspace = preparedWorkspace({ localSourceAvailable: true, withInstruction: true });
@@ -643,43 +352,6 @@ describe('runDefaultSingleIssue', () => {
         expect(result.kind).toBe('processed');
         expect(capturedMaxDurationMs).toBe(1_800_000);
         expect(capturedPromptTextLimits).toBe(AUTOMATIC_UPSTREAM_PROMPT_TEXT_LIMITS);
-    });
-
-    it("shows the run's own reasoning when the session ended without a model decision", async () => {
-        // The host sealed the session, so no model decision reached the report, and the comment
-        // would show nothing of what the run found.
-        const workspace = preparedWorkspace({ localSourceAvailable: true, withInstruction: false });
-        const artifactsDir = join(scratchDir('single-issue-artifacts-'), 'out');
-        const sealedResult: FixRunResult = {
-            ...processedRunResult(4),
-            runStatus: FixRunStatus.AnalysisOnly,
-            reasoning: 'The article shows an empty .module_ad container in the sidebar.',
-        };
-
-        await runDefaultSingleIssue(
-            {
-                config: testCoreConfig(),
-                slug: { owner: 'remote-owner', repo: 'remote-list' },
-                checkoutPath: workspace.localSourcePath,
-                issueNumber: 4,
-                commentsEnabled: false,
-                screenshotsBranch: 'filters-agent-screenshots',
-                artifactsDir,
-            },
-            {
-                preparationDependencies: workspace.dependencies,
-                ...extractedReportSeam(),
-                investigate: () => Promise.resolve(sealedResult),
-                fetchIssue: (config, issueNumber) => {
-                    void config;
-                    return Promise.resolve(rawIssueFixture(issueNumber));
-                },
-            },
-        );
-
-        expect(readFileSync(join(artifactsDir, 'report-comment.md'), 'utf8')).toContain(
-            'empty .module_ad container',
-        );
     });
 
     it('posts one revision-marked report from the snapshot digest under the slug identity when a token enables comments', async () => {
@@ -2082,46 +1754,8 @@ describe('runDefaultSingleIssue', () => {
     });
 
     it('skips an issue labelled in progress before intake, unless the run is forced', async () => {
-        const runOn = async (force: boolean) => {
-            const workspace = preparedWorkspace({
-                localSourceAvailable: true,
-                withInstruction: false,
-            });
-            const octokit = issueCommentOctokit();
-            vi.mocked(
-                octokit.rest.issues.get as unknown as ReturnType<typeof vi.fn>,
-            ).mockResolvedValue({
-                data: { state: 'open', assignees: [], labels: [{ name: 'a: in progress' }] },
-            });
-            const result = await runDefaultSingleIssue(
-                {
-                    config: testCoreConfig(),
-                    slug: { owner: 'remote-owner', repo: 'remote-list' },
-                    checkoutPath: workspace.localSourcePath,
-                    issueNumber: 4,
-                    token: 'test-token',
-                    commentsEnabled: true,
-                    screenshotsBranch: 'filters-agent-screenshots',
-                    inProgressLabels: ['A: In progress'],
-                    force,
-                    artifactsDir: join(scratchDir('single-issue-artifacts-'), 'out'),
-                },
-                {
-                    preparationDependencies: workspace.dependencies,
-                    ...extractedReportSeam(),
-                    octokit,
-                    investigate: async () => processedRunResult(4),
-                    fetchIssue: async (config, issueNumber) => {
-                        void config;
-                        return rawIssueFixture(issueNumber);
-                    },
-                },
-            );
-            return { result, octokit };
-        };
-
-        const unforced = await runOn(false);
-        const forced = await runOn(true);
+        const unforced = await runOnInProgressIssue(false);
+        const forced = await runOnInProgressIssue(true);
 
         expect(unforced.result.kind).toBe('skipped');
         expect(unforced.result.kind === 'skipped' && unforced.result.reason).toContain(

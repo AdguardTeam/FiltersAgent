@@ -8,8 +8,18 @@ import { AgentTerminationReason } from '../../src/types/agent-termination-reason
 import { BrowserFallbackReason } from '../../src/types/browser-fallback-reason';
 import { FixRunStatus, SymptomObservation } from '../../src/types/fix-run-result';
 import { InfrastructureFailureReason } from '../../src/types/infrastructure-failure-reason';
-import type { MissingInformationEntry } from '../../src/types/missing-information';
-import { RepositoryLintStatus } from '../../src/types/repository-lint';
+import {
+    MAX_MISSING_INFORMATION_DETAIL_CHARACTERS,
+    type MissingInformationEntry,
+} from '../../src/types/missing-information';
+import {
+    FixOutcomeKind,
+    MAX_SUMMARY_LENGTH,
+    ReproductionStatus,
+    type FixOutcome,
+} from '../../src/types/fix-outcome';
+import { PolicyDecisionKind } from '../../src/types/policy';
+import { CandidateVisualAdLayoutResidue } from '../../src/types/candidate-visual-review';
 import { BUILT_IN_REPORT_TEMPLATE } from '../../src/publisher/report-template';
 import {
     buildReportTemplateValues,
@@ -17,33 +27,9 @@ import {
     summarizeReportOutcome,
 } from '../../src/publisher/report-render';
 import type { ReportOutcomeSummary, ReportRunResultInput } from '../../src/publisher/report-render';
+import { CHARACTER_REFERENCE_PATTERN, liveGitHubConstructs, readerView } from './rendered-markdown';
 
 const ARTIFACTS_LINK = 'https://github.com/owner/repo/actions/runs/42#artifacts';
-
-/**
- * Fix the run shape the version-update hint decision rides on: an executor build whose version tag
- * the report names as the current version, with the symptom observation as the caller decides it.
- */
-function olderReportedRun(symptomObservation: SymptomObservation): ReportRunResultInput {
-    return {
-        runStatus: FixRunStatus.NotReproduced,
-        fallbackReason: null,
-        fallbackDetail: null,
-        symptomObservation,
-        candidatePatch: null,
-        extensionProvenance: {
-            source: PreparedExtensionSource.PinnedRelease,
-            extensionPath: '/run/extension',
-            manifestVersion: ExtensionManifestVersion.Mv3,
-            extensionSourceSha256: 'c'.repeat(64),
-            // A real pinned release's tag, never a bare dotted-numeric version; the hint must
-            // compare against environmentSelection.actual.productVersion below, not this display
-            // value.
-            extensionSourceTag: 'v4.6.0',
-        },
-        environmentSelection: { actual: { productVersion: '4.6.0' } },
-    };
-}
 
 function patchProposedSummary(): ReportOutcomeSummary {
     return {
@@ -55,7 +41,7 @@ function patchProposedSummary(): ReportOutcomeSummary {
         listPlace: 'BaseFilter/sections/specific.txt',
         executor: 'Pinned prebuilt release',
         executorVersion: '1.2.89',
-        policyRationale: 'first-party ad with a verified candidate; no paywall',
+        policyRationale: 'A first-party ad with a verified candidate. No paywall.',
         missingInformation: [],
         artifactsLink: ARTIFACTS_LINK,
     };
@@ -256,98 +242,85 @@ describe('buildReportTemplateValues', () => {
         expect(buildReportTemplateValues(patchProposedSummary()).missingInformation).toBe('');
     });
 
-    it('escapes, flattens, and bounds model-authored text', () => {
-        const values = buildReportTemplateValues({
-            outcome: 'Candidate rule proposed',
-            outcomeReason:
-                'Fallback — Launch failed: ad & banner <img> injected\nnext line "quoted" text',
-            versionUpdateHint: '',
-            symptom: 'Reproduced — model summary',
-            rule: '',
-            listPlace: '',
-            executor: '',
-            executorVersion: '',
-            policyRationale: "policy <reason 'one'>",
-            missingInformation: [],
-            artifactsLink: ARTIFACTS_LINK,
-        });
-
-        expect(values.outcomeReason.includes('&amp;')).toBe(true);
-        expect(values.outcomeReason.includes('&lt;img&gt;')).toBe(true);
-        expect(values.outcomeReason.includes('&quot;quoted&quot;')).toBe(true);
-        expect(values.outcomeReason.includes('\n')).toBe(false);
-        expect(values.outcomeReason.length).toBeLessThanOrEqual(500);
-        expect(values.policyRationale.includes('&lt;reason &#39;one&#39;&gt;')).toBe(true);
-    });
-
-    it('keeps code spans in model-authored text literal and escapes the text around them', () => {
-        // GitHub shows entities inside a code span as they are, so an escaped rule would read
-        // `delfi.lv&#35;&#35;.logo-row`.
-        const symptom = (text: string) =>
+    it('shows model-authored text in the raw comment without HTML character references', () => {
+        // What a published comment showed to anyone reading its Markdown: the summary of a
+        // verified rule read `the site&#39;s own script` and `tftacademy.com&#35;&#35;img&#91;`.
+        const summary =
+            "On tftacademy.com the site's own script detects that the blocked loader never sets " +
+            'window.nitroAds.loaded: the rule tftacademy.com##img[alt^="Custom skyscraperWide Ad"] ' +
+            'hides the notice — 2 > 1, A & B, C:\\path, \\"quoted\\".';
+        const comment = renderReportComment(
+            BUILT_IN_REPORT_TEMPLATE,
             buildReportTemplateValues({
                 ...patchProposedSummary(),
-                symptom: text,
-            }).symptom;
+                symptom: `Reproduced — ${summary}`,
+                policyRationale: summary,
+            }),
+        );
 
-        expect(symptom('Hidden by `delfi.lv##.logo-row` for @user')).toBe(
-            'Hidden by `delfi.lv##.logo-row` for &#64;\u2060user',
-        );
-        // A backtick that opens no span is escaped with the rest of the plain text, so Markdown
-        // cannot pair it into a span of its own.
-        expect(symptom('one ` tick #1 @user')).toBe('one &#96; tick &#35;\u20601 &#64;\u2060user');
-        expect(symptom('``@user` and \\`@user`')).toBe(
-            '&#96;&#96;&#64;\u2060user` and \\`&#64;\u2060user&#96;',
-        );
-        // A span that does not fit is escaped like plain text rather than cut open.
-        const long = symptom(`${'x'.repeat(480)} \`a##b ${'y'.repeat(40)}\``);
-        expect(long.endsWith('…')).toBe(true);
-        expect(long).toContain('a&#35;\u2060&#35;\u2060');
+        expect(comment).not.toMatch(CHARACTER_REFERENCE_PATTERN);
+        expect(readerView(comment)).toContain(summary);
     });
 
-    it('leaves no mention, issue reference or autolink in model-authored text', () => {
-        // GitHub decodes `&#64;user` and `&#35;123` before resolving them, so an entity alone still
-        // pings the user and cross-references the issue; a word joiner after the character stops
-        // both, and an entity in place of the scheme colon stops the URL autolink.
-        const symptom = buildReportTemplateValues({
-            ...patchProposedSummary(),
-            symptom:
-                'ping @maintainer, see #123, owner/repo#4 and GH-5, get https://evil.test/fix or ' +
-                'www.evil.test, mail a@b.test',
-        }).symptom;
+    it('renders text within every schema ceiling whole, however much of it the escape touches', () => {
+        // Published comments cut a 481-character summary mid-word: the bound counted the escaped
+        // characters, five or six for each quote, colon and hash.
+        const sentence =
+            'The site\'s script reads window.nitroAds.loaded: tftacademy.com##img[alt^="Ad"] hides it. ';
+        const summary = sentence.repeat(Math.floor(MAX_SUMMARY_LENGTH / sentence.length)).trim();
+        const detail = sentence
+            .repeat(Math.floor(MAX_MISSING_INFORMATION_DETAIL_CHARACTERS / sentence.length))
+            .trim();
+        const reasons = [
+            "The report is an anti-adblock wall on an English-language site (not a German wall), so the German-wall 'no rule' branch does not apply.",
+            "The captured requests show the mechanism: the ad component loads NitroPay (s.nitropay.com/ads-2118.js, blocked by ||nitropay.com^$third-party) and the site's script polls window.nitroAds.loaded up to 10x/300ms before it sets hasAdBlocker.",
+            "The defect is not the site's own advertising: the creative reads 'PLEASE DISABLE ADBLOCK' and renders only when the site concludes a blocker is present.",
+            'A cosmetic element-hiding rule is the preferred fix: the content is never gated and stays usable after hiding.',
+        ];
 
-        expect(symptom).toBe(
-            'ping &#64;\u2060maintainer, see &#35;\u2060123, owner/repo&#35;\u20604 and GH\u2060-5, ' +
-                'get https&#58;//evil.test/fix or www\u2060.evil.test, mail a&#64;\u2060b.test',
+        const comment = renderReportComment(
+            BUILT_IN_REPORT_TEMPLATE,
+            buildReportTemplateValues(
+                summarizeReportOutcome(
+                    {
+                        runStatus: FixRunStatus.PatchProposed,
+                        symptomObservation: SymptomObservation.Reproduced,
+                        candidatePatch: {
+                            rule: 'tftacademy.com##img[alt^="Custom skyscraperWide Ad"]',
+                            filePath: 'AnnoyancesFilter/Popups/sections/antiadblock.txt',
+                        },
+                        missingInformation: [{ subject: 'settings import link', detail }],
+                    },
+                    {
+                        summary,
+                        policyDecision: {
+                            decision: PolicyDecisionKind.AllowRuleGeneration,
+                            reasons,
+                        },
+                    },
+                    ARTIFACTS_LINK,
+                ),
+            ),
         );
+
+        const shown = readerView(comment);
+        expect(summary.length).toBeLessThanOrEqual(MAX_SUMMARY_LENGTH);
+        expect(shown).toContain(summary);
+        expect(shown).toContain(detail);
+        for (const reason of reasons) {
+            expect(shown).toContain(reason);
+        }
     });
 
-    it('escapes a backslash so the entity after it still decodes', () => {
-        // The model wrote \\" and GitHub showed \\&quot; as "&quot;".
-        const symptom = buildReportTemplateValues({
-            ...patchProposedSummary(),
-            symptom: 'wall (\\"Dein Adblocker\\") shown',
-        }).symptom;
-
-        expect(symptom).toBe('wall (&#92;&quot;Dein Adblocker&#92;&quot;) shown');
-    });
-
-    it('truncates bounded text with an ellipsis at the 500-character boundary', () => {
+    it('keeps html out of a reporter-side version inside the rendered hint', () => {
         const values = buildReportTemplateValues({
-            outcome: 'Candidate rule proposed',
-            outcomeReason: 'Fallback — x'.padEnd(900, 'y'),
-            versionUpdateHint: '',
-            symptom: '',
-            rule: '',
-            listPlace: '',
-            executor: '',
-            executorVersion: '',
-            policyRationale: '',
-            missingInformation: [],
-            artifactsLink: ARTIFACTS_LINK,
+            ...patchProposedSummary(),
+            versionUpdateHint: 'The report declares 4.1."2" — & <update>',
         });
+        const rendered = renderReportComment('{{versionUpdateHint}}', values);
 
-        expect(values.outcomeReason.length).toBe(500);
-        expect(values.outcomeReason.endsWith('…')).toBe(true);
+        expect(liveGitHubConstructs(rendered)).toEqual([]);
+        expect(readerView(rendered)).toBe('The report declares 4.1."2" — & <update>');
     });
 
     it('throws a named PromptRenderError for a template token outside the fixed fill set', () => {
@@ -375,7 +348,7 @@ describe('buildReportTemplateValues', () => {
             symptomObservation: SymptomObservation.Reproduced,
             candidatePatch: null,
         };
-        const decision = { reasoning: 'The candidate was applied but never confirmed.' };
+        const decision = { summary: 'The candidate was applied but never confirmed.' };
 
         const carried = renderReportComment(
             BUILT_IN_REPORT_TEMPLATE,
@@ -412,7 +385,7 @@ describe('buildReportTemplateValues', () => {
             symptomObservation: SymptomObservation.Reproduced,
             candidatePatch: null,
         };
-        const decision = { reasoning: 'The candidate left part of the reported symptom behind.' };
+        const decision = { summary: 'The candidate left part of the reported symptom behind.' };
         const remaining = [
             {
                 landmark: 'Header, under the site navigation',
@@ -479,10 +452,9 @@ describe('summarizeReportOutcome', () => {
             },
             {
                 summary: 'Ad banner reproduced with the prepared extension.',
-                reasoning: 'The candidate resolved the reproduced selector.',
                 policyDecision: {
                     decision: 'allow_rule_generation',
-                    reasons: ['first-party ad with a verified candidate', 'no paywall'],
+                    reasons: ['A first-party ad with a verified candidate.', 'No paywall'],
                 },
             },
             ARTIFACTS_LINK,
@@ -499,9 +471,9 @@ describe('summarizeReportOutcome', () => {
             {
                 runStatus: FixRunStatus.PatchProposed,
                 candidatePatch: { rule: focused.rule, filePath: focused.listPlace },
-                candidateVisualReview: { adLayoutResidue: 'present' },
+                candidateVisualReview: { adLayoutResidue: CandidateVisualAdLayoutResidue.Present },
             },
-            { summary: 'Ads reproduced.', reasoning: 'The host block removed them.' },
+            { summary: 'Ads reproduced; the host block removed them.' },
             ARTIFACTS_LINK,
         );
 
@@ -514,7 +486,17 @@ describe('summarizeReportOutcome', () => {
         expect(comment).toContain('Leftover layout');
     });
 
-    it('falls back from policy reasons to the decision reasoning and from the tag to the manifest version', () => {
+    it('keeps the policy rationale to the policy reasons and falls back from the tag to the manifest version', () => {
+        // Published comments carried the agent's reasoning about which environment to lock under
+        // "Policy rationale" whenever the policy reasons did not reach the report.
+        const decision: FixOutcome = {
+            outcome: FixOutcomeKind.ProposeClose,
+            reproductionStatus: ReproductionStatus.NotReproduced,
+            policyDecision: { decision: PolicyDecisionKind.AllowRuleGeneration, reasons: [] },
+            reasoning: 'Environment: locked browser_extension, the report names the extension.',
+            summary: 'The banner did not appear in either session.',
+            evidenceSummary: 'Negative browser evidence only.',
+        };
         const summary = summarizeReportOutcome(
             {
                 runStatus: FixRunStatus.NotReproduced,
@@ -529,15 +511,140 @@ describe('summarizeReportOutcome', () => {
                     extensionSourceSha256: 'b'.repeat(64),
                 },
             },
-            { reasoning: 'Negative browser evidence only.' },
+            decision,
             ARTIFACTS_LINK,
         );
 
         expect(summary.outcome).toBe('The reported defect was not reproduced');
-        expect(summary.symptom).toBe('Not reproduced');
-        expect(summary.policyRationale).toBe('Negative browser evidence only.');
+        expect(summary.symptom).toContain('Not reproduced');
+        expect(summary.symptom).toContain('The banner did not appear in either session.');
+        expect(summary.policyRationale).toBe('');
+        expect(JSON.stringify(summary)).not.toContain('Environment: locked');
+        expect(
+            renderReportComment(BUILT_IN_REPORT_TEMPLATE, buildReportTemplateValues(summary)),
+        ).not.toContain('## Policy rationale');
         expect(summary.executorVersion).toBe('MV3');
         expect(summary.missingInformation).toEqual([]);
+    });
+
+    it.each([
+        [PolicyDecisionKind.ProposeClose, /clos/iu],
+        [PolicyDecisionKind.NeedsHumanReview, /maintainer/iu],
+    ] as const)(
+        'heads a run the %s policy verdict decided with that verdict, not with an observation it never made',
+        (verdict, headline) => {
+            // A published comment read "Analysis-only findings, no verified change" and
+            // "Indeterminate — … so the report is recommended for closing": the policy verdict
+            // decided the run, and the host binds no symptom observation to it.
+            const summary = summarizeReportOutcome(
+                {
+                    runStatus: FixRunStatus.AnalysisOnly,
+                    symptomObservation: SymptomObservation.Indeterminate,
+                    candidatePatch: null,
+                },
+                {
+                    summary: "The page's only ad-like content is the site's own promotion.",
+                    policyDecision: {
+                        decision: verdict,
+                        reasons: ["Filter policy: the site's own advertising gets no rule."],
+                    },
+                },
+                ARTIFACTS_LINK,
+            );
+            const analysisOnly = summarizeReportOutcome(
+                { runStatus: FixRunStatus.AnalysisOnly, candidatePatch: null },
+                {},
+                ARTIFACTS_LINK,
+            );
+
+            expect(summary.outcome).not.toBe(analysisOnly.outcome);
+            expect(summary.outcome).toMatch(headline);
+            expect(summary.symptom).toBe(
+                "The page's only ad-like content is the site's own promotion.",
+            );
+            expect(summary.policyRationale).toBe(
+                "Filter policy: the site's own advertising gets no rule.",
+            );
+        },
+    );
+
+    it('keeps the run status as the outcome of a run its status speaks for, whatever the policy verdict', () => {
+        // A run that never reached the page ends target_url_unavailable even when its decision
+        // carried a closing verdict: the report says first what the run could not do.
+        const run: ReportRunResultInput = {
+            runStatus: FixRunStatus.TargetUrlUnavailable,
+            symptomObservation: SymptomObservation.Indeterminate,
+            candidatePatch: null,
+        };
+        const decided = summarizeReportOutcome(
+            run,
+            {
+                summary: 'The page refused to load.',
+                policyDecision: { decision: PolicyDecisionKind.ProposeClose, reasons: [] },
+            },
+            ARTIFACTS_LINK,
+        );
+        const undecided = summarizeReportOutcome(
+            run,
+            { summary: 'The page refused to load.' },
+            ARTIFACTS_LINK,
+        );
+
+        expect(decided.outcome).toBe(undecided.outcome);
+        expect(decided.symptom).toBe(undecided.symptom);
+    });
+
+    it("shows the decision's evidence summary as what the run found when it carries no summary", () => {
+        // The summary is optional; the reasoning behind it walks through tools and environments.
+        const reasoning =
+            'Environment: locked browser_extension; then open_page, inspect_ad_slots.';
+        const evidenceSummary = 'The banner was absent in the control and the prepared session.';
+        const decision: FixOutcome = {
+            outcome: FixOutcomeKind.ProposeClose,
+            reproductionStatus: ReproductionStatus.NotReproduced,
+            policyDecision: { decision: PolicyDecisionKind.AllowRuleGeneration, reasons: [] },
+            reasoning,
+            evidenceSummary,
+        };
+
+        const summary = summarizeReportOutcome(
+            {
+                runStatus: FixRunStatus.NotReproduced,
+                symptomObservation: SymptomObservation.NotReproduced,
+                candidatePatch: null,
+            },
+            decision,
+            ARTIFACTS_LINK,
+        );
+
+        expect(summary.symptom).toContain(evidenceSummary);
+        expect(summary.symptom).not.toContain(reasoning);
+    });
+
+    it("shows a sealed session's host reasoning as what the run found, never a model decision's", () => {
+        // A model's reasoning is its working notes — environments, tools, steps — and a published
+        // comment showed it as a finding. Only a session the host ended itself has nothing better.
+        const run: ReportRunResultInput = {
+            runStatus: FixRunStatus.AnalysisOnly,
+            symptomObservation: SymptomObservation.Indeterminate,
+            candidatePatch: null,
+        };
+        const modelReasoning =
+            'Environment: adguard_cli (accepted, ready); then open_page and inspect_ad_slots.';
+        const hostReasoning = 'Run sealed without an accepted fix outcome (aborted): wall clock.';
+        const modelDecision: FixOutcome = {
+            outcome: FixOutcomeKind.AnalysisOnly,
+            reasoning: modelReasoning,
+        };
+
+        const fromModel = renderReportComment(
+            BUILT_IN_REPORT_TEMPLATE,
+            buildReportTemplateValues(summarizeReportOutcome(run, modelDecision, ARTIFACTS_LINK)),
+        );
+        const fromHost = summarizeReportOutcome(run, { hostReasoning }, ARTIFACTS_LINK);
+
+        expect(readerView(fromModel)).not.toContain(modelReasoning);
+        expect(fromHost.symptom).toContain(hostReasoning);
     });
 
     it('renders the manifest generation into the executor-version fill when the provenance records no source tag', () => {
@@ -721,105 +828,5 @@ describe('summarizeReportOutcome', () => {
 
         expect(rendered).toContain('A bot challenge blocked the page');
         expect(rendered).toContain('The page content indicates an anti-bot challenge.');
-    });
-});
-
-describe('version update hint', () => {
-    // The reported blocker version verbatim, as the run wiring passes it from
-    // `Report` → `environment.version`.
-    const REPORTED_VERSION = '4.1.2';
-
-    it('renders the update suggestion into the built-in report for an older version that does not reproduce', () => {
-        const summary = summarizeReportOutcome(
-            olderReportedRun(SymptomObservation.NotReproduced),
-            {},
-            ARTIFACTS_LINK,
-            REPORTED_VERSION,
-        );
-        const values = buildReportTemplateValues(summary);
-
-        expect(values.versionUpdateHint.length).toBeGreaterThan(0);
-        expect(values.versionUpdateHint).toContain('4.1.2');
-        expect(values.versionUpdateHint).toContain('4.6.0');
-
-        const rendered = renderReportComment(BUILT_IN_REPORT_TEMPLATE, values);
-        expect(rendered).toContain('4.1.2');
-        expect(rendered).toContain('4.6.0');
-    });
-
-    it('keeps the hint empty and the current version named when the symptom reproduces', () => {
-        const summary = summarizeReportOutcome(
-            olderReportedRun(SymptomObservation.Reproduced),
-            {},
-            ARTIFACTS_LINK,
-            REPORTED_VERSION,
-        );
-        const values = buildReportTemplateValues(summary);
-
-        expect(values.versionUpdateHint).toBe('');
-        // The display executor version is still the provenance tag, unaffected by the hint's own
-        // (unused, since the symptom reproduced) comparison input.
-        expect(values.executorVersion).toBe('v4.6.0');
-
-        const rendered = renderReportComment(BUILT_IN_REPORT_TEMPLATE, values);
-        expect(rendered).toContain('4.6.0');
-    });
-
-    it('escapes html-reserved characters of a reporter-side version inside the rendered hint', () => {
-        const values = buildReportTemplateValues({
-            ...patchProposedSummary(),
-            versionUpdateHint: 'The report declares 4.1."2" — & <update>',
-        });
-        const rendered = renderReportComment('{{versionUpdateHint}}', values);
-
-        expect(rendered).toContain('&quot;2&quot;');
-        expect(rendered).toContain('&amp;');
-        expect(rendered).toContain('&lt;update&gt;');
-        expect(rendered).not.toContain('<update>');
-    });
-
-    it('leaves the hint empty when the run carries no reported version', () => {
-        const summary = summarizeReportOutcome(
-            olderReportedRun(SymptomObservation.NotReproduced),
-            {},
-            ARTIFACTS_LINK,
-        );
-
-        expect(summary.versionUpdateHint).toBe('');
-        expect(buildReportTemplateValues(summary).versionUpdateHint).toBe('');
-    });
-});
-
-describe('repository lint section', () => {
-    it("carries the repository linter's objection to the rule, and nothing when it had none", () => {
-        const verifiedRun: ReportRunResultInput = {
-            runStatus: FixRunStatus.PatchProposed,
-            fallbackReason: null,
-            fallbackDetail: null,
-            candidatePatch: { rule: 'example.com##.ad', filePath: 'filters/specific.txt' },
-        };
-        const render = (run: ReportRunResultInput): string =>
-            renderReportComment(
-                BUILT_IN_REPORT_TEMPLATE,
-                buildReportTemplateValues(summarizeReportOutcome(run, {}, ARTIFACTS_LINK)),
-            );
-        // Output that tries to close the code block and mention someone stays inside it.
-        const output = 'filters/a.txt:1 error: modifier is excluded\n```\n@maintainer';
-
-        const flagged = render({
-            ...verifiedRun,
-            repositoryLint: {
-                status: RepositoryLintStatus.Problems,
-                command: 'npx aglint',
-                exitCode: 1,
-                output,
-                outputTruncated: false,
-            },
-        });
-
-        expect(flagged).toContain('## Repository lint');
-        expect(flagged).toContain('`npx aglint`');
-        expect(flagged).toContain(`\`\`\`\`\n${output}\n\`\`\`\``);
-        expect(render(verifiedRun)).not.toContain('## Repository lint');
     });
 });

@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { composeListPlace } from '../../src/publisher/report-list-place';
+import { PlacementBasis } from '../../src/types/placement-basis';
+import { RepositoryEditKind } from '../../src/types/repository-edit-kind';
 
 const FILE = 'easylist/easylist_specific_hide.txt';
 
@@ -39,5 +41,19 @@ describe('composeListPlace', () => {
             precedingComment: '! https://github.com/uBlockOrigin/uAssets/issues/1',
         });
         expect(place).toContain('`! https://github.com/uBlockOrigin/uAssets/issues/1`');
+    });
+
+    it('names a long neighbouring rule whole', () => {
+        // A cut rule is a different rule, and a maintainer looks for the one the comment names.
+        const domains = Array.from({ length: 80 }, (_, index) => `site-${index}.example`);
+        const anchorRule = `${domains.join(',')}##.ad`;
+
+        const place = composeListPlace(FILE, {
+            kind: RepositoryEditKind.Insert,
+            basis: PlacementBasis.DomainBlock,
+            anchorRule,
+        });
+
+        expect(place).toContain(`\`${anchorRule}\``);
     });
 });

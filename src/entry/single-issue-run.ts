@@ -487,12 +487,9 @@ async function runInsideWorkspace(
     const reportedVersion = intake.report.environment.version;
     const summary = summarizeReportOutcome(
         { ...runResult, runStatus: reportedRunStatus(runResult) },
-        {
-            summary: agentArtifacts.artifacts?.decision?.summary,
-            // A run the host ended itself (a sealed session) has no model decision; its result
-            // still carries the reasoning the host kept, which the rationale shows instead.
-            reasoning: agentArtifacts.artifacts?.decision?.reasoning ?? runResult.reasoning,
-        },
+        // A run the host ended itself (a sealed session) has no model decision; its result still
+        // carries the reasoning the host kept, which the report shows as what the run found.
+        agentArtifacts.artifacts?.decision ?? { hostReasoning: runResult.reasoning },
         request.actionsRunUrl ?? '',
         reportedVersion,
     );

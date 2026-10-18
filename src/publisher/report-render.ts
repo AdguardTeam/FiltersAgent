@@ -8,13 +8,11 @@
  * defense in depth: one reader-dependent renderer decides what `{{tokens}}` in a template become.
  * The `rule` fill is repository content rather than model prose, and renders through the same
  * module's inline-code-span renderer instead: Markdown reads a rule's own syntax (`*.../*`, say) as
- * formatting unless the whole value stays inside a code span.
+ * formatting unless the whole value stays inside a code span. The fixed human wording of every
+ * label lives in `report-labels.ts`.
  */
 
-import {
-    ExtensionManifestVersion,
-    PreparedExtensionSource,
-} from '../environment/extension-preparation';
+import { ExtensionManifestVersion } from '../environment/extension-preparation';
 import type { PreparedExtensionProvenance } from '../environment/environment-proofs';
 import {
     extractPlaceholders,
@@ -22,13 +20,25 @@ import {
     PromptRenderErrorKind,
     renderTemplate,
 } from '../prompts/template';
-import { removeEmptySections } from './report-empty-sections';
-import type { PolicyDecision } from '../types/policy';
-import { AgentTerminationReason } from '../types/agent-termination-reason';
-import { BrowserFallbackReason } from '../types/browser-fallback-reason';
-import { FixRunStatus, SymptomObservation } from '../types/fix-run-result';
+import { collapseBlankLines, removeEmptySections } from './report-empty-sections';
+import { PolicyDecisionKind, type PolicyDecision } from '../types/policy';
+import type { AgentTerminationReason } from '../types/agent-termination-reason';
+import type { BrowserFallbackReason } from '../types/browser-fallback-reason';
+import { FixRunStatus, type SymptomObservation } from '../types/fix-run-result';
 import { InfrastructureFailureReason } from '../types/infrastructure-failure-reason';
+import { CandidateVisualAdLayoutResidue } from '../types/candidate-visual-review';
 import type { MissingInformationEntry } from '../types/missing-information';
+import {
+    AGENT_TERMINATION_LABELS,
+    FALLBACK_REASON_LABELS,
+    INFRASTRUCTURE_FAILURE_LABELS,
+    POLICY_VERDICT_OUTCOME_LABELS,
+    PREPARED_EXTENSION_SOURCE_LABELS,
+    PROVIDER_FAILURE_STATUS_HINTS,
+    RUN_STATUS_OUTCOME_LABELS,
+    SYMPTOM_OBSERVATION_LABELS,
+    type BlockingPolicyVerdict,
+} from './report-labels';
 import { renderVersionUpdateHint } from './report-version-decision';
 import type { ReportTemplateValues } from './report-template';
 import { composeListPlace, type ReportRepositoryEdit } from './report-list-place';
@@ -45,103 +55,6 @@ import { renderUntrustedRuleCodeSpan, renderUntrustedText } from './untrusted-te
 const REPORT_COMMENT_SOURCE_LABEL = 'report comment template';
 
 /**
- * Human labels for every run status, in the fixed `FixRunStatus` vocabulary. Total over
- * `FIX_RUN_STATUS_VALUES` by type: a new status fails this record until its label lands, so no
- * outcome can post an unfinished report.
- */
-const RUN_STATUS_OUTCOME_LABELS: Record<FixRunStatus, string> = {
-    [FixRunStatus.AlreadyFixedCurrent]: 'Already fixed in the current build',
-    [FixRunStatus.FixedUpstreamPendingExtension]: 'Fixed upstream, pending the extension release',
-    [FixRunStatus.FixedInSourcePendingPublication]:
-        'Fixed in the filter source, pending publication',
-    [FixRunStatus.PatchProposed]: 'Candidate rule proposed',
-    [FixRunStatus.NotReproduced]: 'The reported defect was not reproduced',
-    [FixRunStatus.ConfigurationSpecific]: 'The defect depends on reporter-specific configuration',
-    [FixRunStatus.AnalysisOnly]: 'Analysis-only findings, no verified change',
-    [FixRunStatus.UnsupportedProductCase]: 'Unsupported reported product case',
-    [FixRunStatus.CapabilityLimited]: 'Missing environment capability limited the run',
-    [FixRunStatus.TargetUrlUnavailable]: 'The reported target URL was unreachable',
-    [FixRunStatus.BrowserUnavailable]: 'No usable browser was available',
-    [FixRunStatus.CleanupFailed]: 'Environment cleanup did not complete',
-    [FixRunStatus.Failed]: 'The run failed',
-};
-
-/**
- * Human labels for every browser fallback reason, total per type for the same drift guard.
- */
-const FALLBACK_REASON_LABELS: Record<BrowserFallbackReason, string> = {
-    [BrowserFallbackReason.LaunchFailed]: 'Browser launch failed',
-    [BrowserFallbackReason.NavigationTimeout]: 'Navigation timed out',
-    [BrowserFallbackReason.TargetUnreachable]: 'The page host was unreachable',
-    [BrowserFallbackReason.NotFound]: 'The page returned not found',
-    [BrowserFallbackReason.HttpBlocked]: 'The page refused to load in the run browser',
-    [BrowserFallbackReason.BotChallenge]: 'A bot challenge blocked the page',
-    [BrowserFallbackReason.GeoBlocked]: 'Regional restriction blocked the page',
-    [BrowserFallbackReason.SignInRequired]: 'A sign-in wall blocked the page',
-    [BrowserFallbackReason.EmptyDom]: 'The page returned no usable document',
-    [BrowserFallbackReason.NavigationOffOrigin]: 'Navigation left the issue origin',
-    [BrowserFallbackReason.UnsafeTargetUrl]: 'The target URL is not openable in the run',
-    [BrowserFallbackReason.TargetDnsUnresolved]: 'DNS lookup for the page failed',
-    [BrowserFallbackReason.ArtifactCaptureFailed]: 'A required capture could not be taken',
-    [BrowserFallbackReason.ExtensionConfigurationFailed]:
-        'The extension under test could not be configured',
-};
-
-/**
- * Human labels for every infrastructure failure reason, total per type.
- */
-const INFRASTRUCTURE_FAILURE_LABELS: Record<InfrastructureFailureReason, string> = {
-    [InfrastructureFailureReason.InputUnavailable]: 'The issue snapshot could not be read',
-    [InfrastructureFailureReason.EnvironmentUnavailable]:
-        'The locked execution environment could not be prepared',
-    [InfrastructureFailureReason.BrowserUnavailable]:
-        'The browser stack failed before the target was exercised',
-    [InfrastructureFailureReason.LlmUnavailable]: 'The reasoning provider was unreachable',
-    [InfrastructureFailureReason.LlmRejected]: 'The reasoning provider rejected the run request',
-    [InfrastructureFailureReason.VisionProviderUnavailable]: 'The vision provider was unavailable',
-    [InfrastructureFailureReason.OutputUnavailable]: 'The run result could not be persisted',
-    [InfrastructureFailureReason.FileBackedApplicationUnsupported]:
-        'The run instruction requires file-backed blocker verification, which is not supported yet',
-};
-
-/**
- * Human labels for every agent termination reason, total per type.
- */
-const AGENT_TERMINATION_LABELS: Record<AgentTerminationReason, string> = {
-    [AgentTerminationReason.LlmError]: 'The provider request failed after retries',
-    [AgentTerminationReason.LlmRejected]: 'The provider rejected the exact request',
-    [AgentTerminationReason.TerminalNotCalled]: 'The agent loop ended without a terminal decision',
-    [AgentTerminationReason.RetryBudgetExhausted]: 'A tool exhausted its failure budget',
-    [AgentTerminationReason.MaxIterationsExceeded]: 'The agent loop reached its iteration limit',
-    [AgentTerminationReason.RequestDeadlineExceeded]:
-        'A provider response stalled past the per-request deadline',
-    [AgentTerminationReason.WallClockExceeded]:
-        'The investigation ran out of its wall-clock budget',
-    [AgentTerminationReason.Interrupted]: 'The host aborted the run',
-    [AgentTerminationReason.HaltedByCaller]: 'The caller halted the run',
-    [AgentTerminationReason.CliInstallationCapabilityUnavailable]:
-        'The CLI capability could not be transferred',
-    [AgentTerminationReason.CliEnvironmentSelectionUnavailable]:
-        'The CLI environment selection could not be retained',
-    [AgentTerminationReason.CleanupObligationUnavailable]:
-        'Durable cleanup recovery could not be armed',
-};
-
-/**
- * Maintainer-actionable hints for the provider HTTP failure statuses that name something a
- * maintainer can address directly: an authentication problem, a billing problem, or a rate limit.
- * Deliberately partial, never total over HTTP statuses: the report can show only the status itself,
- * never the provider's response body, so a status this map does not name renders with the bare
- * number instead of a guessed cause.
- */
-const PROVIDER_FAILURE_STATUS_HINTS: Readonly<Partial<Record<number, string>>> = {
-    401: 'the API key was refused — check the key',
-    402: "the provider account is out of credits or the key's spending limit is reached",
-    403: 'the key lacks access to the model or endpoint',
-    429: 'the provider is rate limiting this key',
-};
-
-/**
  * Render the host-authored clause naming the provider's HTTP failure status.
  *
  * @param status - The provider's HTTP failure status.
@@ -153,26 +66,6 @@ function providerFailureStatusClause(status: number): string {
         ? `The provider responded with HTTP ${status}`
         : `The provider responded with HTTP ${status} — ${hint}`;
 }
-
-/**
- * Human labels for every symptom observation, total per type.
- */
-const SYMPTOM_OBSERVATION_LABELS: Record<SymptomObservation, string> = {
-    [SymptomObservation.Reproduced]: 'Reproduced',
-    [SymptomObservation.NotReproduced]: 'Not reproduced',
-    [SymptomObservation.Indeterminate]: 'Indeterminate',
-    [SymptomObservation.NotAttempted]: 'Not attempted',
-};
-
-/**
- * Human labels for every prepared-extension provenance source, total per type.
- */
-const PREPARED_EXTENSION_SOURCE_LABELS: Record<PreparedExtensionSource, string> = {
-    [PreparedExtensionSource.PinnedRelease]: 'Pinned prebuilt release',
-    [PreparedExtensionSource.HistoricalBuild]: 'Reporter build from release and autobuild lists',
-    [PreparedExtensionSource.Preloaded]: 'Preloaded unpacked extension',
-    [PreparedExtensionSource.Instruction]: 'Prepared from the instruction',
-};
 
 /**
  * The unverified candidate an analysis-only run hands to a reviewer, as the report reads it.
@@ -304,9 +197,9 @@ export interface ReportRunResultInput {
      */
     candidateVisualReview?: {
         /**
-         * The review's leftover-layout judgment (`present`, `absent` or `unclear`).
+         * The review's leftover-layout judgment.
          */
-        adLayoutResidue?: string;
+        adLayoutResidue?: CandidateVisualAdLayoutResidue;
 
         /**
          * Symptom instances the review still found after the candidate, in review order. Empty for
@@ -354,9 +247,17 @@ export interface ReportDecisionInput {
     summary?: string;
 
     /**
-     * Model reasoning behind the outcome, when the variant carries it.
+     * The model's account of the evidence behind its outcome, when the variant carries one.
      */
-    reasoning?: string;
+    evidenceSummary?: string;
+
+    /**
+     * The reasoning the host kept for a session it ended itself, when no model decision reached the
+     * report: the symptom shows it in place of a summary, so the report still says what the run
+     * found. A model's own reasoning is never shown: it is the model's working notes —
+     * environments, tools, steps — and stays in the run artifacts.
+     */
+    hostReasoning?: string;
 
     /**
      * Deterministic policy verdict with its reasons, when the variant carries one.
@@ -380,7 +281,8 @@ const LEFTOVER_LAYOUT_NOTE =
  */
 export interface ReportOutcomeSummary {
     /**
-     * Outcome line for the run, from the total run-status label map.
+     * Outcome line for the run: the label of the policy verdict that decided an analysis-only run,
+     * else the run-status label.
      */
     outcome: string;
 
@@ -395,7 +297,9 @@ export interface ReportOutcomeSummary {
     versionUpdateHint: string;
 
     /**
-     * Symptom observation combined with the model summary, when the run observed the defect.
+     * What the run found — the summary, else the evidence summary, else the host's reasoning for a
+     * session it ended itself — after the label of the symptom observation; without the label when
+     * a policy verdict decided the run.
      */
     symptom: string;
 
@@ -441,7 +345,8 @@ export interface ReportOutcomeSummary {
     executorVersion: string;
 
     /**
-     * Deterministic policy rationale: policy reasons, else the decision reasoning.
+     * The policy decision's reasons, or the empty string when the decision carries none: the run's
+     * reasoning is not a policy rationale, however it ended.
      */
     policyRationale: string;
 
@@ -590,34 +495,75 @@ function composeStillVisible(instances: readonly ReportRemainingInstance[] | und
 }
 
 /**
- * Combine the symptom observation with the model-authored summary.
+ * The policy verdict that decided an analysis-only run, when the decision carries one that rules
+ * out a rule.
  *
- * @param result - Verified run-result fields under projection.
+ * Only an analysis-only run is decided by it: every other status names something the run itself
+ * established or failed at, which the report must say first.
+ *
+ * @param runStatus - The status the report is rendered under.
  * @param decision - Model-authored decision fields under projection.
- * @returns The combined symptom text, or the empty string when neither half exists.
+ * @returns The blocking verdict, or undefined when the run status speaks for the run.
  */
-function composeSymptom(result: ReportRunResultInput, decision: ReportDecisionInput): string {
-    const observation =
-        result.symptomObservation === undefined
-            ? ''
-            : SYMPTOM_OBSERVATION_LABELS[result.symptomObservation];
-    const authored = (decision.summary ?? '').trim();
-    return [observation, authored].filter((half) => half.length > 0).join(' — ');
+function blockingPolicyVerdict(
+    runStatus: FixRunStatus,
+    decision: ReportDecisionInput,
+): BlockingPolicyVerdict | undefined {
+    const verdict = decision.policyDecision?.decision;
+    return runStatus === FixRunStatus.AnalysisOnly &&
+        verdict !== undefined &&
+        verdict !== PolicyDecisionKind.AllowRuleGeneration
+        ? verdict
+        : undefined;
 }
 
 /**
- * Compose the policy rationale: deterministic policy reasons when the decision carries them, else
- * the model-authored reasoning.
- *
- * @param decision - Model-authored decision fields under projection.
- * @returns The rationale text, or the empty string when neither source exists.
+ * The end of a sentence: its punctuation, then any closing quotes or brackets.
  */
-function composePolicyRationale(decision: ReportDecisionInput): string {
-    const reasons = decision.policyDecision?.reasons ?? [];
-    if (reasons.length > 0) {
-        return reasons.join('; ');
-    }
-    return (decision.reasoning ?? '').trim();
+const SENTENCE_END_PATTERN = /[!.?…]["')\]’”]*$/u;
+
+/**
+ * The mark a list-style reason may end in instead of a sentence end, replaced by the period.
+ */
+const TRAILING_CLAUSE_MARK_PATTERN = /[,:;]+$/u;
+
+/**
+ * Join the policy reasons into the rationale's prose. Each reason is a sentence of its own, so it
+ * keeps its own punctuation, and a reason written without any gets a period.
+ *
+ * @param reasons - The policy decision's reasons, as the decision carries them.
+ * @returns The rationale text, or the empty string when there are no reasons.
+ */
+function composePolicyRationale(reasons: readonly string[]): string {
+    return reasons
+        .map((reason) => reason.trim())
+        .filter((reason) => reason.length > 0)
+        .map((reason) =>
+            SENTENCE_END_PATTERN.test(reason)
+                ? reason
+                : `${reason.replace(TRAILING_CLAUSE_MARK_PATTERN, '')}.`,
+        )
+        .join(' ');
+}
+
+/**
+ * Combine the symptom observation with what the run found: the model-authored summary, else its
+ * evidence summary, else the host's reasoning for a session it ended itself.
+ *
+ * @param observation - The observation to label the symptom with, or undefined for none.
+ * @param decision - Model-authored decision fields under projection.
+ * @returns The combined symptom text, or the empty string when neither half exists.
+ */
+function composeSymptom(
+    observation: SymptomObservation | undefined,
+    decision: ReportDecisionInput,
+): string {
+    const label = observation === undefined ? '' : SYMPTOM_OBSERVATION_LABELS[observation];
+    const found =
+        [decision.summary, decision.evidenceSummary, decision.hostReasoning]
+            .map((text) => (text ?? '').trim())
+            .find((text) => text.length > 0) ?? '';
+    return [label, found].filter((half) => half.length > 0).join(' — ');
 }
 
 /**
@@ -660,8 +606,12 @@ export function summarizeReportOutcome(
     reportedVersion?: string,
 ): ReportOutcomeSummary {
     const executorVersion = composeExecutorVersion(result.extensionProvenance);
+    const verdict = blockingPolicyVerdict(result.runStatus, decision);
     return {
-        outcome: RUN_STATUS_OUTCOME_LABELS[result.runStatus],
+        outcome:
+            verdict === undefined
+                ? RUN_STATUS_OUTCOME_LABELS[result.runStatus]
+                : POLICY_VERDICT_OUTCOME_LABELS[verdict],
         outcomeReason: composeOutcomeReason(result),
         versionUpdateHint: renderVersionUpdateHint({
             reportedVersion,
@@ -672,9 +622,15 @@ export function summarizeReportOutcome(
                 result.environmentSelection?.actual?.productVersion ?? undefined,
             symptomObservation: result.symptomObservation,
         }),
-        symptom: composeSymptom(result, decision),
+        // A verdict decides the run without a reproduction, and the host binds no observation to
+        // it: a label would read as a finding the run never made.
+        symptom: composeSymptom(
+            verdict === undefined ? result.symptomObservation : undefined,
+            decision,
+        ),
         rule: result.candidatePatch?.rule ?? '',
-        ...(result.candidatePatch && result.candidateVisualReview?.adLayoutResidue === 'present'
+        ...(result.candidatePatch &&
+        result.candidateVisualReview?.adLayoutResidue === CandidateVisualAdLayoutResidue.Present
             ? { ruleNote: LEFTOVER_LAYOUT_NOTE }
             : {}),
         ...(result.repositoryLint === undefined ? {} : { repositoryLint: result.repositoryLint }),
@@ -696,7 +652,7 @@ export function summarizeReportOutcome(
                 ? ''
                 : PREPARED_EXTENSION_SOURCE_LABELS[result.extensionProvenance.source],
         executorVersion,
-        policyRationale: composePolicyRationale(decision),
+        policyRationale: composePolicyRationale(decision.policyDecision?.reasons ?? []),
         missingInformation: result.missingInformation ?? [],
         artifactsLink,
     };
@@ -746,7 +702,8 @@ export function buildReportTemplateValues(summary: ReportOutcomeSummary): Report
  * throws named — no fill can ever appear for it, and the strict render would otherwise misreport
  * the unknown token as merely "not filled". Every section whose body renders blank is then omitted,
  * on every outcome: a heading with nothing under it promises the reader a rule, a rationale or an
- * artifact the report does not have. The outcome itself carries no heading and always stays.
+ * artifact the report does not have. The outcome itself carries no heading and always stays. The
+ * blank lines an empty fill leaves behind collapse into one.
  *
  * @param template - Report template text; the instruction section or the built-in template.
  * @param values - Fill values covering every key of `REPORT_TEMPLATE_FILL`.
@@ -767,5 +724,7 @@ export function renderReportComment(template: string, values: ReportTemplateValu
     for (const name of declares) {
         subset[name] = fills[name] ?? '';
     }
-    return removeEmptySections(renderTemplate(template, subset, REPORT_COMMENT_SOURCE_LABEL));
+    return collapseBlankLines(
+        removeEmptySections(renderTemplate(template, subset, REPORT_COMMENT_SOURCE_LABEL)),
+    );
 }

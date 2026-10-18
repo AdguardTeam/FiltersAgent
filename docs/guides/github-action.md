@@ -445,16 +445,16 @@ template can carry a heading for a case that rarely happens.
 
 | Placeholder | What it carries |
 | --- | --- |
-| `{{outcome}}` | One line: a rule was proposed, the run ended analysis-only, or the report was answered without a patch. |
+| `{{outcome}}` | One line: a rule was proposed, the run ended analysis-only, the filter policy recommends closing the report or leaves it to a maintainer, or the report was answered without a patch. |
 | `{{outcomeReason}}` | Why it ended that way, when the reason is not the outcome itself. |
 | `{{versionUpdateHint}}` | That the reporter's blocker version is behind and the defect does not reproduce on the current one. |
-| `{{symptom}}` | Whether the reported defect reproduced, and what the run saw. |
+| `{{symptom}}` | Whether the reported defect reproduced, and what the run saw. A run the filter policy decided carries only what it saw. |
 | `{{rule}}` | The verified rule, as a code span. |
 | `{{repositoryLint}}` | What the repository's `lintCommand` said about that rule — its exit code and output — when it flagged the rule or could not run. Empty when it passed or no `lintCommand` is set. |
 | `{{candidateForReview}}` | A rule the run found and could not verify, with why. |
 | `{{stillVisible}}` | What the vision review still saw on the page after that rule — the locations the reporter named that it did not fix. Empty for a verified rule, since one leftover instance is what rejects a candidate. |
 | `{{executor}}`, `{{executorVersion}}` | The blocker the run actually drove, and its version. |
-| `{{policyRationale}}` | Why the rule is allowed under the policy documents your instruction links. |
+| `{{policyRationale}}` | The reasons of the policy decision: which rule of your filter policy (in the instruction or a document it links) allowed a rule or ruled it out. Empty when the run carries no policy decision. |
 | `{{listPlace}}` | The file the rule goes into, and where inside it. |
 | `{{missingInformation}}` | What the report would need to be actionable, when something is missing. |
 | `{{screenshots}}` | The page without and with the verified rule, side by side. Empty when no rule was verified, and when the workflow lacks `contents: write` (see the example workflow). |
@@ -462,6 +462,10 @@ template can carry a heading for a case that rarely happens.
 
 Every report ends with a footer line outside the template: the filters commit the run analyzed,
 and that the comment was posted by a filters agent.
+
+Placeholders render as Markdown text. Put them in the template's text, never inside an HTML
+attribute value such as `<a title="{{symptom}}">`: the run's own text is made inert as Markdown,
+not as an attribute.
 
 A template that omits a placeholder simply never shows it; nothing fails. That also means a
 template written against an older version of this action silently loses whatever was added since,

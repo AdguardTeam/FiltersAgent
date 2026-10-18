@@ -4,9 +4,18 @@
  * A report template spells every section it might need, but a run fills only what it observed. A
  * failure report can leave its Rule, Policy rationale, Place in the list and Executor and version
  * sections with nothing under them, and an empty heading promises the reader something the report
- * does not have. The rendered body is the only place this can be decided: the template itself does
- * not know which of its placeholders resolved.
+ * does not have. An empty fill outside any section — the outcome reason of a run that needs none —
+ * leaves its blank lines behind instead. The rendered body is the only place this can be decided:
+ * the template itself does not know which of its placeholders resolved.
  */
+
+/**
+ * Line opening or closing a fenced code block: up to three spaces, then a run of at least three
+ * backticks or tildes. The run is captured, since only a run of the same character at least as long
+ * closes the block. A backtick run with another backtick later on its line opens no block — it is a
+ * code span, such as a rule a model quoted at the start of its reason.
+ */
+const CODE_FENCE_LINE_PATTERN = /^ {0,3}(`{3,}(?=[^`]*$)|~{3,})/u;
 
 /**
  * Line opening a Markdown section: both the heading whose body may be empty and the far bound of
@@ -90,4 +99,39 @@ export function removeEmptySections(body: string): string {
         }
         current = reduced;
     }
+}
+
+/**
+ * Collapse every run of blank lines outside fenced code blocks into one blank line.
+ *
+ * GitHub's page shows one blank line and five alike, but the comment's Markdown is also read as
+ * written — in the run artifacts, in notification e-mails — where an empty outcome reason and an
+ * empty version hint left five blank lines under the outcome. Inside a fenced block a blank line
+ * belongs to the command output the block quotes, so it stays.
+ *
+ * @param body - Rendered comment body.
+ * @returns The body with no two blank lines in a row outside its code blocks.
+ */
+export function collapseBlankLines(body: string): string {
+    const kept: string[] = [];
+    let openFence: string | undefined;
+    for (const line of body.split('\n')) {
+        const fence = CODE_FENCE_LINE_PATTERN.exec(line)?.[1];
+        if (openFence !== undefined) {
+            const closes =
+                fence !== undefined &&
+                fence[0] === openFence[0] &&
+                fence.length >= openFence.length &&
+                line.trim() === fence;
+            if (closes) {
+                openFence = undefined;
+            }
+        } else if (fence !== undefined) {
+            openFence = fence;
+        } else if (line.trim() === '' && kept.at(-1)?.trim() === '') {
+            continue;
+        }
+        kept.push(line);
+    }
+    return kept.join('\n');
 }

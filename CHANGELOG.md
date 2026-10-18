@@ -89,6 +89,21 @@ The format is based on [Keep a Changelog], and this project adheres to
 - Fixed benchmark cases ending as `not_reproduced` when the agent saw the
   reported problem with the prepared blocker but verified no rule: the
   unfiltered session and the candidate phase no longer decide reproduction.
+- Fixed report comments cutting the reproduced symptom, the policy rationale
+  and long rules mid-word: text up to 2,000 characters now renders whole,
+  longer text ends at a sentence and says it was shortened, and rules are
+  never shortened.
+- Fixed report comments showing HTML entities such as `&#39;` and `&#35;` in
+  their Markdown, and several blank lines under the outcome line.
+- Fixed report comments turning `x_www.host` and `_GH-13_` in the agent's
+  text into a live link and an issue reference, and text starting with `~~~`
+  into a code block that swallowed the rest of the comment.
+- Fixed the report's "Policy rationale" showing the agent's reasoning instead
+  of the policy decision's reasons; a run without a policy decision has no
+  such section.
+- Fixed the outcome line of a run the filter policy decided reading
+  "Analysis-only findings, no verified change": it now names the policy
+  verdict.
 
 ## [1.0.1] - 2026-10-15
 
