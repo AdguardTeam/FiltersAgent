@@ -1,4 +1,5 @@
 import type { RawIssue } from '../../src/github/fetch-issue';
+import { decodeIssueTextUrl } from '../../src/github/issue-text-url';
 import { StructuredReportHeadingPattern } from '../../src/github/structured-report-template';
 
 /**
@@ -15,11 +16,6 @@ const REPORTED_URL_LINE = new RegExp(
  * target is an anonymizing redirect.
  */
 const MARKDOWN_LINK_TEXT = /^\[([^\]]+)\]/u;
-
-/**
- * A query separator as Markdown-rendered issue text escapes it.
- */
-const HTML_ESCAPED_AMPERSAND = /&amp;/giu;
 
 /**
  * How long one request may take until the site's response headers arrive. A live site answers in
@@ -86,7 +82,7 @@ export function reportedSiteUrl(issue: RawIssue): string {
     if (!line) {
         throw new Error('Golden issue has no "Issue URL" section to check the site against.');
     }
-    const text = (line.match(MARKDOWN_LINK_TEXT)?.[1] ?? line).replace(HTML_ESCAPED_AMPERSAND, '&');
+    const text = decodeIssueTextUrl(line.match(MARKDOWN_LINK_TEXT)?.[1] ?? line);
     let url: URL;
     try {
         url = new URL(text);

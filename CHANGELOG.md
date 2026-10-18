@@ -66,6 +66,9 @@ The format is based on [Keep a Changelog], and this project adheres to
 - Fixed benchmark cases ending as infrastructure failures, and
   `pnpm benchmark:case:add` rejecting issues, when the reporter's settings
   import link carries `&amp;` separators.
+- Fixed `launch_browser` refusing the reported page when the issue writes its
+  URL with `&amp;` separators, and binding the session to a copy with broken
+  query parameters instead.
 - Fixed intake errors reporting provider rejections as generic extraction
   failures.
 - Fixed provider tuning validation errors omitting the environment variable

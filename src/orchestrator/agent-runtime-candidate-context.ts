@@ -6,6 +6,7 @@
  * the runtime back.
  */
 import { CandidateOperation } from '../environment/filtering-environment';
+import { decodeIssueTextUrl } from '../github/issue-text-url';
 import { FixOutcomeKind, type FixOutcome } from '../types/fix-outcome';
 
 /**
@@ -72,12 +73,17 @@ export type ProposeRuleOutcome = Extract<FixOutcome, ProposeRuleOutcomeDiscrimin
  * that navigates without it loads a different page than the reporter described and reports the
  * resulting emptiness as breakage.
  *
- * @param value - Untrusted URL from issue parsing or model arguments.
+ * The issue text's `&amp;` query separators are decoded: the extraction copies the reported URL
+ * verbatim, and the model may echo either spelling. Both bind to the same decoded allow-list entry,
+ * so validation opens the page the reporter visited, never one whose parameters are named
+ * `amp;<name>`. A URL the browser landed on is decoded the same way, one level per call.
+ *
+ * @param value - Untrusted URL from issue parsing, model arguments, or a browser landing.
  * @returns Canonical URL including its fragment, or undefined for unsupported input.
  */
 export function canonicalTargetUrl(value: string): string | undefined {
     try {
-        const url = new URL(value);
+        const url = new URL(decodeIssueTextUrl(value));
         if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) {
             return undefined;
         }

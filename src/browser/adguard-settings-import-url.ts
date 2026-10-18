@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { decodeIssueTextUrl } from '../github/issue-text-url';
 
 /**
  * Hostnames whose HTTPS URLs may carry an AdGuard reporter settings import query.
@@ -16,23 +17,18 @@ export const TRUSTED_REPORT_SETTINGS_HOSTS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * A query separator as Markdown-rendered issue text escapes it.
- */
-const HTML_ESCAPED_QUERY_SEPARATOR = /&amp;/giu;
-
-/**
  * Parse a reporter settings import URL as the issue carries it.
  *
  * GitHub issue bodies write the link's query separators as `&amp;`, and an extraction may copy the
- * link verbatim. Read raw, every parameter after the first would be named `amp;<name>`. Every
- * reader of the reporter's link parses it here, so each sees the same parameters.
+ * link verbatim; {@link decodeIssueTextUrl} restores them. Every reader of the reporter's link
+ * parses it here, so each sees the same parameters.
  *
  * @param importUrl - Settings import URL from the issue text or its extraction.
  * @returns The parsed URL with `&amp;` separators decoded.
  * @throws TypeError when the text is not a URL.
  */
 export function parseReporterSettingsImportUrl(importUrl: string): URL {
-    return new URL(importUrl.replace(HTML_ESCAPED_QUERY_SEPARATOR, '&'));
+    return new URL(decodeIssueTextUrl(importUrl));
 }
 
 /**

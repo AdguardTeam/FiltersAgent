@@ -1,3 +1,5 @@
+import { decodeIssueTextUrl } from '../github/issue-text-url';
+
 /**
  * GitHub-controlled hosts that serve reporter-uploaded issue images.
  *
@@ -120,7 +122,7 @@ interface IndexedReporterImage {
  */
 function normalizeReporterImageUrl(value: string): string | null {
     try {
-        const url = new URL(value.replace(/&amp;/giu, '&'));
+        const url = new URL(decodeIssueTextUrl(value));
         if (url.protocol !== 'http:' && url.protocol !== 'https:') {
             return null;
         }
