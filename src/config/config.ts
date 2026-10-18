@@ -134,7 +134,7 @@ const DEFAULT_REASONING_EFFORT = ReasoningEffort.High;
 
 /**
  * Reasoning effort every single-shot call carries when `LLM_SINGLE_SHOT_REASONING_EFFORT` names
- * none: the intake extraction, the benchmark reviewer and every vision verdict.
+ * none: the intake extraction and every vision verdict.
  *
  * Two steps below the loop's `high`, at the maintainer's call. A single-shot call answers one
  * bounded structured question — extract the report from an issue, describe one screenshot — and its

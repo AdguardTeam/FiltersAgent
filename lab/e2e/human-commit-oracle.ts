@@ -67,11 +67,6 @@ export interface HumanRemovedRule {
  */
 export interface ExtractedHumanFix {
     /**
-     * Full human fix commit supplied by the closed post-run oracle.
-     */
-    commit: string;
-
-    /**
      * First parent used as the diff base.
      */
     firstParent: string;
@@ -82,14 +77,9 @@ export interface ExtractedHumanFix {
     candidates: HumanFixCandidate[];
 
     /**
-     * Exact zero-context first-parent diff retained for post-lock review.
-     */
-    rawDiff?: string;
-
-    /**
      * Actionable deletion-only rules not represented by added candidates.
      */
-    removedRules?: HumanRemovedRule[];
+    removedRules: HumanRemovedRule[];
 }
 
 /**

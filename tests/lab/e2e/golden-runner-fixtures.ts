@@ -1,6 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pino } from 'pino';
 import { afterEach, expect, vi } from 'vitest';
 import type { CoreConfig } from '../../../src/config/config';
 import {
@@ -10,7 +11,10 @@ import {
 } from '../../../src/local/run-output';
 import { GoldenRunSchemaVersion, type GoldenHumanOracle } from '../../../lab/e2e/golden-case';
 import type { ExtractedHumanFix } from '../../../lab/e2e/human-commit-oracle';
-import type { runGoldenE2ECase, GoldenSeries } from '../../../lab/e2e/golden-runner';
+import type {
+    GoldenE2ERunnerDependencies,
+    RunGoldenE2ECaseOptions,
+} from '../../../lab/e2e/golden-runner';
 import { testCoreConfig } from '../../config/test-core-config';
 
 const temporaryRoots: string[] = [];
@@ -43,28 +47,26 @@ export const coreConfig: CoreConfig = testCoreConfig({
 });
 
 /**
- * Create a benchmark series with isolated invented model identities.
+ * Build the case options every runner test shares, with invented series provenance.
  *
- * @param overrides - Series fields to replace for a test.
- * @returns Complete benchmark series configuration.
+ * @param paths - Case and output directories and the case name.
+ * @returns Complete case options.
  */
-export function testSeries(overrides: Partial<GoldenSeries> = {}): GoldenSeries {
+export function caseOptions(
+    paths: Pick<
+        RunGoldenE2ECaseOptions,
+        'caseName' | 'caseDirectory' | 'outputDirectory' | 'evaluationDirectory'
+    > &
+        Partial<RunGoldenE2ECaseOptions>,
+): RunGoldenE2ECaseOptions {
     return {
-        judgeConfig: testCoreConfig({
-            llm: {
-                apiKey: 'fake-judge-key',
-                baseUrl: 'https://example.com/v1',
-                model: 'example-judge-model',
-                visionModel: 'example-judge-model',
-            },
-        }),
-        judgeCacheRoot: null,
-        refreshJudgeCache: false,
         runEnvironment: {
             agent: { commit: 'c'.repeat(40), dirty: true },
             browser: 'cloakbrowser 1.2.3, chromium 123.4',
         },
-        ...overrides,
+        knowledgeBaseSha: 'b'.repeat(40),
+        oracle: humanOracle,
+        ...paths,
     };
 }
 
@@ -75,7 +77,6 @@ export const humanOracle: GoldenHumanOracle = {
 };
 
 export const humanFix: ExtractedHumanFix = {
-    commit: humanOracle.humanFixCommit,
     firstParent: '8e73dd6c67cb432e1d93bfb79326fd88b16fdbe5',
     candidates: [
         {
@@ -86,6 +87,7 @@ export const humanFix: ExtractedHumanFix = {
             sourceRule: 'nettg.pl,morizon.pl##.banner',
         },
     ],
+    removedRules: [],
 };
 
 /**
@@ -104,10 +106,15 @@ export function writeRunSide(caseDirectory: string): void {
                 url: 'https://github.com/AdguardTeam/AdguardFilters/issues/235988',
                 title: 'nettg.pl',
                 body:
+                    '### Issue URL (Ads)\n' +
+                    '[https://nettg.pl/](https://adguardteam.github.io/AnonymousRedirect/' +
+                    'redirect.html?url=https%3A%2F%2Fnettg.pl%2F)\n\n' +
+                    '### Comment\n' +
                     'Repeated advertising leftovers are visible between article cards.\n\n' +
                     '### Issue configuration\n' +
                     '[Import](https://reports.adguard.com/settings/import.html?' +
-                    'product_version=5.4.3.99&ext.manifest_version=3&' +
+                    'scheme_version=4&product_type=ext&product_version=5.4.3.99&' +
+                    'ext.manifest_version=3&browser=chrome&' +
                     'regular_filters=2%2C216&stealth.enabled=0)',
                 state: 'closed',
                 labels: ['T: Ads'],
@@ -257,43 +264,17 @@ export function localOutputPaths(outputDirectory: string, resultPath: string): L
 }
 
 /**
- * Script the post-lock reporter-environment assessment as an exact match.
+ * Keep every networked seam of the runner offline and quiet: the site answers, the human commit
+ * comes from the fixtures, and a failed case logs nowhere.
  *
- * @returns A runner seam member using the locked record's own wrapper extension.
+ * @param overrides - Seams a test replaces.
+ * @returns Runner dependencies that never reach a site or a git remote.
  */
-export function matchedAssessment(): NonNullable<
-    NonNullable<Parameters<typeof runGoldenE2ECase>[2]>['assessAgentEnvironment']
-> {
-    return async (record) => ({
-        status: 'matched',
-        detail: 'Scripted exact reporter-environment match.',
-        extension: record.provenance.extension!,
-    });
-}
-
-/**
- * Script the post-lock reporter-environment assessment as agent equipment mismatch.
- *
- * @returns A runner seam member classifying the locked record as an agent mismatch.
- */
-export function mismatchedAssessment(): NonNullable<
-    NonNullable<Parameters<typeof runGoldenE2ECase>[2]>['assessAgentEnvironment']
-> {
-    return async () => ({
-        status: 'agent_mismatch',
-        detail: 'Scripted reporter-environment mismatch.',
-        extension: null,
-    });
-}
-
-/**
- * Track a separate evaluation directory for cleanup.
- *
- * @param outputDirectory - Agent output directory used as the name prefix.
- * @returns Separate sibling evaluation directory.
- */
-export function evaluationDirectoryFor(outputDirectory: string): string {
-    const directory = `${outputDirectory}-evaluation`;
-    temporaryRoots.push(directory);
-    return directory;
+export function offline(overrides: GoldenE2ERunnerDependencies = {}): GoldenE2ERunnerDependencies {
+    return {
+        probeSite: async () => ({ reachable: true, answer: 'HTTP 200' }),
+        extractHumanFix: async () => humanFix,
+        logger: pino({ level: 'silent' }),
+        ...overrides,
+    };
 }

@@ -36,9 +36,7 @@ describe('human commit git reader', () => {
         expect(git.readParents).toHaveBeenCalledWith(HUMAN_COMMIT);
         expect(git.readDiff).toHaveBeenCalledWith(FIRST_PARENT, HUMAN_COMMIT);
         expect(fix).toEqual({
-            commit: HUMAN_COMMIT,
             firstParent: FIRST_PARENT,
-            rawDiff: NETTG_DIFF,
             removedRules: [],
             candidates: [
                 {
@@ -78,7 +76,6 @@ diff --git a/BaseFilter/sections/foreign.txt b/BaseFilter/sections/foreign.txt
 
         const fix = await extractHumanCommitFix(HUMAN_COMMIT, git);
 
-        expect(fix.rawDiff).toBe(diff);
         expect(fix.removedRules).toEqual([
             {
                 rule: '||obsolete.example^$domain=reporter.example',

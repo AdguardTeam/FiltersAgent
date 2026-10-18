@@ -199,5 +199,3 @@ mismatched ownership, manifest, or visibility state. There is no cleanup CLI.
   `apply_rule` tool is registered in `src/agent/tool-factory.ts`.
 - `src/analyzer/site-analyzer.ts` — `SiteAnalyzer`, the findings accumulator the `report_finding`
   tool fills; `src/types/site-analysis.ts` holds its Valibot schemas.
-- `lab/e2e/repro-profile.ts` — `deriveReproProfile()` and `profileFallbacks()`, the golden browser
-  oracle's profile fallbacks.

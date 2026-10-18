@@ -101,13 +101,8 @@ with a `ConfigError` that names it. The
 [benchmark guide](docs/guides/benchmark.md#configure-the-provider) shows a
 complete `.env` and what each value must be.
 
-`pnpm test:e2e` also needs the `E2E_JUDGE_*` settings described in
-[Configure the judge](docs/guides/benchmark.md#configure-the-judge).
-
-Keep both judge model roles and reasoning efforts fixed across model
-comparisons. They are recorded and included in the judge cache identity.
-`pnpm benchmark:summarize` warns with `mixed pins:` when judge settings,
-agent revisions, KnowledgeBase commits or browser builds differ.
+`pnpm benchmark:summarize` warns with `mixed pins:` when agent revisions,
+KnowledgeBase commits or browser builds differ across the compared runs.
 
 Set `GITHUB_TOKEN` only for commands that read a live GitHub issue; a run from
 an exported issue file does not need it.

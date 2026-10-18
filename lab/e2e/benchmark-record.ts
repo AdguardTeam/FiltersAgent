@@ -3,51 +3,31 @@ import { join, resolve } from 'node:path';
 import type { LlmConfig } from '../../src/config/config';
 import type { LocalRunRecord } from '../../src/local/run-output';
 import { LLM_USAGE_SUMMARY_FILE_NAME } from '../../src/local/run-manifest';
-import { PROVIDER_REJECTION_PREFIX } from '../../src/pi/single-shot';
-import { InfrastructureFailureReason } from '../../src/types/infrastructure-failure-reason';
-import {
-    SymptomObservation,
-    VerificationStatus,
-    type FixRunResult,
-} from '../../src/types/fix-run-result';
+import type { CandidateForReview } from '../../src/types/candidate-for-review';
+import type { CandidatePatch } from '../../src/types/fix-run-result';
 import { TraceEventType, type RunTrace } from '../../src/types/trace';
 import { readRunUsageSummary, type TokenTotals } from '../../src/types/usage-summary';
 import { writeAtomicJson } from '../atomic-json';
 import { effectiveVisionModel } from '../effective-vision-model';
-import { INTAKE_SKIPPED_PREFIX } from '../local/local-failure-stage';
 import { readRunCost, type RunCostStatus } from '../pricing/run-cost';
-import { GoldenE2EStatus, type GoldenE2EResult } from './golden-comparator';
-import { matchesHumanRuleScope } from './golden-candidate-comparison';
+import type { AgentOutcome } from './benchmark-outcome';
+import type { SiteReachability } from './case-site';
+import type { GoldenAgentEnvironmentAssessment } from './golden-agent-environment';
 import { type GoldenE2ERun, type GoldenHumanOracle } from './golden-case';
-import { HumanFixVerdict } from './golden-judge';
-import type { GoldenSeries } from './golden-runner';
+import type { ExtractedHumanFix, HumanFixCandidate, HumanRemovedRule } from './human-commit-oracle';
 
 export const BENCHMARK_RECORD_FILE_NAME = 'benchmark-record.json';
-export const BENCHMARK_RECORD_SCHEMA_VERSION = 1;
-export const BenchmarkLevel = {
-    Failed: 0,
-    Reproduced: 1,
-    Proposed: 2,
-    SelfVerified: 3,
-    MatchesHumanScope: 4,
-    Pass: 5,
-} as const;
+export const BENCHMARK_RECORD_SCHEMA_VERSION = 2;
 /**
- * Highest observable milestone achieved by one benchmark run.
+ * The page a case's site check requested, and what came back.
  */
-export type BenchmarkLevel = (typeof BenchmarkLevel)[keyof typeof BenchmarkLevel];
-export const BenchmarkFailureKind = {
-    ProviderRejected: 'provider_rejected',
+export interface CheckedSite extends SiteReachability {
     /**
-     * The agent's intake declined a golden issue as outside its task.
+     * Reported page from the case's pinned report.
      */
-    IntakeSkipped: 'intake_skipped',
-    Transient: 'transient',
-} as const;
-/**
- * Whether a failed run is an agent rejection, intake skip, or retryable outage.
- */
-export type BenchmarkFailureKind = (typeof BenchmarkFailureKind)[keyof typeof BenchmarkFailureKind];
+    url: string;
+}
+
 /**
  * Source and browser provenance captured once for an ordinary model-run series.
  */
@@ -72,7 +52,8 @@ export interface BenchmarkRunEnvironment {
 }
 
 /**
- * Self-contained comparison record written after independent case evaluation.
+ * Self-contained record of one benchmark case: who ran it, in which environment, what it cost, what
+ * the agent reached, and the human fix beside it.
  */
 export interface BenchmarkRecord {
     /**
@@ -117,31 +98,6 @@ export interface BenchmarkRecord {
         singleShotReasoningEffort: LlmConfig['singleShotReasoningEffort'];
     };
     /**
-     * Independent judge identity without endpoint or credentials.
-     */
-    judge: {
-        /**
-         * Judge provider protocol.
-         */
-        api: LlmConfig['api'];
-        /**
-         * Judge text model.
-         */
-        model: string;
-        /**
-         * Effective judge vision model.
-         */
-        visionModel: string;
-        /**
-         * Judge loop reasoning setting, including whether reasoning is disabled.
-         */
-        reasoningEffort: LlmConfig['reasoningEffort'];
-        /**
-         * Judge extraction and visual-review reasoning setting.
-         */
-        singleShotReasoningEffort: LlmConfig['singleShotReasoningEffort'];
-    };
-    /**
      * Immutable runtime environment pins.
      */
     environment: {
@@ -167,7 +123,11 @@ export interface BenchmarkRecord {
      */
     timings: {
         /**
-         * Case start to agent trace start.
+         * Case start to the end of the site check.
+         */
+        siteCheckMs: number;
+        /**
+         * Site check end to agent trace start.
          */
         preparationMs: number | null;
         /**
@@ -179,11 +139,11 @@ export interface BenchmarkRecord {
          */
         finalizeMs: number | null;
         /**
-         * Local runner return to completed independent evaluation.
+         * Local runner return to the written record: environment comparison and human fix read.
          */
         evaluationMs: number;
         /**
-         * Complete case duration including preparation and evaluation.
+         * Complete case duration including the site check, preparation and evaluation.
          */
         totalMs: number;
     };
@@ -213,34 +173,41 @@ export interface BenchmarkRecord {
         costStatus: RunCostStatus;
     };
     /**
-     * Independent classification and partial-credit outcome.
+     * The site check before the run: the page, whether a host answered, and what came back; null
+     * when the case failed before the check.
      */
-    outcome: {
+    site: CheckedSite | null;
+    /**
+     * The agent's own outcome and the environment it ran in.
+     */
+    outcome: AgentOutcome & {
         /**
-         * Golden comparison classification.
+         * Whether the agent's verified session used the reporter's extension build, filters and
+         * Stealth state; null when no sealed run was read.
          */
-        status: GoldenE2EStatus;
+        reporterEnvironment: GoldenAgentEnvironmentAssessment | null;
         /**
-         * Infrastructure failure classification, otherwise null.
+         * The verified rule the agent proposed, as it proposed it; null without one.
          */
-        failureKind: BenchmarkFailureKind | null;
+        candidate: CandidatePatch | null;
         /**
-         * Highest achieved benchmark level.
+         * The rule the agent found but could not verify, with the reason; null without one.
          */
-        level: BenchmarkLevel;
-        /**
-         * Independent human-rule validation state.
-         */
-        humanFixVerdict: HumanFixVerdict;
-        /**
-         * Whether the human-rule verdict came from the shared cache.
-         */
-        verdictFromCache: boolean;
+        candidateForReview: CandidateForReview | null;
     };
     /**
-     * Human issue-to-fix timing from the closed oracle, or null when not supplied.
+     * The human fix as committed, recorded beside the agent's rule for the comparison after a
+     * series; the benchmark trusts it and never checks it in a browser.
      */
     human: {
+        /**
+         * Human fix commit from the closed oracle.
+         */
+        fixCommit: string;
+        /**
+         * First parent the rules were read against, or null when the commit could not be read.
+         */
+        firstParent: string | null;
         /**
          * Issue creation timestamp.
          */
@@ -253,11 +220,31 @@ export interface BenchmarkRecord {
          * Issue creation to human fix duration.
          */
         elapsedMs: number;
-    } | null;
+        /**
+         * Rule additions of the commit's first-parent diff, or null when it could not be read.
+         */
+        rules: HumanFixCandidate[] | null;
+        /**
+         * Rule removals of the diff without a replacement, or null when it could not be read.
+         */
+        removedRules: HumanRemovedRule[] | null;
+        /**
+         * Why the commit could not be read; null when it was.
+         */
+        rulesError: string | null;
+    };
 }
 
 /**
- * Post-evaluation sources needed to assemble a comparison record.
+ * The human fix's rules as the benchmark record keeps them.
+ */
+type BenchmarkHumanRules = Pick<
+    BenchmarkRecord['human'],
+    'firstParent' | 'rules' | 'removedRules' | 'rulesError'
+>;
+
+/**
+ * Post-run sources needed to assemble a benchmark record.
  */
 export interface CollectBenchmarkRecordInput {
     /**
@@ -268,6 +255,10 @@ export interface CollectBenchmarkRecordInput {
      * Wall-clock case start in milliseconds.
      */
     startedAt: number;
+    /**
+     * Wall-clock end of the site check in milliseconds; the case start when no check ran.
+     */
+    siteCheckedAt: number;
     /**
      * Wall-clock local runner return or failure in milliseconds.
      */
@@ -281,21 +272,29 @@ export interface CollectBenchmarkRecordInput {
      */
     outputDirectory: string;
     /**
-     * Validated sealed agent output, or null when the run could not be read.
+     * Validated sealed agent output, or null when the agent did not run or its run was unreadable.
      */
     record: LocalRunRecord | null;
     /**
-     * Independent golden classification.
+     * Case outcome: the agent's own, an infrastructure failure, or an unreachable site.
      */
-    result: GoldenE2EResult;
+    outcome: AgentOutcome;
+    /**
+     * Comparison of the agent's environment with the reporter's, or null without a run.
+     */
+    reporterEnvironment: GoldenAgentEnvironmentAssessment | null;
+    /**
+     * Site check before the run, or null when the case failed before it.
+     */
+    site: CheckedSite | null;
     /**
      * Loaded run-side pins, or null when case loading failed.
      */
     run: Pick<GoldenE2ERun, 'extensionBuild' | 'filtersBaseSha'> | null;
     /**
-     * Shared judge and runtime provenance.
+     * Source and browser provenance of the series.
      */
-    series: GoldenSeries;
+    runEnvironment: BenchmarkRunEnvironment;
     /**
      * KnowledgeBase commit passed to the agent.
      */
@@ -305,94 +304,53 @@ export interface CollectBenchmarkRecordInput {
      */
     llm: LlmConfig;
     /**
-     * Independent judge outcome and cache provenance.
+     * The case's closed human oracle.
      */
-    judge: {
-        /**
-         * Human fix validation outcome.
-         */
-        verdict: HumanFixVerdict;
-        /**
-         * Whether the verdict was reused.
-         */
-        fromCache: boolean;
-    };
+    oracle: GoldenHumanOracle;
     /**
-     * Closed human oracle loaded only after the agent seals.
+     * The human fix's rules read from its commit.
      */
-    oracle: GoldenHumanOracle | null;
+    humanRules: BenchmarkHumanRules;
 }
 
 /**
- * Assign the highest achieved milestone without crediting infrastructure failures.
+ * Read the human fix's rules for the record; a failed read is recorded, not raised, because the
+ * agent's result stands without it.
  *
- * @param result - Final independent golden classification.
- * @param runResult - Sealed agent result when available.
- * @returns Highest observed level.
+ * @param commit - Human fix commit from the closed oracle.
+ * @param extract - Read-only first-parent commit reader.
+ * @returns The commit's rule additions and removals, or the reason they could not be read.
  */
-export function benchmarkLevel(
-    result: GoldenE2EResult,
-    runResult: FixRunResult | null,
-): BenchmarkLevel {
-    if (result.status === GoldenE2EStatus.InfrastructureFailure || !runResult) {
-        return BenchmarkLevel.Failed;
+export async function readBenchmarkHumanRules(
+    commit: string,
+    extract: (commit: string) => Promise<ExtractedHumanFix>,
+): Promise<BenchmarkHumanRules> {
+    try {
+        const fix = await extract(commit);
+        return {
+            firstParent: fix.firstParent,
+            rules: fix.candidates,
+            removedRules: fix.removedRules,
+            rulesError: null,
+        };
+    } catch (error) {
+        return {
+            firstParent: null,
+            rules: null,
+            removedRules: null,
+            rulesError: error instanceof Error ? error.message : String(error),
+        };
     }
-    if (result.status === GoldenE2EStatus.Pass) {
-        return BenchmarkLevel.Pass;
-    }
-    if (result.humanCandidate && matchesHumanRuleScope(runResult, result.humanCandidate)) {
-        return BenchmarkLevel.MatchesHumanScope;
-    }
-    if (runResult.verificationStatus === VerificationStatus.Verified) {
-        return BenchmarkLevel.SelfVerified;
-    }
-    if (runResult.candidatePatch) {
-        return BenchmarkLevel.Proposed;
-    }
-    return runResult.symptomObservation === SymptomObservation.Reproduced
-        ? BenchmarkLevel.Reproduced
-        : BenchmarkLevel.Failed;
 }
 
 /**
- * Distinguish agent provider rejections and intake skips from retryable failures.
- *
- * @param result - Final golden classification, including judge failures.
- * @param runResult - Agent-only evidence used to identify deterministic rejection.
- * @returns Agent rejection, intake skip, transient failure, or null for other results.
- */
-export function benchmarkFailureKind(
-    result: GoldenE2EResult,
-    runResult: FixRunResult | null,
-): BenchmarkFailureKind | null {
-    if (result.status !== GoldenE2EStatus.InfrastructureFailure) {
-        return null;
-    }
-    if (
-        runResult?.infrastructureFailureReason === InfrastructureFailureReason.LlmRejected ||
-        (runResult?.infrastructureFailureReason === InfrastructureFailureReason.InputUnavailable &&
-            runResult.reasoning.includes(PROVIDER_REJECTION_PREFIX)) ||
-        runResult?.candidateVisualReview?.rationale.includes(PROVIDER_REJECTION_PREFIX)
-    ) {
-        return BenchmarkFailureKind.ProviderRejected;
-    }
-    if (
-        runResult?.infrastructureFailureReason === InfrastructureFailureReason.InputUnavailable &&
-        runResult.reasoning.includes(INTAKE_SKIPPED_PREFIX)
-    ) {
-        return BenchmarkFailureKind.IntakeSkipped;
-    }
-    return BenchmarkFailureKind.Transient;
-}
-
-/**
- * Assemble a record from trusted agent artifacts and the independent judgement.
+ * Assemble a record from trusted agent artifacts, the case outcome and the human fix.
  *
  * @param input - Completed lifecycle sources and timestamps.
- * @returns Self-contained comparison record without credentials or provider endpoints.
+ * @returns Self-contained record without credentials or provider endpoints.
  */
 export function collectBenchmarkRecord(input: CollectBenchmarkRecordInput): BenchmarkRecord {
-    const { record, outputDirectory, llm, series, oracle } = input;
+    const { record, outputDirectory, llm, runEnvironment, oracle } = input;
     const tracePath = record?.result.artifactPaths.trace;
     const trace =
         tracePath && existsSync(resolve(outputDirectory, tracePath))
@@ -409,7 +367,7 @@ export function collectBenchmarkRecord(input: CollectBenchmarkRecordInput): Benc
         schemaVersion: BENCHMARK_RECORD_SCHEMA_VERSION,
         case: input.caseName,
         startedAt: new Date(input.startedAt).toISOString(),
-        agent: series.runEnvironment.agent,
+        agent: runEnvironment.agent,
         model: {
             api: llm.api,
             loop: llm.model,
@@ -417,21 +375,15 @@ export function collectBenchmarkRecord(input: CollectBenchmarkRecordInput): Benc
             reasoningEffort: llm.reasoningEffort,
             singleShotReasoningEffort: llm.singleShotReasoningEffort,
         },
-        judge: {
-            api: series.judgeConfig.llm.api,
-            model: series.judgeConfig.llm.model,
-            visionModel: effectiveVisionModel(series.judgeConfig.llm),
-            reasoningEffort: series.judgeConfig.llm.reasoningEffort,
-            singleShotReasoningEffort: series.judgeConfig.llm.singleShotReasoningEffort,
-        },
         environment: {
             extensionBuild: input.run?.extensionBuild ?? null,
-            browser: series.runEnvironment.browser,
+            browser: runEnvironment.browser,
             knowledgeBaseCommit: input.knowledgeBaseSha,
             filtersBaseSha: input.run?.filtersBaseSha ?? null,
         },
         timings: {
-            preparationMs: traceStartedAt === null ? null : traceStartedAt - input.startedAt,
+            siteCheckMs: input.siteCheckedAt - input.startedAt,
+            preparationMs: traceStartedAt === null ? null : traceStartedAt - input.siteCheckedAt,
             agentMs:
                 traceStartedAt === null || traceEndedAt === null
                     ? null
@@ -449,25 +401,25 @@ export function collectBenchmarkRecord(input: CollectBenchmarkRecordInput): Benc
             costUsd: cost.usd,
             costStatus: cost.status,
         },
+        site: input.site,
         outcome: {
-            status: input.result.status,
-            failureKind: benchmarkFailureKind(input.result, record?.result ?? null),
-            level: benchmarkLevel(input.result, record?.result ?? null),
-            humanFixVerdict: input.judge.verdict,
-            verdictFromCache: input.judge.fromCache,
+            ...input.outcome,
+            reporterEnvironment: input.reporterEnvironment,
+            candidate: record?.result.candidatePatch ?? null,
+            candidateForReview: record?.result.candidateForReview ?? null,
         },
-        human: oracle
-            ? {
-                  issueCreatedAt: oracle.issueCreatedAt,
-                  fixCommittedAt: oracle.fixCommittedAt,
-                  elapsedMs: Date.parse(oracle.fixCommittedAt) - Date.parse(oracle.issueCreatedAt),
-              }
-            : null,
+        human: {
+            fixCommit: oracle.humanFixCommit,
+            issueCreatedAt: oracle.issueCreatedAt,
+            fixCommittedAt: oracle.fixCommittedAt,
+            elapsedMs: Date.parse(oracle.fixCommittedAt) - Date.parse(oracle.issueCreatedAt),
+            ...input.humanRules,
+        },
     };
 }
 
 /**
- * Atomically persist the final comparison record beside the independent golden result.
+ * Atomically persist the final benchmark record in the evaluation directory.
  *
  * @param evaluationDirectory - Evaluator-owned output directory.
  * @param record - Completed self-contained benchmark record.

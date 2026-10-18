@@ -85,8 +85,6 @@ marked required have no default: a missing one fails the run with a
 Invalid request timeouts, retry counts and reasoning efforts name their
 `LLM_*` variable in the error. Intake provider rejections are identified as
 provider rejections and retain the stop reason in the run's failure detail.
-Benchmark judge settings use the same validation under `E2E_JUDGE_*`; see
-[Configure the judge](../guides/benchmark.md#configure-the-judge).
 
 `anthropic-messages` uses adaptive thinking and targets Claude models that
 support it (Claude 5.x).

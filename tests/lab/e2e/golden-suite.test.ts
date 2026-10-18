@@ -7,7 +7,8 @@ import type { CoreConfig } from '../../../src/config/config';
 
 import { writeLocalRunOutput, type LocalRunRecord } from '../../../src/local/run-output';
 
-import type { GoldenE2EResult } from '../../../lab/e2e/golden-comparator';
+import { BenchmarkCaseStatus } from '../../../lab/e2e/benchmark-outcome';
+import type { BenchmarkRecord, BenchmarkRunEnvironment } from '../../../lab/e2e/benchmark-record';
 
 import {
     goldenOutputLayout,
@@ -22,13 +23,26 @@ import { testCoreConfig } from '../../config/test-core-config';
 import {
     temporaryRoot,
     coreConfig,
-    testSeries,
     humanOracle,
-    humanFix,
     writeRunSide,
     analysisOnlyRecord,
-    matchedAssessment,
+    offline,
 } from './golden-runner-fixtures';
+
+const runEnvironment: BenchmarkRunEnvironment = {
+    agent: { commit: 'c'.repeat(40), dirty: true },
+    browser: 'cloakbrowser 1.2.3, chromium 123.4',
+};
+
+/**
+ * Write a case with its oracle, as the tracked corpus holds it.
+ *
+ * @param caseDirectory - Case directory to populate.
+ */
+function writeCase(caseDirectory: string): void {
+    writeRunSide(caseDirectory);
+    writeFileSync(join(caseDirectory, 'oracle.json'), JSON.stringify(humanOracle));
+}
 
 describe('listGoldenCaseNames', () => {
     it('discovers run-side cases in stable order without requiring oracle.json', () => {
@@ -52,7 +66,7 @@ describe('runGoldenE2ESuite', () => {
         const root = temporaryRoot('golden-suite-kb-pin-');
         const casesRoot = join(root, 'cases');
         for (const caseName of ['first', 'second']) {
-            writeRunSide(join(casesRoot, caseName));
+            writeCase(join(casesRoot, caseName));
         }
         const sha = 'c'.repeat(40);
         const resolveKnowledgeBaseSha = vi.fn(async () => sha);
@@ -66,7 +80,7 @@ describe('runGoldenE2ESuite', () => {
         await runGoldenE2ESuite(
             coreConfig,
             {
-                series: testSeries(),
+                runEnvironment,
                 caseNames: ['first', 'second'],
                 casesRoot,
                 outputRoot: join(root, 'runs'),
@@ -74,14 +88,7 @@ describe('runGoldenE2ESuite', () => {
                 knowledgeBaseSha: explicitPin ? sha : undefined,
                 onKnowledgeBaseResolved,
             },
-            {
-                resolveKnowledgeBaseSha,
-                runLocalFix,
-                assessAgentEnvironment: matchedAssessment(),
-                loadHumanOracle: () => humanOracle,
-                extractHumanFix: async () => humanFix,
-                createJudgeProbe: () => async () => ({ status: 'verified', detail: 'Works.' }),
-            },
+            { ...offline({ runLocalFix }), resolveKnowledgeBaseSha },
         );
         expect(resolveKnowledgeBaseSha).toHaveBeenCalledTimes(explicitPin ? 0 : 1);
         expect(onKnowledgeBaseResolved).toHaveBeenCalledExactlyOnceWith(sha);
@@ -125,7 +132,7 @@ describe('runGoldenE2ESuite', () => {
                 runGoldenE2ESuite(
                     coreConfig,
                     {
-                        series: testSeries(),
+                        runEnvironment,
                         knowledgeBaseSha: 'b'.repeat(40),
                         caseNames: ['first', 'second'],
                         casesRoot: join(root, 'cases'),
@@ -133,7 +140,7 @@ describe('runGoldenE2ESuite', () => {
                         evaluationRoot: join(root, 'evaluations'),
                         refuseExistingCaseDirectories: true,
                     },
-                    { runLocalFix },
+                    offline({ runLocalFix }),
                 ),
             ).rejects.toThrow(existingDirectory);
             expect(runLocalFix).not.toHaveBeenCalled();
@@ -143,31 +150,56 @@ describe('runGoldenE2ESuite', () => {
         },
     );
 
+    it.each(['missing', 'malformed'])(
+        'refuses a selection with a %s oracle before the first case runs',
+        async (scenario) => {
+            const root = temporaryRoot('golden-suite-oracle-');
+            const casesRoot = join(root, 'cases');
+            writeCase(join(casesRoot, 'first'));
+            writeRunSide(join(casesRoot, 'broken'));
+            if (scenario === 'malformed') {
+                writeFileSync(join(casesRoot, 'broken', 'oracle.json'), '{');
+            }
+            const runLocalFix = vi.fn();
+            const seams = offline({ runLocalFix });
+
+            await expect(
+                runGoldenE2ESuite(
+                    coreConfig,
+                    {
+                        runEnvironment,
+                        knowledgeBaseSha: 'b'.repeat(40),
+                        caseNames: ['first', 'broken'],
+                        casesRoot,
+                        outputRoot: join(root, 'runs'),
+                        evaluationRoot: join(root, 'evaluations'),
+                    },
+                    seams,
+                ),
+            ).rejects.toThrow(/broken.*oracle\.json/u);
+            expect(runLocalFix).not.toHaveBeenCalled();
+        },
+    );
+
     it('keeps two output roots apart', async () => {
         const root = temporaryRoot('golden-suite-independent-');
         const casesRoot = join(root, 'cases');
         const caseName = 'sample';
-        writeRunSide(join(casesRoot, caseName));
+        writeCase(join(casesRoot, caseName));
         const runLocalFix = vi.fn(async (_config, options) =>
             writeLocalRunOutput(analysisOnlyRecord(), {
                 outputDir: options.outputDir,
                 workspaceRoot: process.cwd(),
             }),
         );
-        const dependencies = {
-            runLocalFix,
-            assessAgentEnvironment: matchedAssessment(),
-            loadHumanOracle: () => humanOracle,
-            extractHumanFix: async () => humanFix,
-            createJudgeProbe: () => async () => ({ status: 'verified' as const, detail: 'Works.' }),
-        };
+        const dependencies = offline({ runLocalFix });
         const outputRoots = [join(root, 'first'), join(root, 'second')];
         for (const outputRoot of outputRoots) {
             const layout = goldenOutputLayout(root, outputRoot);
             const suite = await runGoldenE2ESuite(
                 coreConfig,
                 {
-                    series: testSeries(),
+                    runEnvironment,
                     knowledgeBaseSha: 'b'.repeat(40),
                     caseNames: [caseName],
                     casesRoot,
@@ -177,7 +209,7 @@ describe('runGoldenE2ESuite', () => {
                 },
                 dependencies,
             );
-            expect(suite.results[0]!.result.status).toBe('agent_regression');
+            expect(suite.results[0]!.record.outcome.status).toBe(BenchmarkCaseStatus.Reproduced);
         }
         expect(runLocalFix).toHaveBeenCalledTimes(2);
         for (const outputRoot of outputRoots) {
@@ -189,22 +221,20 @@ describe('runGoldenE2ESuite', () => {
             expect(
                 JSON.parse(
                     readFileSync(
-                        join(outputRoot, 'evaluations', caseName, 'e2e-result.json'),
+                        join(outputRoot, 'evaluations', caseName, 'benchmark-record.json'),
                         'utf8',
                     ),
-                ) as GoldenE2EResult,
-            ).toMatchObject({ status: 'agent_regression' });
+                ) as BenchmarkRecord,
+            ).toMatchObject({ outcome: { status: BenchmarkCaseStatus.Reproduced } });
         }
     });
 
-    it('runs selected cases sequentially and preserves exit-code severity 0/1/2/3', async () => {
+    it('runs selected cases sequentially and reports an incomplete suite', async () => {
         const casesRoot = temporaryRoot('golden-suite-cases-');
         const outputRoot = temporaryRoot('golden-suite-output-');
         const evaluationRoot = temporaryRoot('golden-suite-evaluation-');
-        for (const name of ['regression', 'drift']) {
-            const caseDirectory = join(casesRoot, name);
-            mkdirSync(caseDirectory);
-            writeRunSide(caseDirectory);
+        for (const name of ['reproduced', 'offline']) {
+            writeCase(join(casesRoot, name));
         }
         let active = 0;
         let maxActive = 0;
@@ -219,39 +249,67 @@ describe('runGoldenE2ESuite', () => {
             active -= 1;
             return paths;
         });
+        let probes = 0;
+        const run = (caseNames: string[]) =>
+            runGoldenE2ESuite(
+                coreConfig,
+                {
+                    runEnvironment,
+                    knowledgeBaseSha: 'b'.repeat(40),
+                    caseNames,
+                    casesRoot,
+                    outputRoot,
+                    evaluationRoot,
+                },
+                offline({
+                    runLocalFix,
+                    probeSite: async () =>
+                        (probes += 1) === 2
+                            ? { reachable: false, answer: 'fetch failed: ETIMEDOUT' }
+                            : { reachable: true, answer: 'HTTP 200' },
+                }),
+            );
+
+        const suite = await run(['reproduced', 'offline']);
+
+        expect(maxActive).toBe(1);
+        expect(suite.results.map((entry) => entry.record.outcome.status)).toEqual([
+            BenchmarkCaseStatus.Reproduced,
+            BenchmarkCaseStatus.SiteUnreachable,
+        ]);
+        expect(suite.exitCode).toBe(GoldenE2EExitCode.Incomplete);
+        expect(existsSync(join(outputRoot, 'reproduced', 'benchmark-record.json'))).toBe(false);
+        expect(existsSync(join(evaluationRoot, 'reproduced', 'benchmark-record.json'))).toBe(true);
+        expect((await run(['reproduced'])).exitCode).toBe(GoldenE2EExitCode.Completed);
+    });
+
+    it('reports a suite with an infrastructure failure as incomplete', async () => {
+        const root = temporaryRoot('golden-suite-infrastructure-');
+        const casesRoot = join(root, 'cases');
+        writeCase(join(casesRoot, 'failing'));
 
         const suite = await runGoldenE2ESuite(
             coreConfig,
             {
-                series: testSeries(),
+                runEnvironment,
                 knowledgeBaseSha: 'b'.repeat(40),
-                caseNames: ['regression', 'drift'],
+                caseNames: ['failing'],
                 casesRoot,
-                outputRoot,
-                evaluationRoot,
+                outputRoot: join(root, 'runs'),
+                evaluationRoot: join(root, 'evaluations'),
             },
-            {
-                runLocalFix,
-                assessAgentEnvironment: matchedAssessment(),
-                loadHumanOracle: () => humanOracle,
-                extractHumanFix: async () => humanFix,
-                createJudgeProbe:
-                    () =>
-                    async ({ caseName }) =>
-                        caseName === 'regression'
-                            ? { status: 'verified', detail: 'Human rule still works.' }
-                            : { status: 'not_verified', detail: 'Historical site drifted.' },
-            },
+            offline({
+                runLocalFix: vi.fn(async () => {
+                    throw new Error('Browser download failed.');
+                }),
+            }),
         );
 
-        expect(maxActive).toBe(1);
-        expect(suite.results.map((entry) => entry.result.status)).toEqual([
-            'agent_regression',
-            'environment_drift',
-        ]);
-        expect(suite.exitCode).toBe(GoldenE2EExitCode.EnvironmentDrift);
-        expect(existsSync(join(outputRoot, 'regression', 'e2e-result.json'))).toBe(false);
-        expect(existsSync(join(evaluationRoot, 'regression', 'e2e-result.json'))).toBe(true);
+        expect(suite.results[0]!.record.outcome).toMatchObject({
+            status: BenchmarkCaseStatus.InfrastructureFailure,
+            detail: 'Browser download failed.',
+        });
+        expect(suite.exitCode).toBe(GoldenE2EExitCode.Incomplete);
     });
 
     it.each([
@@ -263,8 +321,7 @@ describe('runGoldenE2ESuite', () => {
         const casesRoot = temporaryRoot('golden-suite-cost-cases-');
         const outputRoot = temporaryRoot('golden-suite-cost-output-');
         const evaluationRoot = temporaryRoot('golden-suite-cost-evaluation-');
-        mkdirSync(join(casesRoot, 'priced'));
-        writeRunSide(join(casesRoot, 'priced'));
+        writeCase(join(casesRoot, 'priced'));
         const pricedConfig = testCoreConfig({ llm: { model: 'example-reasoning-model' } });
         const pricingSnapshot =
             loadUsagePricing({ [LLM_PRICING_FILE_VAR]: pricingFile }, process.cwd()) ?? undefined;
@@ -296,7 +353,7 @@ describe('runGoldenE2ESuite', () => {
         const suite = await runGoldenE2ESuite(
             pricedConfig,
             {
-                series: testSeries(),
+                runEnvironment,
                 knowledgeBaseSha: 'b'.repeat(40),
                 caseNames: ['priced'],
                 casesRoot,
@@ -304,13 +361,7 @@ describe('runGoldenE2ESuite', () => {
                 evaluationRoot,
                 pricingSnapshot,
             },
-            {
-                runLocalFix,
-                assessAgentEnvironment: matchedAssessment(),
-                loadHumanOracle: () => humanOracle,
-                extractHumanFix: async () => humanFix,
-                createJudgeProbe: () => async () => ({ status: 'verified', detail: 'Works.' }),
-            },
+            offline({ runLocalFix }),
         );
 
         const cost = suite.results[0]!.cost;

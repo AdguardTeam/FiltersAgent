@@ -1,26 +1,19 @@
 /**
- * Exit codes shared by manual golden case, suite and independent oracle commands.
+ * Exit codes of the manual golden benchmark command.
  */
 export const GoldenE2EExitCode = {
     /**
-     * Every selected case passed or its human fix remains alive.
+     * Every selected case produced an agent outcome, whatever the agent reached.
      */
-    Pass: 0,
+    Completed: 0,
     /**
-     * A verified human fix exposes an agent regression.
+     * A case produced no agent outcome — an infrastructure failure or an unreachable site — or the
+     * command failed.
      */
-    AgentRegression: 1,
-    /**
-     * No candidate human fix still resolves the live defect.
-     */
-    EnvironmentDrift: 2,
-    /**
-     * Infrastructure prevented a conclusive evaluation.
-     */
-    InfrastructureFailure: 3,
+    Incomplete: 3,
 } as const;
 
 /**
- * Command-line classification shared by all golden evaluation modes.
+ * Command-line classification of a benchmark invocation.
  */
 export type GoldenE2EExitCode = (typeof GoldenE2EExitCode)[keyof typeof GoldenE2EExitCode];

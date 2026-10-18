@@ -16,14 +16,15 @@ import {
 import {
     BENCHMARK_RECORD_FILE_NAME,
     BENCHMARK_RECORD_SCHEMA_VERSION,
-    BenchmarkFailureKind,
-    BenchmarkLevel,
     type BenchmarkRecord,
 } from '../../../lab/e2e/benchmark-record';
+import { BenchmarkCaseStatus, BenchmarkFailureKind } from '../../../lab/e2e/benchmark-outcome';
+import { GoldenAgentEnvironmentStatus } from '../../../lab/e2e/golden-agent-environment';
 import { BenchmarkPin } from '../../../lab/benchmark/benchmark-summary-pins';
 import { ReasoningEffort } from '../../../src/config/reasoning-effort';
-import { GoldenE2EStatus } from '../../../lab/e2e/golden-comparator';
-import { HumanFixVerdict } from '../../../lab/e2e/golden-judge';
+import { RuleType } from '../../../src/types/rule-proposal';
+import { RepositoryEditKind } from '../../../src/types/repository-edit-kind';
+import { RuleSyntaxKind } from '../../../src/types/rule-syntax-kind';
 import { RunCostStatus } from '../../../lab/pricing/run-cost';
 import { LlmApi } from '../../../src/config/llm-api';
 
@@ -48,13 +49,6 @@ function record(caseName = 'example-case', model = 'example-agent-model'): Bench
             reasoningEffort: ReasoningEffort.High,
             singleShotReasoningEffort: ReasoningEffort.Medium,
         },
-        judge: {
-            api: LlmApi.OpenAiCompletions,
-            model: 'example-judge-model',
-            visionModel: 'example-judge-model',
-            reasoningEffort: ReasoningEffort.High,
-            singleShotReasoningEffort: ReasoningEffort.Medium,
-        },
         environment: {
             extensionBuild: null,
             browser: 'example-browser',
@@ -62,6 +56,7 @@ function record(caseName = 'example-case', model = 'example-agent-model'): Bench
             filtersBaseSha: null,
         },
         timings: {
+            siteCheckMs: 0,
             preparationMs: 60_000,
             agentMs: 120_000,
             finalizeMs: 3_000,
@@ -69,6 +64,7 @@ function record(caseName = 'example-case', model = 'example-agent-model'): Bench
             totalMs: 189_000,
         },
         turns: 7,
+        site: { url: 'https://example.org/', reachable: true, answer: 'HTTP 200' },
         usage: {
             tokens: { input: 10, output: 20, cacheRead: 30, cacheWrite: 40, reasoningTokens: 5 },
             requests: 8,
@@ -76,16 +72,37 @@ function record(caseName = 'example-case', model = 'example-agent-model'): Bench
             costStatus: RunCostStatus.Priced,
         },
         outcome: {
-            status: GoldenE2EStatus.Pass,
+            status: BenchmarkCaseStatus.Verified,
             failureKind: null,
-            level: BenchmarkLevel.Pass,
-            humanFixVerdict: HumanFixVerdict.Verified,
-            verdictFromCache: false,
+            detail: null,
+            reporterEnvironment: {
+                status: GoldenAgentEnvironmentStatus.Matched,
+                detail: 'Matched.',
+            },
+            candidate: {
+                rule: 'example.org##.ad',
+                ruleType: RuleType.Cosmetic,
+                filePath: 'filters/example.txt',
+            },
+            candidateForReview: null,
         },
         human: {
+            fixCommit: 'c'.repeat(40),
+            firstParent: 'd'.repeat(40),
             issueCreatedAt: '2026-10-01T00:00:00Z',
             fixCommittedAt: '2026-10-01T02:00:00Z',
             elapsedMs: 7_200_000,
+            rules: [
+                {
+                    rule: 'example.org##.ad',
+                    syntaxKind: RuleSyntaxKind.ElementHiding,
+                    filePath: 'filters/example.txt',
+                    repositoryEdit: RepositoryEditKind.Insert,
+                    sourceRule: 'example.org##.ad',
+                },
+            ],
+            removedRules: [],
+            rulesError: null,
         },
     };
 }
@@ -94,14 +111,20 @@ function loaded(value: BenchmarkRecord, root = 'example-root'): LoadedBenchmarkR
     return { record: value, root };
 }
 
-function rejected(caseName: string, kind: BenchmarkFailureKind): BenchmarkRecord {
+function failed(caseName: string, kind: BenchmarkFailureKind): BenchmarkRecord {
     const value = record(caseName);
     value.outcome = {
         ...value.outcome,
-        status: GoldenE2EStatus.InfrastructureFailure,
+        status: BenchmarkCaseStatus.InfrastructureFailure,
         failureKind: kind,
-        level: BenchmarkLevel.Failed,
+        detail: 'Example failure.',
+        candidate: null,
     };
+    return value;
+}
+
+function withStatus(value: BenchmarkRecord, status: BenchmarkCaseStatus): BenchmarkRecord {
+    value.outcome.status = status;
     return value;
 }
 
@@ -152,20 +175,16 @@ afterEach(() => {
 });
 
 describe('benchmark summaries', () => {
-    it('computes 50% (24–76%) for 5 passes in 10 runs', () => {
+    it('computes 50% (24–76%) for 5 verified in 10 runs', () => {
         const records = Array.from({ length: 10 }, (_, index) => {
             const value = record(`example-case-${index}`);
-            if (index >= 5) {
-                value.outcome.status = GoldenE2EStatus.AgentRegression;
-                value.outcome.level = BenchmarkLevel.Proposed;
-            }
-            return loaded(value);
+            return loaded(index >= 5 ? withStatus(value, BenchmarkCaseStatus.Proposed) : value);
         });
         const interval = wilsonInterval(5, 10);
         expect(interval.low).toBeCloseTo(0.2366, 4);
         expect(interval.high).toBeCloseTo(0.7634, 4);
         const summary = summarizeBenchmark(records);
-        expect(summary.models[0]).toMatchObject({ runs: 10, pass: 5, meanLevel: 3.5 });
+        expect(summary.models[0]).toMatchObject({ runs: 10, verified: 5, proposed: 5 });
         expect(renderBenchmarkSummaryMarkdown(summary)).toContain('50% (24–76%)');
         expect(summary.agentMedianMinutes).toBe(3);
         expect(summary.humanMedianHours).toBe(2);
@@ -174,13 +193,12 @@ describe('benchmark summaries', () => {
     it('keeps transient failures out of the denominator and provider rejections in it', () => {
         const summary = summarizeBenchmark([
             loaded(record()),
-            loaded(rejected('example-rejected', BenchmarkFailureKind.ProviderRejected)),
-            loaded(rejected('example-transient', BenchmarkFailureKind.Transient)),
+            loaded(failed('example-rejected', BenchmarkFailureKind.ProviderRejected)),
+            loaded(failed('example-transient', BenchmarkFailureKind.Transient)),
         ]);
         expect(summary.models[0]).toMatchObject({
             runs: 2,
-            pass: 1,
-            meanLevel: 2.5,
+            verified: 1,
             rejected: 1,
             transient: 1,
             totalCostUsd: 0.75,
@@ -191,13 +209,13 @@ describe('benchmark summaries', () => {
     });
 
     it('counts intake skips as failed runs and exposes them in the summary and CSV', () => {
-        const skipped = rejected('example-skipped', BenchmarkFailureKind.IntakeSkipped);
+        const skipped = failed('example-skipped', BenchmarkFailureKind.IntakeSkipped);
         const records = [loaded(record()), loaded(skipped)];
         const summary = summarizeBenchmark(records);
         expect(summary.models[0]).toMatchObject({
             runs: 2,
-            pass: 1,
-            passRate: 0.5,
+            verified: 1,
+            verifiedRate: 0.5,
             intakeSkipped: 1,
             transient: 0,
         });
@@ -216,30 +234,6 @@ describe('benchmark summaries', () => {
     });
 
     it.each([
-        [
-            BenchmarkPin.Judge,
-            (value: BenchmarkRecord) => {
-                value.judge.model = 'example-other-judge';
-            },
-        ],
-        [
-            BenchmarkPin.Judge,
-            (value: BenchmarkRecord) => {
-                value.judge.visionModel = 'example-other-vision';
-            },
-        ],
-        [
-            BenchmarkPin.Judge,
-            (value: BenchmarkRecord) => {
-                value.judge.reasoningEffort = ReasoningEffort.Off;
-            },
-        ],
-        [
-            BenchmarkPin.Judge,
-            (value: BenchmarkRecord) => {
-                value.judge.singleShotReasoningEffort = ReasoningEffort.Low;
-            },
-        ],
         [
             BenchmarkPin.AgentRevision,
             (value: BenchmarkRecord) => {
@@ -274,34 +268,98 @@ describe('benchmark summaries', () => {
         expect(renderBenchmarkSummaryMarkdown(summary)).toContain(`mixed pins: ${pin} (2 values)`);
     });
 
-    it('excludes a case the judge found dead for every model', () => {
-        const dead = record('example-dead');
-        const excludedTransient = rejected('example-dead', BenchmarkFailureKind.Transient);
-        dead.outcome.status = GoldenE2EStatus.EnvironmentDrift;
-        dead.outcome.humanFixVerdict = HumanFixVerdict.NotVerified;
-        const excludedRejection = rejected('example-dead', BenchmarkFailureKind.ProviderRejected);
-        const second = record('example-dead', 'example-second-model');
-        const summary = summarizeBenchmark([
-            loaded(record()),
-            loaded(dead),
-            loaded(excludedTransient),
-            loaded(excludedRejection),
-            loaded(second),
-        ]);
-        expect(summary.excludedCases).toEqual(['example-dead']);
-        expect(summary.cases.map((item) => item.caseName)).toEqual(['example-case']);
-        expect(summary.models[0]).toMatchObject({
-            runs: 1,
-            pass: 1,
-            rejected: 1,
-            transient: 1,
-            totalCostUsd: 1,
+    it('keeps an unreachable site out of the denominator and lists the case', () => {
+        const unreachable = failed('example-offline', BenchmarkFailureKind.Transient);
+        unreachable.outcome = {
+            ...unreachable.outcome,
+            status: BenchmarkCaseStatus.SiteUnreachable,
+            failureKind: null,
+            reporterEnvironment: null,
+        };
+        unreachable.usage.costUsd = null;
+        unreachable.human.elapsedMs = 360_000_000;
+        const summary = summarizeBenchmark([loaded(record()), loaded(unreachable)]);
+        // The agent median has no run of the unreachable case, so the human median has none either.
+        expect(summary.humanMedianHours).toBe(2);
+        expect(summary.models[0]).toMatchObject({ runs: 1, verified: 1, siteUnreachable: 1 });
+        expect(summary.unreachableCases).toEqual(['example-offline']);
+        expect(summary.cases.find((item) => item.caseName === 'example-offline')?.cells).toEqual({
+            'example-agent-model': null,
         });
-        expect(summary.models[1]).toMatchObject({ runs: 0, pass: 0, totalCostUsd: 0.25 });
-        expect(summary.cases[0]?.cells['example-second-model']).toBeNull();
         expect(renderBenchmarkSummaryMarkdown(summary)).toContain(
-            'excluded cases (drift): example-dead',
+            'site unreachable: example-offline',
         );
+    });
+
+    it('lists a case no model reproduced, as a stale case would show', () => {
+        const stale = [
+            withStatus(record('example-stale'), BenchmarkCaseStatus.NotReproduced),
+            withStatus(
+                record('example-stale', 'example-second-model'),
+                BenchmarkCaseStatus.NotReproduced,
+            ),
+            failed('example-stale', BenchmarkFailureKind.ProviderRejected),
+        ];
+        const reached = withStatus(
+            record('example-reached', 'example-second-model'),
+            BenchmarkCaseStatus.Reproduced,
+        );
+        // Every run refused before the investigation says nothing about the human fix.
+        const refused = [
+            failed('example-refused', BenchmarkFailureKind.ProviderRejected),
+            failed('example-refused', BenchmarkFailureKind.IntakeSkipped),
+        ];
+        const summary = summarizeBenchmark(
+            [record(), ...stale, reached, ...refused].map((value) => loaded(value)),
+        );
+        expect(summary.notReproducedCases).toEqual(['example-stale']);
+        expect(summary.cases.find((item) => item.caseName === 'example-stale')?.cells).toEqual(
+            expect.objectContaining({
+                'example-agent-model': expect.objectContaining({
+                    runs: 2,
+                    verified: 0,
+                    best: BenchmarkCaseStatus.NotReproduced,
+                }),
+            }),
+        );
+        expect(renderBenchmarkSummaryMarkdown(summary)).toContain(
+            'no model reproduced: example-stale',
+        );
+    });
+
+    it('counts runs whose verified session missed the reporter environment', () => {
+        const mismatch = record('example-mismatch');
+        mismatch.outcome.reporterEnvironment = {
+            status: GoldenAgentEnvironmentStatus.AgentMismatch,
+            detail: 'Stealth state enabled does not match reporter state disabled.',
+        };
+        const summary = summarizeBenchmark([loaded(record()), loaded(mismatch)]);
+        expect(summary.models[0]).toMatchObject({ runs: 2, verified: 2, environmentMismatches: 1 });
+    });
+
+    it('names every record written before the judge was removed at once', () => {
+        const root = temporaryRoot();
+        writeRecord(root, 'evaluations', record());
+        for (const caseName of ['example-old-a', 'example-old-b']) {
+            writeRecord(root, 'evaluations', {
+                ...record(caseName),
+                schemaVersion: 1,
+            } as unknown as BenchmarkRecord);
+        }
+        expect(() => readBenchmarkRecords([root])).toThrow(
+            /example-old-a[^\n]*version 1\)\n.*example-old-b[^\n]*version 1\)/u,
+        );
+    });
+
+    it('keeps a case without agent time out of the human median', () => {
+        // An intake skip ends before a trace, so it adds nothing to the agent median either.
+        const skipped = failed('example-skipped', BenchmarkFailureKind.IntakeSkipped);
+        skipped.timings.preparationMs = null;
+        skipped.timings.agentMs = null;
+        skipped.human.elapsedMs = 360_000_000;
+        const summary = summarizeBenchmark([loaded(record()), loaded(skipped)]);
+        expect(summary.agentMedianMinutes).toBe(3);
+        expect(summary.humanMedianHours).toBe(2);
     });
 
     it('counts records of one model configuration and case as repetitions', () => {
@@ -309,13 +367,12 @@ describe('benchmark summaries', () => {
         const secondRoot = temporaryRoot();
         const first = record();
         const repeated = record();
-        repeated.outcome.status = GoldenE2EStatus.AgentRegression;
-        repeated.outcome.level = BenchmarkLevel.Proposed;
+        repeated.outcome.status = BenchmarkCaseStatus.Proposed;
         repeated.usage.costUsd = 0.75;
         repeated.timings.agentMs = 240_000;
         const otherConfig = record();
         otherConfig.model.reasoningEffort = ReasoningEffort.Low;
-        otherConfig.human = { ...otherConfig.human!, elapsedMs: 36_000_000 };
+        otherConfig.human = { ...otherConfig.human, elapsedMs: 36_000_000 };
         writeRecord(firstRoot, 'evaluations', first);
         writeRecord(secondRoot, 'e2e-evaluations', repeated);
         const records = readBenchmarkRecords([firstRoot, join(secondRoot, 'e2e-evaluations')]);
@@ -324,8 +381,8 @@ describe('benchmark summaries', () => {
         expect(summary.models).toHaveLength(2);
         expect(summary.models[0]).toMatchObject({
             runs: 2,
-            pass: 1,
-            meanLevel: 3.5,
+            verified: 1,
+            proposed: 1,
             medianCostUsd: 0.5,
             medianMinutes: 4,
         });
@@ -336,8 +393,8 @@ describe('benchmark summaries', () => {
         const cell = summary.cases[0]?.cells[summary.models[0]!.label];
         expect(cell).toMatchObject({
             runs: 2,
-            pass: 1,
-            maxLevel: 5,
+            verified: 1,
+            best: BenchmarkCaseStatus.Verified,
             medianCostUsd: 0.5,
             medianMinutes: 4,
         });
@@ -351,7 +408,10 @@ describe('benchmark summaries', () => {
         missing.usage.costUsd = null;
         missing.timings.preparationMs = null;
         missing.turns = null;
-        missing.human = null;
+        missing.outcome.candidate = null;
+        missing.outcome.reporterEnvironment = null;
+        missing.human.rules = null;
+        missing.human.removedRules = null;
         const rows = parseCsv(
             renderBenchmarkCsv([loaded(value, 'example,"root"\r\nrepeat'), loaded(missing)]),
         );
@@ -367,13 +427,21 @@ describe('benchmark summaries', () => {
             vision: value.model.vision,
             reasoningEffort: ReasoningEffort.High,
             singleShotReasoningEffort: ReasoningEffort.Medium,
-            judge: JSON.stringify(value.judge),
             agentCommit: value.agent.commit,
             knowledgeBaseCommit: value.environment.knowledgeBaseCommit,
             root: 'example,"root"\r\nrepeat',
-            status: GoldenE2EStatus.Pass,
+            status: BenchmarkCaseStatus.Verified,
             failureKind: '',
-            level: '5',
+            reporterEnvironment: GoldenAgentEnvironmentStatus.Matched,
+            agentRule: 'example.org##.ad',
+            agentFilePath: 'filters/example.txt',
+            humanFixCommit: 'c'.repeat(40),
+            agentEdit: '',
+            humanRules: JSON.stringify([
+                { rule: 'example.org##.ad', repositoryEdit: 'insert', replacedRule: null },
+            ]),
+            humanRemovedRules: '[]',
+            humanRulesError: '',
             inputTokens: '10',
             outputTokens: '20',
             cacheReadTokens: '30',
@@ -381,6 +449,7 @@ describe('benchmark summaries', () => {
             reasoningTokens: '5',
             requests: '8',
             costUsd: '0.25',
+            siteCheckMinutes: '0',
             preparationMinutes: '1',
             agentMinutes: '2',
             finalizeMinutes: '0.05',
@@ -397,7 +466,10 @@ describe('benchmark summaries', () => {
             costUsd: '',
             preparationMinutes: '',
             turns: '',
-            humanElapsedMs: '',
+            reporterEnvironment: '',
+            agentRule: '',
+            humanRules: '',
+            humanRemovedRules: '',
         });
     });
 
@@ -408,18 +480,16 @@ describe('benchmark summaries', () => {
     });
 
     it('retains unavailable measurements as null and renders empty denominators without NaN', () => {
-        const value = rejected('example-case', BenchmarkFailureKind.Transient);
+        const value = failed('example-case', BenchmarkFailureKind.Transient);
         value.usage.costUsd = null;
         value.timings.preparationMs = null;
         value.timings.agentMs = null;
-        value.human = null;
         const summary = summarizeBenchmark([loaded(value)]);
         expect(summary.models[0]).toMatchObject({
             runs: 0,
-            pass: 0,
-            passRate: null,
+            verified: 0,
+            verifiedRate: null,
             interval: null,
-            meanLevel: null,
             medianCostUsd: null,
             medianMinutes: null,
         });

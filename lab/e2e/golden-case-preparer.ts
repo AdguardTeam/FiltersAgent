@@ -47,6 +47,7 @@ import {
     type HistoricalCaseMetadata,
 } from './historical-case-metadata';
 import { checkHistoricalHumanFixAbsent, HumanFixPresentError } from './human-fix-build-guard';
+import { isPinnableImportLink } from './pinned-report';
 
 /**
  * Inputs needed to prepare one tracked historical golden case.
@@ -272,12 +273,9 @@ function hasExactExtensionImport(facts: IssueFacts, extensionVersion: string): b
     if (!facts.settingsImportUrl) {
         return false;
     }
-    const importUrl = parseReporterSettingsImportUrl(facts.settingsImportUrl);
-    return (
-        importUrl.searchParams.get('product_type') === 'ext' &&
-        importUrl.searchParams.get('product_version') === extensionVersion &&
-        importUrl.searchParams.get('ext.manifest_version') === '3' &&
-        importUrl.searchParams.get('browser')?.toLowerCase() === 'chrome'
+    return isPinnableImportLink(
+        parseReporterSettingsImportUrl(facts.settingsImportUrl),
+        extensionVersion,
     );
 }
 

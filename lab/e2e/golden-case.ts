@@ -204,7 +204,7 @@ export function loadGoldenRunCase(caseDirectory: string): LoadedGoldenRunCase {
 }
 
 /**
- * Load the closed human commit oracle after the local result has been persisted and validated.
+ * Load a case's closed human commit oracle; nothing from it may reach the agent's input.
  *
  * @param caseDirectory - Directory containing oracle.json.
  * @returns Validated human fix commit and issue-to-fix timestamps.

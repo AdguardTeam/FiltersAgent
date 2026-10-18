@@ -2,12 +2,15 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import {
     BENCHMARK_RECORD_FILE_NAME,
-    BenchmarkFailureKind,
-    type BenchmarkLevel,
+    BENCHMARK_RECORD_SCHEMA_VERSION,
     type BenchmarkRecord,
 } from '../e2e/benchmark-record';
-import { GoldenE2EStatus } from '../e2e/golden-comparator';
-import { HumanFixVerdict } from '../e2e/golden-judge';
+import {
+    AGENT_OUTCOME_RANKING,
+    BenchmarkCaseStatus,
+    BenchmarkFailureKind,
+} from '../e2e/benchmark-outcome';
+import { GoldenAgentEnvironmentStatus } from '../e2e/golden-agent-environment';
 import {
     MONEY_DECIMALS,
     STATISTIC_DECIMALS,
@@ -26,15 +29,25 @@ import {
 import { mixedBenchmarkPins, type MixedBenchmarkPin } from './benchmark-summary-pins';
 
 /**
- * Standard normal quantile for the two-sided 95% confidence interval used for model pass rates.
+ * Standard normal quantile for the two-sided 95% confidence interval used for model verified rates.
  */
 const WILSON_Z_95 = 1.96;
+
+/**
+ * Agent outcomes that reached the reported problem: a rule or a reproduction.
+ */
+const REACHED_PROBLEM_STATUSES: ReadonlySet<BenchmarkCaseStatus> = new Set([
+    BenchmarkCaseStatus.Verified,
+    BenchmarkCaseStatus.Proposed,
+    BenchmarkCaseStatus.Reproduced,
+]);
+
 /**
  * One trusted persisted record and the series root identifying its repetition.
  */
 export interface LoadedBenchmarkRecord {
     /**
-     * Completed comparison artifact.
+     * Completed benchmark artifact.
      */
     record: BenchmarkRecord;
     /**
@@ -62,17 +75,17 @@ export interface BenchmarkInterval {
  */
 export interface BenchmarkCaseCell {
     /**
-     * Counted repetitions, including provider rejections.
+     * Counted repetitions, including provider rejections and intake skips.
      */
     runs: number;
     /**
-     * Passing counted repetitions.
+     * Counted repetitions the agent verified with its own browser check.
      */
-    pass: number;
+    verified: number;
     /**
-     * Highest milestone in the counted repetitions.
+     * Strongest agent outcome among the counted repetitions, or null when every one failed.
      */
-    maxLevel: BenchmarkLevel;
+    best: BenchmarkCaseStatus | null;
     /**
      * Median known cost of counted repetitions.
      */
@@ -84,9 +97,9 @@ export interface BenchmarkCaseCell {
 }
 
 /**
- * Model configuration totals and statistics over eligible cases.
+ * Model configuration totals and statistics over counted runs.
  */
-export interface BenchmarkModelRow extends Omit<BenchmarkCaseCell, 'maxLevel'> {
+export interface BenchmarkModelRow extends Omit<BenchmarkCaseCell, 'best'> {
     /**
      * Unique readable model configuration label.
      */
@@ -96,23 +109,31 @@ export interface BenchmarkModelRow extends Omit<BenchmarkCaseCell, 'maxLevel'> {
      */
     configuration: BenchmarkRecord['model'];
     /**
-     * Pass fraction, absent without counted runs.
+     * Verified fraction, absent without counted runs.
      */
-    passRate: number | null;
+    verifiedRate: number | null;
     /**
-     * Wilson 95% confidence bounds, absent without counted runs.
+     * Wilson 95% confidence bounds of the verified rate, absent without counted runs.
      */
     interval: BenchmarkInterval | null;
     /**
-     * Mean milestone across counted runs.
+     * Counted runs that proposed a rule they did not verify.
      */
-    meanLevel: number | null;
+    proposed: number;
     /**
-     * Sum of known costs, including excluded cases and infrastructure failures.
+     * Counted runs that reproduced the problem without proposing a rule.
+     */
+    reproduced: number;
+    /**
+     * Counted runs whose verified session did not use the reporter's environment.
+     */
+    environmentMismatches: number;
+    /**
+     * Sum of known costs across every run, transient failures included.
      */
     totalCostUsd: number;
     /**
-     * Agent provider rejections across every case.
+     * Agent provider rejections across every case, counted as failed runs.
      */
     rejected: number;
     /**
@@ -120,9 +141,13 @@ export interface BenchmarkModelRow extends Omit<BenchmarkCaseCell, 'maxLevel'> {
      */
     intakeSkipped: number;
     /**
-     * Transient infrastructure failures across every case.
+     * Transient infrastructure failures across every case, not counted.
      */
     transient: number;
+    /**
+     * Runs not started because the case site did not answer, not counted.
+     */
+    siteUnreachable: number;
 }
 
 /**
@@ -134,7 +159,7 @@ export interface BenchmarkSummary {
      */
     models: BenchmarkModelRow[];
     /**
-     * Eligible cases with cells keyed by the unique model labels.
+     * Cases with cells keyed by the unique model labels.
      */
     cases: {
         /**
@@ -147,15 +172,20 @@ export interface BenchmarkSummary {
         cells: Record<string, BenchmarkCaseCell | null>;
     }[];
     /**
-     * Cases independently found dead by any model's judge.
+     * Cases whose runs reached an agent outcome yet never reproduced the problem or proposed a
+     * rule, for any model: the candidates for a stale case.
      */
-    excludedCases: string[];
+    notReproducedCases: string[];
+    /**
+     * Cases whose site did not answer before at least one run.
+     */
+    unreachableCases: string[];
     /**
      * Median preparation plus agent minutes across all counted runs.
      */
     agentMedianMinutes: number | null;
     /**
-     * Median issue-to-fix hours across distinct eligible cases.
+     * Median issue-to-fix hours across the distinct cases with counted runs.
      */
     humanMedianHours: number | null;
     /**
@@ -211,7 +241,7 @@ function recordFiles(directory: string): string[] {
  */
 export function readBenchmarkRecords(roots: readonly string[]): LoadedBenchmarkRecord[] {
     const seen = new Set<string>();
-    return roots.flatMap((root) => {
+    const loaded = roots.flatMap((root) => {
         const paths = recordFiles(resolve(root));
         if (paths.length === 0) {
             throw new Error(`No benchmark records found under ${root}`);
@@ -225,24 +255,85 @@ export function readBenchmarkRecords(roots: readonly string[]): LoadedBenchmarkR
                 return true;
             })
             .map((path) => ({
+                path,
                 record: JSON.parse(readFileSync(path, 'utf8')) as BenchmarkRecord,
                 root: dirname(dirname(dirname(path))),
             }));
     });
+    // Earlier records carry the removed judge's verdicts and statuses; mixing them in would count
+    // two different outcome sets as one. All of them are named at once, not one per rerun.
+    const older = loaded.filter(
+        ({ record }) => record.schemaVersion !== BENCHMARK_RECORD_SCHEMA_VERSION,
+    );
+    if (older.length > 0) {
+        throw new Error(
+            `This summary reads version ${BENCHMARK_RECORD_SCHEMA_VERSION} benchmark records; ` +
+                `older records:\n${older
+                    .map(
+                        ({ path, record }) => `  ${path} (version ${String(record.schemaVersion)})`,
+                    )
+                    .join('\n')}`,
+        );
+    }
+    return loaded.map(({ record, root }) => ({ record, root }));
 }
 
 /**
- * Summarize eligible repetitions while retaining total spend and failure counts.
+ * Decide whether a run counts toward its model's rates.
+ *
+ * A provider rejection and an intake skip fail the same way again, so they count against the model.
+ * A transient failure and an unreachable site measured no agent work.
+ *
+ * @param record - One persisted run.
+ * @returns Whether the run is counted.
+ */
+function isCounted(record: BenchmarkRecord): boolean {
+    return (
+        record.outcome.status !== BenchmarkCaseStatus.SiteUnreachable &&
+        record.outcome.failureKind !== BenchmarkFailureKind.Transient
+    );
+}
+
+/**
+ * Pick the strongest agent outcome among repetitions.
+ *
+ * @param records - Counted repetitions of one case.
+ * @returns The highest-ranked agent outcome, or null when every repetition failed.
+ */
+function bestOutcome(records: readonly BenchmarkRecord[]): BenchmarkCaseStatus | null {
+    const statuses = new Set(records.map((record) => record.outcome.status));
+    return AGENT_OUTCOME_RANKING.find((status) => statuses.has(status)) ?? null;
+}
+
+/**
+ * Count runs with one exact outcome status.
+ *
+ * @param records - Runs to count.
+ * @param status - Outcome to match.
+ * @returns Number of matching runs.
+ */
+function countStatus(records: readonly BenchmarkRecord[], status: BenchmarkCaseStatus): number {
+    return records.filter((record) => record.outcome.status === status).length;
+}
+
+/**
+ * Count runs with one failure kind.
+ *
+ * @param records - Runs to count.
+ * @param kind - Failure kind to match.
+ * @returns Number of matching runs.
+ */
+function countFailureKind(records: readonly BenchmarkRecord[], kind: BenchmarkFailureKind): number {
+    return records.filter((record) => record.outcome.failureKind === kind).length;
+}
+
+/**
+ * Summarize counted repetitions while retaining total spend and failure counts.
  *
  * @param records - Trusted records loaded from one or more series.
- * @returns Model and case comparison statistics with global drift exclusions.
+ * @returns Model and case comparison statistics.
  */
 export function summarizeBenchmark(records: readonly LoadedBenchmarkRecord[]): BenchmarkSummary {
-    const excluded = new Set(
-        records
-            .filter(({ record }) => record.outcome.humanFixVerdict === HumanFixVerdict.NotVerified)
-            .map(({ record }) => record.case),
-    );
     const groups = new Map<string, BenchmarkRecord[]>();
     for (const { record } of records) {
         const key = configurationKey(record.model);
@@ -250,15 +341,7 @@ export function summarizeBenchmark(records: readonly LoadedBenchmarkRecord[]): B
         group.push(record);
         groups.set(key, group);
     }
-    const eligible = records
-        .map(({ record }) => record)
-        .filter(
-            (record) =>
-                !excluded.has(record.case) &&
-                record.outcome.status !== GoldenE2EStatus.EnvironmentDrift &&
-                record.outcome.failureKind !== BenchmarkFailureKind.Transient,
-        );
-    const counted = new Set(eligible);
+    const counted = records.map(({ record }) => record).filter(isCounted);
     const configurations = [...groups.values()].map((group) => group[0]!.model);
     const models = [...groups.values()].map((all): BenchmarkModelRow => {
         const configuration = all[0]!.model;
@@ -267,53 +350,46 @@ export function summarizeBenchmark(records: readonly LoadedBenchmarkRecord[]): B
         const label = sharedLabel
             ? `${configuration.loop} (${configuration.api}, ${configuration.vision}, ${configuration.reasoningEffort}/${configuration.singleShotReasoningEffort})`
             : configuration.loop;
-        const runs = all.filter((record) => counted.has(record));
-        const pass = runs.filter((record) => record.outcome.status === GoldenE2EStatus.Pass).length;
+        const runs = all.filter(isCounted);
+        const verified = countStatus(runs, BenchmarkCaseStatus.Verified);
         return {
             label,
             configuration,
             runs: runs.length,
-            pass,
-            passRate: runs.length ? pass / runs.length : null,
-            interval: runs.length ? wilsonInterval(pass, runs.length) : null,
-            meanLevel: runs.length
-                ? runs.reduce((sum, record) => sum + record.outcome.level, 0) / runs.length
-                : null,
+            verified,
+            verifiedRate: runs.length ? verified / runs.length : null,
+            interval: runs.length ? wilsonInterval(verified, runs.length) : null,
+            proposed: countStatus(runs, BenchmarkCaseStatus.Proposed),
+            reproduced: countStatus(runs, BenchmarkCaseStatus.Reproduced),
+            environmentMismatches: runs.filter(
+                (record) =>
+                    record.outcome.reporterEnvironment?.status ===
+                    GoldenAgentEnvironmentStatus.AgentMismatch,
+            ).length,
             medianCostUsd: median(runs.map((record) => record.usage.costUsd)),
             medianMinutes: median(runs.map(agentMinutes)),
             totalCostUsd: all.reduce((sum, record) => sum + (record.usage.costUsd ?? 0), 0),
-            rejected: all.filter(
-                (record) => record.outcome.failureKind === BenchmarkFailureKind.ProviderRejected,
-            ).length,
-            intakeSkipped: all.filter(
-                (record) => record.outcome.failureKind === BenchmarkFailureKind.IntakeSkipped,
-            ).length,
-            transient: all.filter(
-                (record) => record.outcome.failureKind === BenchmarkFailureKind.Transient,
-            ).length,
+            rejected: countFailureKind(all, BenchmarkFailureKind.ProviderRejected),
+            intakeSkipped: countFailureKind(all, BenchmarkFailureKind.IntakeSkipped),
+            transient: countFailureKind(all, BenchmarkFailureKind.Transient),
+            siteUnreachable: countStatus(all, BenchmarkCaseStatus.SiteUnreachable),
         };
     });
-    const caseNames = [...new Set(records.map(({ record }) => record.case))]
-        .filter((caseName) => !excluded.has(caseName))
-        .sort();
+    const caseNames = [...new Set(records.map(({ record }) => record.case))].sort();
     const cases = caseNames.map((caseName) => ({
         caseName,
         cells: Object.fromEntries(
             models.map((model) => {
                 const runs = groups
                     .get(configurationKey(model.configuration))!
-                    .filter((record) => record.case === caseName && counted.has(record));
+                    .filter((record) => record.case === caseName && isCounted(record));
                 return [
                     model.label,
                     runs.length
                         ? {
                               runs: runs.length,
-                              pass: runs.filter(
-                                  (record) => record.outcome.status === GoldenE2EStatus.Pass,
-                              ).length,
-                              maxLevel: Math.max(
-                                  ...runs.map((record) => record.outcome.level),
-                              ) as BenchmarkLevel,
+                              verified: countStatus(runs, BenchmarkCaseStatus.Verified),
+                              best: bestOutcome(runs),
                               medianCostUsd: median(runs.map((record) => record.usage.costUsd)),
                               medianMinutes: median(runs.map(agentMinutes)),
                           }
@@ -322,18 +398,39 @@ export function summarizeBenchmark(records: readonly LoadedBenchmarkRecord[]): B
             }),
         ),
     }));
-    const humanDurations = caseNames.map(
-        (caseName) =>
-            records.find(({ record }) => record.case === caseName && record.human !== null)?.record
-                .human?.elapsedMs ?? null,
+    // Only runs that reached the agent's own outcome say anything about the case: a provider
+    // rejection or an intake skip fails before the investigation does.
+    const agentRuns = counted.filter((record) =>
+        AGENT_OUTCOME_RANKING.includes(record.outcome.status),
+    );
+    const notReproducedCases = caseNames.filter((caseName) => {
+        const runs = agentRuns.filter((record) => record.case === caseName);
+        return (
+            runs.length > 0 &&
+            !runs.some((record) => REACHED_PROBLEM_STATUSES.has(record.outcome.status))
+        );
+    });
+    const unreachableCases = caseNames.filter((caseName) =>
+        records.some(
+            ({ record }) =>
+                record.case === caseName &&
+                record.outcome.status === BenchmarkCaseStatus.SiteUnreachable,
+        ),
+    );
+    // Over the cases the agent median covers, so both sides of the comparison share one corpus: a
+    // run without agent time, such as an intake skip, brings no case to either side.
+    const timedRuns = counted.filter((record) => agentMinutes(record) !== null);
+    const humanDurations = [...new Set(timedRuns.map((record) => record.case))].map(
+        (caseName) => timedRuns.find((record) => record.case === caseName)!.human.elapsedMs,
     );
     const humanMedianMs = median(humanDurations);
     return {
         models,
         cases,
-        excludedCases: [...excluded].sort(),
+        notReproducedCases,
+        unreachableCases,
         mixedPins: mixedBenchmarkPins(records.map(({ record }) => record)),
-        agentMedianMinutes: median(eligible.map(agentMinutes)),
+        agentMedianMinutes: median(counted.map(agentMinutes)),
         humanMedianHours:
             humanMedianMs === null
                 ? null
@@ -345,40 +442,43 @@ export function summarizeBenchmark(records: readonly LoadedBenchmarkRecord[]): B
  * Render model totals, per-case repetitions and timing comparisons as Markdown.
  *
  * @param summary - Computed comparison statistics.
- * @returns Two tables and corpus timing and drift lines.
+ * @returns Two tables and the corpus timing and case lines.
  */
 export function renderBenchmarkSummaryMarkdown(summary: BenchmarkSummary): string {
     const modelRows = summary.models.map((model) => {
         const rate =
-            model.interval && model.passRate !== null
-                ? `${Math.round(model.passRate * 100)}% (${Math.round(model.interval.low * 100)}–${Math.round(model.interval.high * 100)}%)`
+            model.interval && model.verifiedRate !== null
+                ? `${Math.round(model.verifiedRate * 100)}% (${Math.round(model.interval.low * 100)}–${Math.round(model.interval.high * 100)}%)`
                 : UNAVAILABLE;
         return `| ${[
             markdownCell(model.label),
             model.runs,
-            model.pass,
+            model.verified,
             rate,
-            fixed(model.meanLevel, STATISTIC_DECIMALS),
+            model.proposed,
+            model.reproduced,
+            model.environmentMismatches,
             fixed(model.medianCostUsd, MONEY_DECIMALS),
             fixed(model.totalCostUsd, MONEY_DECIMALS),
             fixed(model.medianMinutes, STATISTIC_DECIMALS),
             model.rejected,
             model.intakeSkipped,
             model.transient,
+            model.siteUnreachable,
         ].join(' | ')} |`;
     });
     const caseRows = summary.cases.map(({ caseName, cells }) => {
         const values = summary.models.map(({ label }) => {
             const cell = cells[label];
             return cell
-                ? `${cell.pass}/${cell.runs} L${cell.maxLevel} $${fixed(cell.medianCostUsd, MONEY_DECIMALS)} ${fixed(cell.medianMinutes, STATISTIC_DECIMALS)}m`
+                ? `${cell.verified}/${cell.runs} ${cell.best ?? UNAVAILABLE} $${fixed(cell.medianCostUsd, MONEY_DECIMALS)} ${fixed(cell.medianMinutes, STATISTIC_DECIMALS)}m`
                 : UNAVAILABLE;
         });
         return `| ${[markdownCell(caseName), ...values].join(' | ')} |`;
     });
     return [
-        '| model | runs | pass | pass rate (95% CI) | mean L | $/case med | $ total | min/case med | rejected | intake skipped | transient |',
-        '| --- | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |',
+        '| model | runs | verified | verified rate (95% CI) | proposed | reproduced | env mismatch | $/case med | $ total | min/case med | rejected | intake skipped | transient | site unreachable |',
+        '| --- | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |',
         ...modelRows,
         '',
         `| case | ${summary.models.map(({ label }) => markdownCell(label)).join(' | ')} |`,
@@ -386,7 +486,8 @@ export function renderBenchmarkSummaryMarkdown(summary: BenchmarkSummary): strin
         ...caseRows,
         '',
         `agent vs human: agent median ${fixed(summary.agentMedianMinutes, STATISTIC_DECIMALS)} min per case (preparation + agent); human median issue → fix ${fixed(summary.humanMedianHours, STATISTIC_DECIMALS)} h`,
-        `excluded cases (drift): ${summary.excludedCases.map(markdownCell).join(', ') || UNAVAILABLE}`,
+        `no model reproduced: ${summary.notReproducedCases.map(markdownCell).join(', ') || UNAVAILABLE}`,
+        `site unreachable: ${summary.unreachableCases.map(markdownCell).join(', ') || UNAVAILABLE}`,
         ...(summary.mixedPins.length > 0
             ? [
                   `mixed pins: ${summary.mixedPins.map(({ pin, values }) => `${pin} (${values.length} values)`).join(', ')}`,

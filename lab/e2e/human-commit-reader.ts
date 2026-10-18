@@ -154,10 +154,8 @@ export async function extractHumanCommitFix(
             throw new Error(`Human fix commit ${commit} adds no actionable filter rules.`);
         }
         return {
-            commit,
             firstParent,
             candidates: parsed.candidates,
-            rawDiff,
             removedRules: parsed.removedRules,
         };
     };

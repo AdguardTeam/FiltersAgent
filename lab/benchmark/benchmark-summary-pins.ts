@@ -5,10 +5,6 @@ import type { BenchmarkRecord } from '../e2e/benchmark-record';
  */
 export const BenchmarkPin = {
     /**
-     * Judge API, model roles and reasoning settings.
-     */
-    Judge: 'judge',
-    /**
      * Agent source revision and local-change state.
      */
     AgentRevision: 'agentRevision',
@@ -42,22 +38,6 @@ export interface MixedBenchmarkPin {
 }
 
 /**
- * Identify a judge independently of object property order.
- *
- * @param judge - Recorded judge configuration without credentials.
- * @returns JSON containing both model roles and reasoning settings.
- */
-export function benchmarkJudgeIdentity(judge: BenchmarkRecord['judge']): string {
-    return JSON.stringify({
-        api: judge.api,
-        model: judge.model,
-        visionModel: judge.visionModel,
-        reasoningEffort: judge.reasoningEffort,
-        singleShotReasoningEffort: judge.singleShotReasoningEffort,
-    });
-}
-
-/**
  * Include local source changes when naming the agent revision.
  *
  * @param agent - Recorded source commit and dirty flag.
@@ -76,8 +56,6 @@ export function benchmarkAgentRevision(agent: BenchmarkRecord['agent']): string 
  */
 function pinValue(record: BenchmarkRecord, pin: BenchmarkPin): string {
     switch (pin) {
-        case BenchmarkPin.Judge:
-            return benchmarkJudgeIdentity(record.judge);
         case BenchmarkPin.AgentRevision:
             return benchmarkAgentRevision(record.agent);
         case BenchmarkPin.KnowledgeBase:
@@ -90,7 +68,7 @@ function pinValue(record: BenchmarkRecord, pin: BenchmarkPin): string {
 /**
  * Detect mixed series conditions globally, including differences between model groups.
  *
- * @param records - Every loaded record, including excluded and transient runs.
+ * @param records - Every loaded record, including transient and unreachable runs.
  * @returns Conditions having multiple distinct values; case-specific pins are not compared.
  */
 export function mixedBenchmarkPins(records: readonly BenchmarkRecord[]): MixedBenchmarkPin[] {

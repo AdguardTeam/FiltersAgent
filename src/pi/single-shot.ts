@@ -27,15 +27,15 @@ export const PROVIDER_REJECTION_PREFIX = 'provider rejected the request:';
 
 /**
  * Single-shot LLM calls on the pi runtime: every out-of-loop completion (vision verdicts,
- * inventories, screenshot analysis, reviewer and oracle calls) runs through this module. One
- * structured mechanism — prompt-and-parse with one bounded repair attempt — serves them all, and
- * the free-text path is the same mechanism with no schema. Model/provider behavior never throws
- * here: results are typed unions, terminal failures emit one structured pino warn through the
- * injected logger (pi exposes no retry events, so this line is the only failure diagnostic a run
- * sees), and programmer errors still throw. This module is also the single-shot boundary between
- * pi's vocabulary and the application's own: pi's `Usage` and `StopReason` are mapped here into the
- * shared `CompletionUsage` and `TurnStopReason`, so nothing a consumer of these results touches is
- * a harness type.
+ * inventories, screenshot analysis, report extraction) runs through this module. One structured
+ * mechanism — prompt-and-parse with one bounded repair attempt — serves them all, and the free-text
+ * path is the same mechanism with no schema. Model/provider behavior never throws here: results are
+ * typed unions, terminal failures emit one structured pino warn through the injected logger (pi
+ * exposes no retry events, so this line is the only failure diagnostic a run sees), and programmer
+ * errors still throw. This module is also the single-shot boundary between pi's vocabulary and the
+ * application's own: pi's `Usage` and `StopReason` are mapped here into the shared
+ * `CompletionUsage` and `TurnStopReason`, so nothing a consumer of these results touches is a
+ * harness type.
  *
  * The contract types live in `single-shot-types.ts` and are imported FROM there by every consumer;
  * this module re-exports none of them, so every symbol has one reachable origin. One bounded

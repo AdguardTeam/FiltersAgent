@@ -2,7 +2,7 @@ import type { LoadedBenchmarkRecord } from './benchmark-summary';
 import { summarizeBenchmark } from './benchmark-summary';
 import { csvField } from './benchmark-summary-format';
 import { MILLISECONDS_PER_MINUTE, configurationKey } from './benchmark-summary-statistics';
-import { benchmarkAgentRevision, benchmarkJudgeIdentity } from './benchmark-summary-pins';
+import { benchmarkAgentRevision } from './benchmark-summary-pins';
 
 export const BENCHMARK_CSV_COLUMNS = [
     'case',
@@ -13,12 +13,18 @@ export const BENCHMARK_CSV_COLUMNS = [
     'reasoningEffort',
     'singleShotReasoningEffort',
     'root',
-    'judge',
     'agentCommit',
     'knowledgeBaseCommit',
     'status',
     'failureKind',
-    'level',
+    'reporterEnvironment',
+    'agentRule',
+    'agentFilePath',
+    'agentEdit',
+    'humanFixCommit',
+    'humanRules',
+    'humanRemovedRules',
+    'humanRulesError',
     'inputTokens',
     'outputTokens',
     'cacheReadTokens',
@@ -26,6 +32,7 @@ export const BENCHMARK_CSV_COLUMNS = [
     'reasoningTokens',
     'requests',
     'costUsd',
+    'siteCheckMinutes',
     'preparationMinutes',
     'agentMinutes',
     'finalizeMinutes',
@@ -36,7 +43,17 @@ export const BENCHMARK_CSV_COLUMNS = [
 ] as const;
 
 /**
- * Export every raw record, including excluded cases, as RFC 4180 CSV.
+ * Serialize a JSON column value, leaving an absent value empty.
+ *
+ * @param value - Column value, or undefined when the record has none.
+ * @returns JSON text, or null for an empty field.
+ */
+function jsonOrNull(value: unknown): string | null {
+    return value === undefined ? null : JSON.stringify(value);
+}
+
+/**
+ * Export every raw record, uncounted runs included, as RFC 4180 CSV.
  *
  * @param records - Trusted records and repetition roots.
  * @returns Header and one lossless row per record with CRLF line endings.
@@ -51,6 +68,7 @@ export function renderBenchmarkCsv(records: readonly LoadedBenchmarkRecord[]): s
     const rows = records.map(({ record, root }) => {
         const { model, outcome, usage, timings } = record;
         const stages = [
+            timings.siteCheckMs,
             timings.preparationMs,
             timings.agentMs,
             timings.finalizeMs,
@@ -66,12 +84,24 @@ export function renderBenchmarkCsv(records: readonly LoadedBenchmarkRecord[]): s
             model.reasoningEffort,
             model.singleShotReasoningEffort,
             root,
-            benchmarkJudgeIdentity(record.judge),
             benchmarkAgentRevision(record.agent),
             record.environment.knowledgeBaseCommit,
             outcome.status,
             outcome.failureKind,
-            outcome.level,
+            outcome.reporterEnvironment?.status ?? null,
+            outcome.candidate?.rule ?? outcome.candidateForReview?.rule ?? null,
+            outcome.candidate?.filePath ?? outcome.candidateForReview?.placement?.filePath ?? null,
+            outcome.candidate?.repositoryEdit?.kind ?? null,
+            record.human.fixCommit,
+            jsonOrNull(
+                record.human.rules?.map(({ rule, repositoryEdit, replacedRule }) => ({
+                    rule,
+                    repositoryEdit,
+                    replacedRule: replacedRule ?? null,
+                })),
+            ),
+            jsonOrNull(record.human.removedRules?.map(({ rule }) => rule)),
+            record.human.rulesError,
             usage.tokens?.input ?? null,
             usage.tokens?.output ?? null,
             usage.tokens?.cacheRead ?? null,
@@ -81,7 +111,7 @@ export function renderBenchmarkCsv(records: readonly LoadedBenchmarkRecord[]): s
             usage.costUsd,
             ...stages,
             record.turns,
-            record.human?.elapsedMs ?? null,
+            record.human.elapsedMs,
         ]
             .map(csvField)
             .join(',');

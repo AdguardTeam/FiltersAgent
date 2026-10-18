@@ -2,9 +2,11 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { benchmarkFailureKind, BenchmarkFailureKind } from '../../../lab/e2e/benchmark-record';
-import { GoldenE2EStatus } from '../../../lab/e2e/golden-comparator';
-import { GoldenE2EExitCode } from '../../../lab/e2e/golden-exit-code';
+import {
+    BenchmarkCaseStatus,
+    BenchmarkFailureKind,
+    classifyAgentOutcome,
+} from '../../../lab/e2e/benchmark-outcome';
 import { runLocalFix } from '../../../lab/local/local-fix-runner';
 import { IntakeExtractionKind } from '../../../src/intake/extract-report';
 import { buildLocalIssueSnapshot } from '../../../src/local/issue-snapshot';
@@ -74,21 +76,10 @@ describe('local intake skip result', () => {
         expect(record.result.infrastructureFailureReason).toBe(
             InfrastructureFailureReason.InputUnavailable,
         );
-        expect(
-            benchmarkFailureKind(
-                {
-                    status: GoldenE2EStatus.InfrastructureFailure,
-                    exitCode: GoldenE2EExitCode.InfrastructureFailure,
-                    detail: record.result.reasoning,
-                    actualRule: null,
-                    expectedRule: null,
-                    humanFixCommit: null,
-                    humanFixFirstParent: null,
-                    humanCandidate: null,
-                },
-                record.result,
-            ),
-        ).toBe(BenchmarkFailureKind.IntakeSkipped);
+        expect(classifyAgentOutcome(record.result)).toMatchObject({
+            status: BenchmarkCaseStatus.InfrastructureFailure,
+            failureKind: BenchmarkFailureKind.IntakeSkipped,
+        });
         expect(record.result.reasoning).toContain('No site URL.');
     });
 });

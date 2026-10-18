@@ -2,14 +2,14 @@
 
 The benchmark replays historical AdguardFilters issues that maintainers have
 already fixed. For each case the agent investigates the issue as it was
-reported, before the fix existed. A browser then checks the agent's rule
-against the rule the maintainer committed. An endpoint speaking the OpenAI
+reported, before the fix existed. The case is scored by what the agent
+itself reached, and the rule the maintainer committed is recorded beside the
+agent's rule for comparison after a series. An endpoint speaking the OpenAI
 chat-completions or Anthropic Messages API works: you supply the endpoint,
 the key, the models, and optionally the prices.
 
 - [Before you start](#before-you-start)
 - [Configure the provider](#configure-the-provider)
-- [Configure the judge](#configure-the-judge)
 - [Run one case or the whole set](#run-one-case-or-the-whole-set)
 - [Read the results](#read-the-results)
 - [Compare models](#compare-models)
@@ -97,44 +97,6 @@ Invalid configuration:
 Optional tuning variables (reasoning effort, request timeout, retries) are
 listed in the [CLI reference](../reference/cli.md#environment-variables).
 
-## Configure the judge
-
-Configure an independent judge in `.env` before running cases. Keep its
-settings fixed across the model series you compare. There is no fallback to
-the agent's provider settings: missing judge settings stop the command before
-the first case.
-
-```dotenv
-# E2E_JUDGE_API=openai-completions
-E2E_JUDGE_BASE_URL=https://llm.example.com/v1
-E2E_JUDGE_API_KEY=your-judge-key
-E2E_JUDGE_MODEL=example-judge-model
-E2E_JUDGE_CONTEXT_WINDOW_TOKENS=131072
-E2E_JUDGE_MAX_OUTPUT_TOKENS=32768
-# Optional: defaults to E2E_JUDGE_MODEL.
-# E2E_JUDGE_VISION_MODEL=example-judge-vision-model
-# Required only for a different vision model.
-# E2E_JUDGE_VISION_MAX_OUTPUT_TOKENS=8192
-```
-
-Use the same API, URL and token-limit conventions as the provider above.
-The judge also accepts `E2E_JUDGE_REASONING_EFFORT`,
-`E2E_JUDGE_SINGLE_SHOT_REASONING_EFFORT`, `E2E_JUDGE_REQUEST_TIMEOUT_MS` and
-`E2E_JUDGE_REQUEST_MAX_ATTEMPTS`, with the defaults and limits of their
-`LLM_*` counterparts. `E2E_JUDGE_VISION_MAX_OUTPUT_TOKENS` is required only
-when `E2E_JUDGE_VISION_MODEL` names a different model. The judge's key is
-never printed or saved in run artifacts.
-
-Reuse the shared cache at `tmp/e2e-judge-cache/<case>.json` across output
-roots. Reporter-environment extraction is keyed by case, human-fix commit,
-extension build (`version`, `releaseTag`, `autobuildCommit`), judge API and
-text model, both judge reasoning efforts, and the digest of `issue.json`;
-it does not expire. Human-fix verdicts are keyed by case, human-fix commit,
-extension build, judge API,
-text model, effective vision model, both judge reasoning efforts, and the
-digest of `issue.json`; they expire seven days after `checkedAt`.
-Infrastructure failures are never cached.
-
 ## Run one case or the whole set
 
 The cases live in `lab/benchmark/e2e/cases/`, one directory per case. Run one
@@ -161,45 +123,33 @@ pnpm test:e2e -- --all --output-root tmp/model-series-a
 With this flag, an existing `runs/<case>` or `evaluations/<case>` directory
 under that root refuses the entire selection before the first case starts.
 
-Before comparing models, check whether the historical human fixes still
-work on today's sites:
+Before the first case, the suite reads every selected case's `oracle.json`
+and refuses the selection, naming the case, if one is missing or malformed.
 
-```bash
-pnpm test:e2e -- --all --oracle-only
-```
+Before the agent starts, each case requests the reported page with a plain
+HTTP request: no browser and no model. The page is the `Issue URL` of the
+report the case is pinned to: the latest report form, in the issue body or a
+reporter comment, whose settings import link is a Chrome MV3 extension report
+of the version in `run.json`, the rule `benchmark:case:add` pins it by.
 
-This runs only the judge and requires only `E2E_JUDGE_*` provider settings.
-It prints `<case>: alive (<rule>)`, `<case>: environment_drift (<detail>)`, or
-`<case>: infrastructure_failure (<detail>)`. The exit code is 0 if all
-cases are alive, 2 if any has drifted, or 3 if any check failed. It writes
-browser evidence under `tmp/e2e-oracle-runs/` and shares the judge cache.
-It takes neither `--output-root` nor `--knowledge-base-sha`.
-
-Alive and drift lines end with ` (cached)` when the verdict is reused.
-Drift details retain every candidate's rejection rationale, joined with
-` | `. Cached checks leave the case's evidence directory untouched; a live
-check clears it immediately before the first probe. The directory therefore
-holds the last live oracle-only check, which may predate a cached verdict
-written by a model run.
-
-Add `--refresh` to ignore both judge-cache entries for the selected cases
-and replace only entries the judge recalculates. An ordinary agent run may
-finish classification without probing the human fix, so it need not refresh
-the verdict. To rebuild both entries before model runs, use:
-
-```bash
-pnpm test:e2e -- --all --oracle-only --refresh
-```
+The first HTTP response counts as an answer, without following redirects: a
+3xx, or a 403 or 503 from a challenge page, included. So does any failure
+after a host answered, such as a dropped connection, headers the HTTP client
+refuses to parse, or a certificate chain it cannot complete; the browser may
+still load such a page. Only a host that never answers ends the case as
+`site_unreachable` without starting the agent: the name does not resolve,
+nothing listens, there is no route, the connection is not accepted within 10
+seconds, or no response arrives within 20 seconds, in both of two attempts.
 
 To give every agent series the same KnowledgeBase revision, pass
 `--knowledge-base-sha <full-40-character-commit-sha>`. Without it, the suite
 resolves KnowledgeBase `master` once before the first case. The selected
 SHA is printed and recorded for every agent run. An incomplete or malformed
-SHA is refused. Judge-only runs do not resolve or use KnowledgeBase.
+SHA is refused.
 
 The benchmark presents each historical report to the agent as open, without
 an assignee or `A:` labels; `T:`, `P:` and `N:` labels remain. The saved
-snapshot stays unchanged and the judge reads it as saved. If the historical
+snapshot stays unchanged. If the historical
 checkout contains a loaded repository instruction at
 `.github/filters-agent/AGENTS.md`, the benchmark stops before investigation
 with `infrastructure_failure`, `failureKind: transient`, and the file path
@@ -207,24 +157,36 @@ in the detail.
 
 ## Read the results
 
-The command prints one entry per case, then exits with the most severe code
-among them:
+The command prints one entry per case:
 
 ```text
-nettg-pl-235988: pass (Agent result matches a browser-confirmed human change: ...)
+nettg-pl-235988: verified
     cost: $0.0412
+sochi-camera-234715: site_unreachable (https://sochi.camera/ did not answer: fetch failed: UND_ERR_CONNECT_TIMEOUT)
+    cost: unknown, the run wrote no usage summary
 ```
 
-| Status | Exit code | Meaning |
-| --- | --- | --- |
-| `pass` | 0 | The agent's rule matches the human fix, confirmed in the browser |
-| `agent_regression` | 1 | The agent's result differs from the confirmed human fix |
-| `environment_drift` | 2 | The human fix no longer works on today's site; the case is stale |
-| `infrastructure_failure` | 3 | The run or the check could not finish; the detail says why |
+A case whose human fix commit could not be read adds a third line,
+`human fix not read: <error>`.
 
+| Status | Meaning |
+| --- | --- |
+| `verified` | The agent proposed a rule and verified it in the browser with `apply_rule` |
+| `proposed` | The agent found a rule it could not verify and carried it for review |
+| `reproduced` | The agent reproduced the problem but proposed no rule |
+| `not_reproduced` | The agent neither reproduced the problem nor proposed a rule |
+| `infrastructure_failure` | The run could not finish; the failure kind and the detail say why |
+| `site_unreachable` | The case site did not answer, so the agent did not start |
+
+The benchmark does not check the agent's rule against the maintainer's, and
+does not re-check the maintainer's fix on today's site. A case whose fix no
+longer applies shows up as a case that no model reproduces.
+
+The exit code is 0 when every case reached one of the four agent statuses,
+and 3 when any case ended as `infrastructure_failure` or `site_unreachable`.
 A failing provider is reported as `infrastructure_failure`, not as an agent
-regression. Exit code 3 is also used when the command itself fails, for
-example on a missing variable.
+result. Exit code 3 is also used when the command itself fails, for example
+on a missing variable.
 
 Extension builds in the 5.4.3 line do not record domainless scriptlets in
 the filtering log. Expect the same limitation in `get_applied_rules` as
@@ -242,33 +204,43 @@ evaluation files in `tmp/e2e-evaluations/<case>/`. With
 | Agent `candidate.patch` | The proposed filter change, when there is one |
 | Agent `llm-usage-summary.json` | Tokens and cost, per model and in total |
 | Agent `agent-run-manifest.json` | Digests that lock the files above |
-| Evaluation `e2e-result.json` | The comparison: status, detail, agent rule, human rule |
-| Evaluation `benchmark-record.json` | Model and judge identity, environment pins, timings, agent usage and cost, outcome and human issue-to-fix time |
+| Evaluation `benchmark-record.json` | Model identity, environment pins, timings, usage and cost, outcome, the agent's rule and the maintainer's fix |
 
-Read `benchmark-record.json` for every completed case classification,
-including failures. Its `schemaVersion` is 1. `outcome.level` is the highest
-milestone achieved; an infrastructure failure is always L0:
+Every case writes `benchmark-record.json`, failures included. Its
+`schemaVersion` is 2. The outcome and the maintainer's fix:
 
-| Level | Milestone |
+| Field | Value |
 | --- | --- |
-| L0 | Infrastructure failure, unavailable result, or no later milestone |
-| L1 | The agent reproduced the symptom |
-| L2 | The agent proposed a candidate patch |
-| L3 | The agent verified its candidate |
-| L4 | Domain, rule syntax and target file match a confirmed human rule |
-| L5 | The comparison passed |
+| `site.url` | The page the site check requested; `site` is `null` when the case failed before the check |
+| `site.reachable` | Whether a host answered |
+| `site.answer` | `HTTP <status>`, or the network error |
+| `outcome.status` | One of the statuses above |
+| `outcome.failureKind` | For `infrastructure_failure`: `provider_rejected`, `intake_skipped` or `transient`; otherwise `null` |
+| `outcome.detail` | What failed or did not answer; `null` for an agent status |
+| `outcome.reporterEnvironment` | Whether the agent's verified session used the reporter's extension build, filters and Stealth state; `null` when no sealed run was read |
+| `outcome.candidate` | The verified rule, its file and edit, as in `run-result.json`; `null` without one |
+| `outcome.candidateForReview` | The unverified rule, its file and why it was not verified; `null` without one |
+| `human.fixCommit` | The maintainer's fix commit |
+| `human.firstParent` | The commit the rules were read against; `null` when the commit could not be read |
+| `human.rules` | Rules the commit added, extended or replaced; `null` when the commit could not be read |
+| `human.removedRules` | Rules the commit only removed; `null` when the commit could not be read |
+| `human.rulesError` | Why the commit could not be read; otherwise `null` |
+| `human.elapsedMs` | Issue creation to fix commit |
 
-`outcome.failureKind` is `provider_rejected` for an agent provider rejection,
-including intake, `intake_skipped` when the agent's intake declines the
-issue as not a filter report, `transient` for other infrastructure failures
-(including judge failures and repository-instruction refusals),
-and `null` for other outcomes. `outcome.humanFixVerdict` is `verified`,
-`not_verified`, `infrastructure_failure`, or `not_checked` when no human-fix
-verdict was needed or available. `outcome.verdictFromCache` says whether
-that verdict came from the shared cache. Usage and cost cover the agent;
-judge costs are not included.
-The record's judge identity includes both model roles and both reasoning
-efforts.
+`provider_rejected` is an agent provider rejection, including intake.
+`intake_skipped` means the agent's intake declined the issue as not a filter
+report. `transient` covers other infrastructure failures, including
+repository-instruction refusals.
+
+`outcome.reporterEnvironment.status` is `matched`, `agent_mismatch`, or
+`unavailable`. The reporter's environment is read by code, never by a model,
+from the settings import link of the pinned report, with the parser
+`launch_browser` applies the link with. A mismatch does not change
+`outcome.status`. `unavailable` means the comparison could not be made: the
+pinned report has no single usable import link or is not MV3, or the run
+stopped before it prepared the reporter's build. `timings.siteCheckMs` is the
+site check; `timings.preparationMs` starts after it. Usage and cost cover the
+agent.
 
 The agent's run is locked before the human fix is read, so the agent never
 sees the answer. To check that a run directory still matches its lock, for
@@ -297,39 +269,61 @@ Model groups include API, loop and vision models, and both reasoning-effort
 settings. Repeated records for the same configuration and case count as
 repeated runs.
 
-If judge settings, the agent commit or dirty state, KnowledgeBase commit,
-or browser build differ anywhere in the input records, a `mixed pins:` line
-names each differing condition and its number of distinct values. The
-summary still includes the records; use consistent pins when comparing
-model quality.
+If the agent commit or dirty state, KnowledgeBase commit, or browser build
+differ anywhere in the input records, a `mixed pins:` line names each
+differing condition and its number of distinct values. The summary still
+includes the records; use consistent pins when comparing model quality.
 
-If any record has `humanFixVerdict: not_verified`, its case is excluded for
-every model and listed as drift. The pass-rate denominator contains runs
-on the remaining cases, excluding `environment_drift` and `transient`
-failures. `provider_rejected` and `intake_skipped` count as failed L0 runs.
-The 95% Wilson interval is calculated over runs: five passes in ten runs prints
-`50% (24–76%)`.
+The verified-rate denominator counts every run except `transient` failures
+and `site_unreachable` cases. `provider_rejected` and `intake_skipped` count
+as failed runs. The 95% Wilson interval is calculated over runs: five
+`verified` runs in ten prints `50% (24–76%)`. `proposed` and `reproduced`
+count runs with exactly that status; `env mismatch` counts counted runs
+whose `reporterEnvironment.status` is `agent_mismatch`.
 
-`$ total`, `rejected`, `intake skipped` and `transient` cover all records,
-including excluded cases. Other columns and per-case cells cover the remaining counted runs.
-Per-case cells show passes/runs, highest level, median known cost and median
-agent time. Unavailable values display as `—`; total cost sums known costs.
+`$ total`, `rejected`, `intake skipped`, `transient` and `site unreachable`
+cover all records. Other columns and per-case cells cover counted runs.
+Per-case cells show verified/runs, the strongest status among the runs,
+median known cost and median agent time. Unavailable values display as `—`;
+total cost sums known costs.
 
-To export every raw record, including excluded cases, add `--csv`:
+After the tables come these lines:
+
+- `agent vs human:` the agent median over counted runs, and the human
+  median over the same cases.
+- `no model reproduced:` cases whose runs reached an agent status, yet none
+  reached `reproduced` or better, for any model. This is how a stale case
+  shows. Provider rejections and intake skips do not put a case here.
+- `site unreachable:` cases whose site did not answer before at least one
+  run.
+- `mixed pins:` only when pins differ, as above.
+
+`benchmark:summarize` reads only `schemaVersion` 2 records and fails naming
+an older file.
+
+To export every raw record, uncounted runs included, add `--csv`:
 
 ```bash
 pnpm benchmark:summarize -- tmp/model-series-a tmp/model-series-b \
     --csv tmp/model-comparison.csv
 ```
 
-The CSV includes `judge` as JSON with model roles and reasoning efforts,
-`agentCommit` with a dirty marker when applicable, and
-`knowledgeBaseCommit`, alongside each run's failure kind and measurements.
+The CSV includes `agentCommit` with a dirty marker when applicable,
+`knowledgeBaseCommit` and `reporterEnvironment`, alongside each run's
+status, failure kind and measurements. For the rule comparison it has the
+agent's `agentRule` and `agentFilePath`, verified or carried for review,
+`agentEdit` for a verified rule only, and the maintainer's `humanFixCommit`,
+`humanRules` (a JSON array of `rule`, `repositoryEdit` and `replacedRule`),
+`humanRemovedRules` and `humanRulesError`.
 
-For parallel model series, use a different `--output-root` for each, the same
-judge settings and an explicit KnowledgeBase SHA. First run `--oracle-only`
-(add `--refresh` to rebuild the judge cache), so historical extension builds
-are warm in `tmp/cache/extensions/historical/` before starting the models.
+A spreadsheet reads a cell that starts with `-`, `+`, `=` or `@` as a
+formula, and filter rules often start with `-`. Import the rule columns as
+text; the CSV keeps the raw values for scripts.
+
+For parallel model series, use a different `--output-root` for each and an
+explicit KnowledgeBase SHA. First run `pnpm benchmark:case:check -- --all`,
+so historical extension builds are warm in `tmp/cache/extensions/historical/`
+before starting the models.
 Keep CloakBrowser auto-updates disabled: the CLI and benchmark default
 `CLOAKBROWSER_AUTO_UPDATE` to `false` when unset and preserve an explicit
 value, including one loaded from `.env`.
@@ -337,11 +331,15 @@ value, including one loaded from `.env`.
 ## Count the cost
 
 The benchmark computes a cost only from a price file you supply. Without one
-the cases still run, and each one prints:
+the cases still run, and each one that ran the agent prints:
 
 ```text
     cost: not computed, no price file (set LLM_PRICING_FILE)
 ```
+
+A case that wrote no usage summary, such as a `site_unreachable` case,
+prints `cost: unknown, the run wrote no usage summary` with or without a
+price file.
 
 To price the runs, write a price file and name it in `.env`:
 
@@ -399,7 +397,6 @@ With a price file, each case prints one of these cost lines:
 | `cost: $0.0300 (partial, not in the price file: <models>)` | Only the listed models' completions are missing from the figure |
 | `cost: not computed, not in the price file: <models>` | No model the run used is in the file; check the ids |
 | `cost: not computed, the provider reported no usage` | The provider returned no token counts |
-| `cost: unknown, the run wrote no usage summary` | The run ended before it counted anything |
 
 After more than one case, `total priced cost` adds up what was priced.
 `llm-usage-summary.json` has the details: tokens and cost per model and per
@@ -431,7 +428,9 @@ rule absent from the build prints a warning without refusing the case.
 `case:check` applies the same guard. `case:add` writes the case to
 `lab/benchmark/e2e/cases/<domain>-<issue>/`: `run.json` and the issue snapshot
 in `issue/`, which the agent sees. It also writes `oracle.json`, withheld
-from the agent and read by the comparison and case checks. The oracle holds
+from the agent. The suite checks it is readable before the first case and
+reads the human fix only after each agent's run; the case checks read it
+too. The oracle holds
 the human commit, `issueCreatedAt` (issue creation time) and `fixCommittedAt`
 (fix committer time), both ISO timestamps.
 The v3 `run.json` carries `extensionBuild`:

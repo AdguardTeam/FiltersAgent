@@ -197,11 +197,6 @@ export const LocalRunRecordSchema: v.GenericSchema<LocalRunRecord> = v.pipe(
 export type LocalSettingsProfileEvidence = v.InferOutput<typeof LocalSettingsProfileEvidenceSchema>;
 
 /**
- * Exact extension and filters checkout used for a local run.
- */
-export type LocalExtensionProvenance = v.InferOutput<typeof LocalExtensionProvenanceSchema>;
-
-/**
  * Prepared KnowledgeBase and exact consulted citations stored beside a local run.
  */
 export type LocalKnowledgeBaseProvenance = v.InferOutput<typeof LocalKnowledgeBaseProvenanceSchema>;

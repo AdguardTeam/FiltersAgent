@@ -16,16 +16,14 @@ The format is based on [Keep a Changelog], and this project adheres to
   your own Anthropic key, prompt caching and thinking. Its base URL has no
   `/v1`; a URL ending in `/v1` fails at startup.
 - Added `pnpm benchmark:case:check` to check or migrate historical cases.
-- Added an independent benchmark judge configured by `E2E_JUDGE_*`, with a
-  shared cache of reporter settings and human-fix verdicts that accounts
-  for issue snapshots and judge reasoning settings.
-- Added benchmark flags `--oracle-only`, `--refresh`, `--output-root` and
-  `--knowledge-base-sha` to check cases and retain comparable model runs;
-  oracle-only output marks cached verdicts, preserves existing evidence
-  when reusing a verdict and reports candidate rejection details for drift.
+- Added benchmark flags `--output-root` and `--knowledge-base-sha` to retain
+  comparable model runs.
 - Added per-case `benchmark-record.json` results and
   `pnpm benchmark:summarize` for model comparisons and CSV export,
-  including intake skips, judge reasoning settings and mixed-pin warnings.
+  including intake skips and mixed-pin warnings.
+- Added a free reachability check of each benchmark case's site before the
+  agent starts; a site that does not answer ends the case as
+  `site_unreachable` without spending a model.
 
 ### Changed
 
@@ -35,9 +33,10 @@ The format is based on [Keep a Changelog], and this project adheres to
   `content_filter`) and bodyless HTTP 400/404/413/422 errors to end the run
   as `llm_rejected`.
 - Changed the vision image size cap to 5 MB for both APIs.
-- Changed benchmark scoring to classify missing extension provenance and
-  reporter-build version mismatches as infrastructure failures rather than
-  agent regressions.
+- Changed benchmark scoring to read each case's outcome from the agent's own
+  result (`verified`, `proposed`, `reproduced`, `not_reproduced`) and record
+  the maintainer's rule beside it, instead of re-checking the maintainer's
+  fix in a browser.
 - Changed historical case checks to ignore rules already present in the
   base checkout and warn when removed rules are absent from the build.
 - Changed the CLI and benchmark to default `CLOAKBROWSER_AUTO_UPDATE` to
@@ -45,6 +44,13 @@ The format is based on [Keep a Changelog], and this project adheres to
 - Changed benchmark runs to show the agent each issue as open, without `A:`
   labels or an assignee, and to refuse a case whose checkout loads a
   repository instruction.
+
+### Removed
+
+- Removed the benchmark statuses `pass`, `agent_regression` and
+  `environment_drift`, exit codes 1 and 2, and `e2e-result.json`: the
+  benchmark exits 0 when every case has an agent outcome and 3 otherwise, and
+  each case's outcome is in `benchmark-record.json`.
 
 ### Fixed
 

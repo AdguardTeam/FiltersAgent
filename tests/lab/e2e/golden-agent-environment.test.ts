@@ -1,92 +1,59 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
-import type { Report } from '../../../src/intake/report';
+import { describe, expect, it } from 'vitest';
+import type { RawIssue } from '../../../src/github/fetch-issue';
+import { loadLocalIssueSnapshot, toAgentIssueInput } from '../../../src/local/issue-snapshot';
 import type { LocalRunRecord } from '../../../src/local/run-output';
 import {
     assessGoldenAgentEnvironment,
-    extractGoldenReporterEnvironment,
+    GoldenAgentEnvironmentStatus,
 } from '../../../lab/e2e/golden-agent-environment';
-
-const temporaryRoots: string[] = [];
-
-afterEach(() => {
-    for (const root of temporaryRoots.splice(0)) {
-        rmSync(root, { recursive: true, force: true });
-    }
-});
 
 const REPORT_URL =
     'https://reports.adguard.com/settings/import.html?' +
     'scheme_version=4&product_type=ext&product_version=5.4.3.99&' +
     'ext.manifest_version=3&regular_filters=2%2C216&stealth.enabled=0';
 
+const CASES_ROOT = join(process.cwd(), 'lab', 'benchmark', 'e2e', 'cases');
+
 /**
- * Build an extracted scripted report whose settings import carries exact filter IDs.
+ * Build a prompt-safe issue whose body is an AdGuard report.
  *
- * @param importUrl - The import URL the scripted extraction reports.
- * @returns A model-filled report for the extractor seam.
+ * @param body - Issue body.
+ * @returns The issue the agent and the assessment read.
  */
-function reportWithImport(importUrl: string): Report {
+function issueWith(body: string): RawIssue {
     return {
-        siteUrls: ['https://www.nettg.pl/'],
-        problemType: 'ads',
-        screenshots: [],
-        environment: { product: 'AdGuard Browser Extension v5.4.3.99 MV3' },
-        enabledLists: [],
-        settingsImportUrl: importUrl,
-        userRules: [],
-        reproductionSteps: [],
+        number: 235988,
+        url: 'https://github.com/AdguardTeam/AdguardFilters/issues/235988',
+        title: 'nettg.pl',
+        body,
+        state: 'closed',
+        labels: [],
+        assignee: null,
+        comments: [],
     };
 }
 
 /**
- * The extraction seam scripted with the tracked corpus import URLs.
+ * Write a report the way GitHub renders the AdGuard form, separators escaped.
  *
- * @param importUrl - Import URL the seam returns for every issue.
- * @returns The dependencies carrying the scripted seam.
+ * @param importUrl - Settings import link of the report.
+ * @returns The issue carrying the link under the form's heading.
  */
-function dependencies(importUrl: string) {
-    return {
-        readReporterEnvironment: () =>
-            extractGoldenReporterEnvironment(writeIssue('Reporter environment'), async () =>
-                reportWithImport(importUrl),
-            ),
-    };
+function reportIssue(importUrl: string): RawIssue {
+    return issueWith(`### Issue configuration\n[Import](${importUrl.replaceAll('&', '&amp;')})`);
 }
 
 /**
- * Persist one portable reporter issue containing exact extension settings.
+ * Read one tracked case's issue exactly as the run receives it.
  *
- * @param body - Issue body used by the snapshot the seam is called with.
- * @returns Absolute snapshot path.
+ * @param caseName - Tracked case directory.
+ * @returns Prompt-safe issue of the case.
  */
-function writeIssue(body: string): string {
-    const directory = mkdtempSync(join(tmpdir(), 'golden-agent-environment-'));
-    temporaryRoots.push(directory);
-    const issueFile = join(directory, 'issue.json');
-    mkdirSync(directory, { recursive: true });
-    writeFileSync(
-        issueFile,
-        JSON.stringify({
-            schemaVersion: 1,
-            rawIssue: {
-                number: 235988,
-                url: 'https://github.com/AdguardTeam/AdguardFilters/issues/235988',
-                title: 'nettg.pl',
-                body,
-                state: 'closed',
-                labels: ['T: Ads'],
-                assignee: null,
-                comments: [],
-            },
-            reporterComments: [],
-            attachments: [],
-        }),
-        'utf8',
+function trackedIssue(caseName: string): RawIssue {
+    return toAgentIssueInput(
+        loadLocalIssueSnapshot(join(CASES_ROOT, caseName, 'issue', 'issue.json')),
     );
-    return issueFile;
 }
 
 /**
@@ -182,81 +149,44 @@ function trackedCaseRecord(filterIds: number[], version: string, commit: string)
     return record;
 }
 
-// The import URLs live in the corresponding tracked corpora under lab/benchmark/e2e/cases; the
-// seam scripts them because reading them is the intake extraction's job now.
-const TRACKED_CASE_IMPORTS = {
+// The filter selections each tracked case's report carries in its settings import link.
+const TRACKED_CASE_SETTINGS = {
     'nettg-pl-235988': {
         version: '5.4.3.99',
         commit: '856783eb784fc5f1cb9bc39e156e94ee1ede210b',
         filterIds: [2, 3, 4, 17, 18, 19, 20, 21, 22, 208, 216, 217, 238, 255, 256, 257, 259],
-        importUrl:
-            'https://reports.adguard.com/settings/import.html?' +
-            'scheme_version=4&product_type=ext&product_version=5.4.3.99&system_version=&' +
-            'ext.manifest_version=3&browser=chrome&' +
-            'regular_filters=2%2C3%2C4%2C17%2C18%2C19%2C20%2C21%2C22%2C208%2C216%2C217%2C238%2C255%2C256%2C257%2C259&' +
-            'filters_last_update=2026-07-16T08%3A00%3A48Z&stealth.enabled=0',
     },
     'wpoznaniu-pl-235403': {
         version: '5.4.3.91',
         commit: 'abc2ca544734957f5d58d8125f53eaef21d4d989',
         filterIds: [2, 3, 4, 17, 18, 19, 20, 21, 22, 208, 216, 217, 238, 255, 256, 257, 259],
-        importUrl:
-            'https://reports.adguard.com/settings/import.html?' +
-            'scheme_version=4&product_type=ext&product_version=5.4.3.91&system_version=&' +
-            'ext.manifest_version=3&browser=chrome&' +
-            'regular_filters=2%2C3%2C4%2C17%2C18%2C19%2C20%2C21%2C22%2C208%2C216%2C217%2C238%2C255%2C256%2C257%2C259&' +
-            'filters_last_update=2026-07-08T08%3A00%3A44Z&stealth.enabled=0',
     },
     'sochi-camera-234715': {
         version: '5.4.3.83',
         commit: 'ac94c3d327ac366f3cd04d78955560bb8e916a78',
         filterIds: [1, 2, 10],
-        importUrl:
-            'https://reports.adguard.com/settings/import.html?' +
-            'scheme_version=4&product_type=ext&product_version=5.4.3.83&' +
-            'system_version=Windows+10&ext.manifest_version=3&browser=chrome&' +
-            'regular_filters=1%2C2%2C10&stealth.enabled=0',
     },
 } as const;
 
 describe('assessGoldenAgentEnvironment', () => {
-    it('accepts exact reporter extension, filter IDs, active rulesets, and stealth evidence', async () => {
-        expect(
-            await assessGoldenAgentEnvironment(lockedRecord(), dependencies(REPORT_URL)),
-        ).toMatchObject({
-            status: 'matched',
-            extension: { manifestVersion: 3 },
-        });
+    it('accepts exact reporter extension, filter IDs, active rulesets, and stealth evidence', () => {
+        expect(assessGoldenAgentEnvironment(lockedRecord(), reportIssue(REPORT_URL))).toMatchObject(
+            { status: GoldenAgentEnvironmentStatus.Matched },
+        );
     });
 
-    it('reads the reporter settings from an HTML-escaped link the extraction copied verbatim', async () => {
-        // GitHub issue bodies carry the import link with `&amp;` separators, and a judge model
-        // may return it exactly as written.
-        const escapedUrl = REPORT_URL.replaceAll('&', '&amp;');
-        const issueFile = writeIssue(`### System configuration\n[Import](${escapedUrl})`);
-
-        expect(
-            await assessGoldenAgentEnvironment(lockedRecord(), {
-                readReporterEnvironment: () =>
-                    extractGoldenReporterEnvironment(issueFile, async () =>
-                        reportWithImport(escapedUrl),
-                    ),
-            }),
-        ).toMatchObject({ status: 'matched' });
-    });
-
-    it.each(Object.entries(TRACKED_CASE_IMPORTS))(
-        'matches exact reporter filter selection recorded for tracked case %s',
-        async (_caseName, tracked) => {
+    it.each(Object.entries(TRACKED_CASE_SETTINGS))(
+        'reads the reporter settings of tracked case %s from its report without a model',
+        (caseName, tracked) => {
             const record = trackedCaseRecord(
                 [...tracked.filterIds],
                 tracked.version,
                 tracked.commit,
             );
 
-            expect(
-                await assessGoldenAgentEnvironment(record, dependencies(tracked.importUrl)),
-            ).toMatchObject({ status: 'matched' });
+            expect(assessGoldenAgentEnvironment(record, trackedIssue(caseName))).toMatchObject({
+                status: GoldenAgentEnvironmentStatus.Matched,
+            });
         },
     );
 
@@ -304,87 +234,54 @@ describe('assessGoldenAgentEnvironment', () => {
             },
             /stealth/i,
         ],
-    ] as const)(
-        'classifies %s as an agent mismatch rather than infrastructure',
-        async (_name, mutate, detailPattern) => {
-            const record = lockedRecord();
-            mutate(record);
-
-            const assessment = await assessGoldenAgentEnvironment(record, dependencies(REPORT_URL));
-
-            expect(assessment).toMatchObject({ status: 'agent_mismatch' });
-            expect(assessment.detail).toMatch(detailPattern);
-        },
-    );
-
-    it("treats a build version different from the reporter's as case infrastructure failure", async () => {
+    ] as const)('classifies %s as an agent mismatch', (_name, mutate, detailPattern) => {
         const record = lockedRecord();
-        record.result.extensionProvenance!.historicalBuild!.version = '5.4.3.98';
+        mutate(record);
 
-        const assessment = await assessGoldenAgentEnvironment(record, dependencies(REPORT_URL));
+        const assessment = assessGoldenAgentEnvironment(record, reportIssue(REPORT_URL));
 
-        expect(assessment.status).toBe('infrastructure_failure');
-        expect(assessment.detail).toContain('5.4.3.98');
-        expect(assessment.detail).toContain('5.4.3.99');
+        expect(assessment).toMatchObject({ status: GoldenAgentEnvironmentStatus.AgentMismatch });
+        expect(assessment.detail).toMatch(detailPattern);
     });
 
-    it.each(['missing provenance', 'pinned release', 'missing build identity'])(
-        'treats a locked run without a historical build as case infrastructure failure: %s',
-        async (scenario) => {
-            const record = lockedRecord();
-            if (scenario === 'missing provenance') {
-                delete record.result.extensionProvenance;
-                record.provenance.extension = null;
-            } else if (scenario === 'pinned release') {
-                record.result.extensionProvenance!.source = 'pinned_release';
-                delete record.result.extensionProvenance!.historicalBuild;
-            } else {
-                delete record.result.extensionProvenance!.historicalBuild;
-            }
+    it('leaves a run that stopped before it prepared the reporter build uncompared', () => {
+        const record = lockedRecord();
+        delete record.result.extensionProvenance;
+        record.provenance.extension = null;
 
-            const assessment = await assessGoldenAgentEnvironment(record, dependencies(REPORT_URL));
-
-            expect(assessment).toMatchObject({
-                status: 'infrastructure_failure',
-                detail: expect.stringMatching(/historical.*build/i),
-            });
-        },
-    );
-
-    it('treats an issue whose extraction carried no import as case infrastructure failure', async () => {
-        const issueFile = writeIssue('AdGuard product: | AdGuard Browser Extension v5.4.3.99 MV3');
-
-        expect(
-            await assessGoldenAgentEnvironment(lockedRecord(), {
-                readReporterEnvironment: () =>
-                    extractGoldenReporterEnvironment(issueFile, async () => ({
-                        siteUrls: ['https://www.nettg.pl/'],
-                        problemType: 'ads',
-                        screenshots: [],
-                        environment: { product: 'AdGuard Browser Extension v5.4.3.99 MV3' },
-                        enabledLists: [],
-                        userRules: [],
-                        reproductionSteps: [],
-                    })),
-            }),
-        ).toMatchObject({
-            status: 'infrastructure_failure',
-            detail: expect.stringMatching(/exact.*settings import/i),
+        expect(assessGoldenAgentEnvironment(record, reportIssue(REPORT_URL))).toMatchObject({
+            status: GoldenAgentEnvironmentStatus.Unavailable,
+            detail: expect.stringMatching(/stopped before it prepared the reporter build/i),
         });
     });
 
-    it('rejects disagreement between result-bound and wrapper extension provenance', async () => {
-        const record = lockedRecord();
-        // The two views may share the serialized object; a full replacement makes the wrapper
-        // view diverge from the result-bound one instead of mutating both in place.
-        record.provenance.extension = {
-            ...record.provenance.extension!,
-            extensionSourceSha256: 'a'.repeat(64),
-        };
-
-        expect(await assessGoldenAgentEnvironment(record, dependencies(REPORT_URL))).toMatchObject({
-            status: 'infrastructure_failure',
-            detail: expect.stringMatching(/provenance disagree/i),
+    it.each([
+        [
+            'no import link',
+            'AdGuard product: | AdGuard Browser Extension v5.4.3.99 MV3',
+            /no exact/i,
+        ],
+        [
+            'an import link on an untrusted host',
+            `[Import](${REPORT_URL.replace('reports.adguard.com', 'reports.example.org')})`,
+            /no exact/i,
+        ],
+        [
+            // launch_browser applies the link with the same parser, so the agent could not have
+            // run in an environment this link describes.
+            'an import link the agent would refuse to apply',
+            `[Import](${REPORT_URL.replace('stealth.enabled=0', 'stealth.enabled=true')})`,
+            /stealth\.enabled/i,
+        ],
+        [
+            'two different import links',
+            `[Import](${REPORT_URL})\n[Import](${REPORT_URL.replace('stealth.enabled=0', 'stealth.enabled=1')})`,
+            /2 different/i,
+        ],
+    ])('leaves a report with %s uncompared', (_name, body, detailPattern) => {
+        expect(assessGoldenAgentEnvironment(lockedRecord(), issueWith(body))).toMatchObject({
+            status: GoldenAgentEnvironmentStatus.Unavailable,
+            detail: expect.stringMatching(detailPattern),
         });
     });
 });

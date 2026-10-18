@@ -5,22 +5,20 @@ import type { CoreConfig } from '../../src/config/config';
 import type { EnabledBlockerModule } from '../../src/proxy-blocker/blocker-module-run-issue';
 import type { UsageRatesTable } from '../../src/types/usage-summary';
 import { readRunCost, type RunCost } from '../pricing/run-cost';
+import { loadGoldenHumanOracle, type GoldenHumanOracle } from './golden-case';
 import { resolveKnowledgeBaseMasterSha } from './knowledge-base-pin';
-import type { GoldenE2EResult } from './golden-comparator';
-import {
-    runGoldenE2ECase,
-    type GoldenE2ERunnerDependencies,
-    type GoldenSeries,
-} from './golden-runner';
+import { AGENT_OUTCOME_RANKING } from './benchmark-outcome';
+import type { BenchmarkRecord, BenchmarkRunEnvironment } from './benchmark-record';
+import { runGoldenE2ECase, type GoldenE2ERunnerDependencies } from './golden-runner';
 
 /**
  * Paths and ordered case selection for one manual suite invocation.
  */
 export interface RunGoldenE2ESuiteOptions {
     /**
-     * Judge configuration shared by every selected case.
+     * Source and browser provenance captured once for the series.
      */
-    series: GoldenSeries;
+    runEnvironment: BenchmarkRunEnvironment;
 
     /**
      * Explicit immutable KnowledgeBase commit; absent resolves master once for the suite.
@@ -81,6 +79,10 @@ export type GoldenE2ESuiteDependencies = GoldenE2ERunnerDependencies & {
      * Resolve KnowledgeBase master once when no explicit commit was supplied.
      */
     resolveKnowledgeBaseSha?: () => Promise<string>;
+    /**
+     * Closed oracle loader, read for every selected case before the first one starts.
+     */
+    loadHumanOracle?: (caseDirectory: string) => GoldenHumanOracle;
 };
 
 /**
@@ -132,9 +134,9 @@ export interface GoldenE2ESuiteEntry {
     caseName: string;
 
     /**
-     * Final per-case classification.
+     * The case's persisted benchmark record.
      */
-    result: GoldenE2EResult;
+    record: BenchmarkRecord;
 
     /**
      * The case run's cost, read back from the usage summary the run locked.
@@ -152,7 +154,7 @@ export interface GoldenE2ESuiteResult {
     results: GoldenE2ESuiteEntry[];
 
     /**
-     * Strongest exit code across all cases.
+     * Whether every case produced an agent outcome.
      */
     exitCode: GoldenE2EExitCode;
 }
@@ -188,8 +190,8 @@ export function listGoldenCaseNames(casesRoot: string): string[] {
  *
  * @param coreConfig - GitHub-independent LLM and headless browser configuration.
  * @param options - Ordered selection, tracked/ignored roots and the optional price table.
- * @param dependencies - Optional lifecycle and independent-oracle seams.
- * @returns Per-case classifications and costs, and the strongest suite exit code.
+ * @param dependencies - Optional lifecycle seams.
+ * @returns Per-case records and costs, and the suite exit code.
  */
 export async function runGoldenE2ESuite(
     coreConfig: CoreConfig,
@@ -209,6 +211,22 @@ export async function runGoldenE2ESuite(
             }
         }
     }
+    // A case without an oracle has no record to write. Reading every oracle first stops a broken
+    // case before the first agent is paid for, instead of in the middle of the series. Nothing from
+    // an oracle reaches an agent; the runner reads its human fix only after the agent's run seals.
+    const { loadHumanOracle = loadGoldenHumanOracle, ...runnerDependencies } = dependencies;
+    const oracles = new Map<string, GoldenHumanOracle>();
+    for (const caseName of options.caseNames) {
+        try {
+            oracles.set(caseName, loadHumanOracle(join(resolve(options.casesRoot), caseName)));
+        } catch (error) {
+            throw new Error(
+                `Golden case ${caseName} has no readable oracle.json: ` +
+                    `${error instanceof Error ? error.message : String(error)}`,
+                { cause: error },
+            );
+        }
+    }
     const knowledgeBaseSha =
         options.knowledgeBaseSha ??
         (await (dependencies.resolveKnowledgeBaseSha ?? resolveKnowledgeBaseMasterSha)());
@@ -216,28 +234,30 @@ export async function runGoldenE2ESuite(
     const results: GoldenE2ESuiteEntry[] = [];
     for (const caseName of options.caseNames) {
         const outputDirectory = join(resolve(options.outputRoot), caseName);
-        const result = await runGoldenE2ECase(
+        const record = await runGoldenE2ECase(
             coreConfig,
             {
-                series: options.series,
+                runEnvironment: options.runEnvironment,
                 knowledgeBaseSha,
                 caseName,
                 caseDirectory: join(resolve(options.casesRoot), caseName),
+                oracle: oracles.get(caseName)!,
                 outputDirectory,
                 evaluationDirectory: join(resolve(options.evaluationRoot), caseName),
                 verbose: options.verbose,
                 pricingSnapshot: options.pricingSnapshot,
                 blockerModules: options.blockerModules,
             },
-            dependencies,
+            runnerDependencies,
         );
-        results.push({ caseName, result, cost: readRunCost(outputDirectory) });
+        results.push({ caseName, record, cost: readRunCost(outputDirectory) });
     }
-    let exitCode: GoldenE2EExitCode = GoldenE2EExitCode.Pass;
-    for (const entry of results) {
-        if (entry.result.exitCode > exitCode) {
-            exitCode = entry.result.exitCode;
-        }
-    }
-    return { results, exitCode };
+    // Every status but the agent's own outcomes measured no agent work.
+    const incomplete = results.some(
+        ({ record }) => !AGENT_OUTCOME_RANKING.includes(record.outcome.status),
+    );
+    return {
+        results,
+        exitCode: incomplete ? GoldenE2EExitCode.Incomplete : GoldenE2EExitCode.Completed,
+    };
 }

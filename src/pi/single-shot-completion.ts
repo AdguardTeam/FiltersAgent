@@ -33,8 +33,8 @@ import { isTransientGatewayFailure } from './transient-gateway-retry';
 /**
  * Sampling temperature applied when a call passes none.
  *
- * Structured paths (vision, reviewer, oracle) need deterministic output, and an unset temperature
- * would let the provider default decide — 0 keeps every call deterministic. A profile that does not
+ * Structured paths (vision, extraction) need deterministic output, and an unset temperature would
+ * let the provider default decide — 0 keeps every call deterministic. A profile that does not
  * accept `temperature` drops it.
  */
 const DEFAULT_TEMPERATURE = 0;

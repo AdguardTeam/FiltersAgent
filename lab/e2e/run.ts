@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { describeBrowserBuild, readAgentRevision } from './benchmark-environment';
 import { CLOAKBROWSER_AUTO_UPDATE_VAR } from '../../src/browser/cloakbrowser-auto-update';
 import { resolveCloakBrowserAutoUpdate } from '../local/cloakbrowser-auto-update';
+import { loadCoreConfig } from '../../src/config/config';
 import { createLogger } from '../../src/logger/logger';
 import { enableBlockerModules } from '../../src/proxy-blocker/blocker-module-loader';
 import {
@@ -13,10 +14,7 @@ import { ExtensionEnvironmentKind } from '../../src/types/extension-environment-
 import { describeRunCost, formatUsd } from '../pricing/run-cost';
 import { loadUsagePricing } from '../pricing/usage-pricing';
 import { parseGoldenE2EArgs } from './golden-cli';
-import { createGoldenBrowserOracleProbe } from './golden-browser-oracle';
 import { goldenOutputLayout, listGoldenCaseNames, runGoldenE2ESuite } from './golden-suite';
-import { loadGoldenE2EConfigs } from './judge-config';
-import { formatGoldenOracleOnlyLine, runGoldenOracleSuite } from './golden-oracle-only';
 import { GoldenE2EExitCode } from './golden-exit-code';
 
 /**
@@ -38,31 +36,7 @@ async function main(): Promise<void> {
         throw new Error(`Unknown golden E2E case: ${selection.caseName}`);
     }
 
-    const configs = loadGoldenE2EConfigs(process.env, selection.oracleOnly);
-    const series = {
-        judgeConfig: configs.judge,
-        judgeCacheRoot: join(workspaceRoot, 'tmp', 'e2e-judge-cache'),
-        refreshJudgeCache: selection.refresh,
-    };
-    if (selection.oracleOnly) {
-        const suite = await runGoldenOracleSuite(
-            {
-                caseNames,
-                casesRoot,
-                oracleRoot: join(workspaceRoot, 'tmp', 'e2e-oracle-runs'),
-                series,
-            },
-            { createJudgeProbe: createGoldenBrowserOracleProbe },
-        );
-        for (const entry of suite.results) {
-            process.stdout.write(`${formatGoldenOracleOnlyLine(entry.caseName, entry.result)}\n`);
-        }
-        process.exitCode = suite.exitCode;
-        return;
-    }
-    if (!configs.agent) {
-        throw new Error('Golden model runs require agent configuration.');
-    }
+    const coreConfig = loadCoreConfig(process.env);
     // Every load fails before the first case starts, so a missing variable, a broken price file
     // or a broken module manifest never costs a browser launch.
     refuseBlockerModulesInHistoricalRuns(
@@ -79,32 +53,29 @@ async function main(): Promise<void> {
         createLogger(),
     );
     const layout = goldenOutputLayout(workspaceRoot, selection.outputRoot);
-    const suite = await runGoldenE2ESuite(
-        configs.agent,
-        {
-            series: {
-                ...series,
-                runEnvironment: {
-                    agent: readAgentRevision(workspaceRoot),
-                    browser: describeBrowserBuild(workspaceRoot),
-                },
-            },
-            caseNames,
-            casesRoot,
-            outputRoot: layout.outputRoot,
-            evaluationRoot: layout.evaluationRoot,
-            refuseExistingCaseDirectories: layout.refuseExisting,
-            knowledgeBaseSha: selection.knowledgeBaseSha ?? undefined,
-            onKnowledgeBaseResolved: (sha) => process.stdout.write(`KnowledgeBase: ${sha}\n`),
-            pricingSnapshot,
-            blockerModules,
+    const suite = await runGoldenE2ESuite(coreConfig, {
+        runEnvironment: {
+            agent: readAgentRevision(workspaceRoot),
+            browser: describeBrowserBuild(workspaceRoot),
         },
-        { createJudgeProbe: createGoldenBrowserOracleProbe },
-    );
+        caseNames,
+        casesRoot,
+        outputRoot: layout.outputRoot,
+        evaluationRoot: layout.evaluationRoot,
+        refuseExistingCaseDirectories: layout.refuseExisting,
+        knowledgeBaseSha: selection.knowledgeBaseSha ?? undefined,
+        onKnowledgeBaseResolved: (sha) => process.stdout.write(`KnowledgeBase: ${sha}\n`),
+        pricingSnapshot,
+        blockerModules,
+    });
     for (const entry of suite.results) {
+        const { status, failureKind, detail } = entry.record.outcome;
+        const kind = failureKind === null ? '' : ` [${failureKind}]`;
+        const reason = detail === null ? '' : ` (${detail})`;
+        const { rulesError } = entry.record.human;
         process.stdout.write(
-            `${entry.caseName}: ${entry.result.status} (${entry.result.detail})\n` +
-                `    ${describeRunCost(entry.cost)}\n`,
+            `${entry.caseName}: ${status}${kind}${reason}\n    ${describeRunCost(entry.cost)}\n` +
+                (rulesError === null ? '' : `    human fix not read: ${rulesError}\n`),
         );
     }
     if (pricingSnapshot && suite.results.length > 1) {
@@ -118,5 +89,5 @@ try {
     await main();
 } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-    process.exitCode = GoldenE2EExitCode.InfrastructureFailure;
+    process.exitCode = GoldenE2EExitCode.Incomplete;
 }

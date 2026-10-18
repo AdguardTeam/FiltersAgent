@@ -1460,11 +1460,11 @@ describe('writeLocalRunOutput', () => {
             workspaceRoot: projectRoot,
             candidatePatchText: '+example.com##.advert',
         });
-        writeFileSync(join(outputDir, 'e2e-result.json'), '{}\n', 'utf8');
+        writeFileSync(join(outputDir, 'benchmark-record.json'), '{}\n', 'utf8');
 
         expect(() => verifyLocalRunManifest(outputDir)).toThrow(/foreign artifact/i);
 
-        rmSync(join(outputDir, 'e2e-result.json'));
+        rmSync(join(outputDir, 'benchmark-record.json'));
         rmSync(paths.agentReportPath);
         symlinkSync('run-result.json', paths.agentReportPath);
         expect(() => verifyLocalRunManifest(outputDir)).toThrow(/immutable run artifact/i);
