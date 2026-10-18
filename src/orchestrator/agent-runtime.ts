@@ -15,7 +15,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import * as v from 'valibot';
 import { withToolDeadline } from '../pi/session-tools';
 import { parseRevealSteps, symptomAbsenceLedgerKey } from './apply-rule-reveal-steps';
-import type { NormalizedSafeInteractionPlan } from '../environment/safe-interaction';
+import { candidatePlanDigest, parseDomChecks } from './apply-rule-dom-checks';
 import { revealStepsRepairGuidance } from '../environment/interaction-replay';
 import type { SingleShotClient } from '../pi/single-shot-types';
 import { ToolRegistry } from '../agent/tool-registry';
@@ -120,12 +120,7 @@ import type { ToolDefinition } from '../agent/tool-registry';
 import type { FixOutcome } from '../types/fix-outcome';
 import type { PreparedExtension } from '../local/prepared-extension';
 import { createLogger } from '../logger/logger';
-import {
-    SINGLE_LINE_RULE_MESSAGE,
-    isSingleLineRule,
-    normalizeRule,
-    type NormalizedRule,
-} from '../repo/rule-normalizer';
+import { SINGLE_LINE_RULE_MESSAGE, isSingleLineRule, normalizeRule } from '../repo/rule-normalizer';
 import type { TraceRecorder } from '../tracer/trace-recorder';
 import { TraceEventType } from '../types/trace';
 import { Viewport, ConsentStrategy, type ReproProfile } from '../types/repro-profile';
@@ -211,9 +206,9 @@ import {
     normalizeLaunchBrowserArguments,
     requestsUnsupportedProxyRegion,
 } from './launch-browser-arguments';
+import { MAX_CANDIDATE_VALIDATION_EXECUTIONS } from '../types/candidate-limits';
 import {
     MAX_CANDIDATE_ATTEMPTS,
-    MAX_CANDIDATE_VALIDATION_EXECUTIONS,
     MAX_TECHNICAL_BROWSER_FAILURES_PER_TARGET,
     bindAllowedTargetUrl,
     candidateLedgerKey,
@@ -222,6 +217,7 @@ import {
     reportedDomainFromAllowedTargets,
     targetUrlMatchKey,
     type CandidateValidationOutcome,
+    type PendingCandidateAttempt,
 } from './agent-runtime-candidate-context';
 import {
     sessionBaselineCredited,
@@ -675,47 +671,6 @@ const WITHHELD_PAGE_REPORT: Readonly<Record<WithheldPageObstruction, WithheldPag
 };
 
 /**
- * Candidate metadata retained across the browser dispatch boundary.
- */
-interface PendingCandidateAttempt {
-    /**
-     * The model-proposed rule exactly as it would be published, outer whitespace trimmed.
-     *
-     * The experiment applies these bytes, not the normalized form: the verdict and the published
-     * evidence bind the validation to the rule text the run publishes, and the normalized form
-     * reorders and lowercases a network rule's modifiers.
-     */
-    rule: string;
-
-    /**
-     * Shared normalized representation of the model-proposed rule.
-     */
-    normalized: NormalizedRule;
-
-    /**
-     * One-based runtime candidate attempt number.
-     */
-    attemptNumber: number;
-
-    /**
-     * Candidate operation against the published baseline; add when omitted by the model.
-     */
-    operation: CandidateOperation;
-
-    /**
-     * Exact published baseline line targeted by an edit or remove operation, verbatim.
-     *
-     * Never normalized: baseline mutation receipts compare the exact published bytes.
-     */
-    originalRule?: string;
-
-    /**
-     * Reveal steps this call passed, replayed in every phase; absent when it passed none.
-     */
-    revealPlan?: NormalizedSafeInteractionPlan;
-}
-
-/**
  * Trusted apply_rule response fields retained under their producing browser session.
  */
 interface CandidateValidationReference {
@@ -1061,9 +1016,10 @@ export class AgentRuntime {
     private readonly candidateValidationExecutionCounts = new Map<string, number>();
 
     /**
-     * Reveal-step plan digests each canonical candidate was already judged under, empty for none.
+     * Experiment plans — reveal steps plus DOM checks — each canonical candidate was already judged
+     * under, as {@link candidatePlanDigest}s; empty for neither.
      */
-    private readonly candidateRevealPlanDigests = new Map<string, Set<string>>();
+    private readonly candidatePlanDigests = new Map<string, Set<string>>();
 
     /**
      * Technical browser-access failures accumulated by exact prompt-safe target URL.
@@ -3904,6 +3860,7 @@ export class AgentRuntime {
             attemptNumber: candidate.attemptNumber,
             noSandbox: this.options.noSandbox,
             ...(interactionPlan ? { interactionPlan } : {}),
+            ...(candidate.domChecks ? { domChecks: candidate.domChecks.checks } : {}),
         };
         if (this.dependencies.browserExtensionAdsObserverDependencies) {
             observerOptions.dependencies =
@@ -4111,21 +4068,23 @@ export class AgentRuntime {
     }
 
     /**
-     * Determine whether one judged candidate may run again because its page is prepared
+     * Determine whether one judged candidate may run again because its page is prepared or measured
      * differently.
      *
-     * A verdict reached on a page that never showed the symptom says nothing about the rule, so new
-     * reveal steps buy one more experiment, bounded by the same execution count as a vision retry.
+     * A verdict reached on a page that never showed the symptom says nothing about the rule, and a
+     * residue verdict reached from pixels alone can be settled by measuring the page; so new reveal
+     * steps or new DOM checks buy one more experiment, bounded by the same execution count as a
+     * vision retry. Like any repeat of the same candidate, it spends no candidate attempt.
      *
      * @param ledgerKey - Composed operation-plus-canonical candidate ledger key.
-     * @param revealDigest - Digest of the reveal steps this call passes, empty for none.
-     * @returns Whether the candidate was never judged under these reveal steps.
+     * @param planDigest - {@link candidatePlanDigest} of this call, empty for neither.
+     * @returns Whether the candidate was never judged under this plan.
      */
-    private isUntriedRevealPlan(ledgerKey: string, revealDigest: string): boolean {
-        const tried = this.candidateRevealPlanDigests.get(ledgerKey);
+    private isUntriedExperimentPlan(ledgerKey: string, planDigest: string): boolean {
+        const tried = this.candidatePlanDigests.get(ledgerKey);
         return (
             tried !== undefined &&
-            !tried.has(revealDigest) &&
+            !tried.has(planDigest) &&
             (this.candidateValidationExecutionCounts.get(ledgerKey) ?? 0) <
                 MAX_CANDIDATE_VALIDATION_EXECUTIONS
         );
@@ -4151,9 +4110,9 @@ export class AgentRuntime {
         const validationAttemptCount =
             (this.candidateValidationExecutionCounts.get(ledgerKey) ?? 0) + 1;
         this.candidateValidationExecutionCounts.set(ledgerKey, validationAttemptCount);
-        const triedReveal = this.candidateRevealPlanDigests.get(ledgerKey) ?? new Set<string>();
-        triedReveal.add(candidate.revealPlan?.digest ?? '');
-        this.candidateRevealPlanDigests.set(ledgerKey, triedReveal);
+        const triedPlans = this.candidatePlanDigests.get(ledgerKey) ?? new Set<string>();
+        triedPlans.add(candidatePlanDigest(candidate.revealPlan, candidate.domChecks));
+        this.candidatePlanDigests.set(ledgerKey, triedPlans);
         const review =
             typeof result.visualReview === 'object' && result.visualReview !== null
                 ? (result.visualReview as Record<string, unknown>)
@@ -4333,6 +4292,11 @@ export class AgentRuntime {
                         }
                         const revealPlan =
                             revealRequest.kind === 'normalized' ? revealRequest.plan : undefined;
+                        const domCheckRequest = parseDomChecks(args.domChecks);
+                        if ('refusal' in domCheckRequest) {
+                            return domCheckRequest.refusal;
+                        }
+                        const domChecks = domCheckRequest.plan;
                         const attemptedSessionIds =
                             this.candidateAttemptSessionIds.get(canonical) ?? new Set<string>();
                         if (
@@ -4340,7 +4304,10 @@ export class AgentRuntime {
                             sessionId !== undefined &&
                             attemptedSessionIds.has(sessionId) &&
                             !this.canRetryInconclusiveVisualReview(canonical) &&
-                            !this.isUntriedRevealPlan(canonical, revealPlan?.digest ?? '')
+                            !this.isUntriedExperimentPlan(
+                                canonical,
+                                candidatePlanDigest(revealPlan, domChecks),
+                            )
                         ) {
                             return {
                                 validationSkipped: true,
@@ -4360,6 +4327,7 @@ export class AgentRuntime {
                                 operation,
                                 ...(originalRule === undefined ? {} : { originalRule }),
                                 ...(revealPlan === undefined ? {} : { revealPlan }),
+                                ...(domChecks === undefined ? {} : { domChecks }),
                             };
                         } else {
                             if (this.candidateAttempts.size >= MAX_CANDIDATE_ATTEMPTS) {
@@ -4383,6 +4351,7 @@ export class AgentRuntime {
                                 operation,
                                 ...(originalRule === undefined ? {} : { originalRule }),
                                 ...(revealPlan === undefined ? {} : { revealPlan }),
+                                ...(domChecks === undefined ? {} : { domChecks }),
                             };
                         }
                     }

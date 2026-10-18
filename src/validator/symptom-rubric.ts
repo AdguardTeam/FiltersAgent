@@ -125,6 +125,27 @@ export const SYMPTOM_DEFINITION_RUBRIC = [
 ];
 
 /**
+ * Rubric lines weighing the DOM checks the agent attached to `apply_rule`.
+ *
+ * Two reviewers looked at the same pixels after a candidate and split on whether a white column
+ * where a sidebar had been was ad residue. The page's structure settles it: an empty track of a
+ * transparent grid or the page's own margins are layout, while an emptied container that still
+ * paints a grey background is residue. The runner measures what the agent asks on the very page
+ * loads the images come from; these lines say how much the answers count, and never more than the
+ * images for visible advertising.
+ */
+const DOM_CHECK_RESIDUE_RUBRIC = [
+    'When agent DOM checks are supplied, weigh them for blank space at a removed advertising',
+    'region. Blank space a check proves is an empty track of a transparent grid or flex',
+    "container, or the page's own margins or background, is page layout, not residue: reconcile",
+    'it as not_same_symptom and leave it out of adLayoutResidue. Blank space a check shows is an',
+    'emptied container that still paints its own background, border or shadow, or a slot that',
+    'keeps a reserved height, is residue. A check never dismisses visible advertising. A check',
+    'that does not measure the region of the observation, or whose result does not support its',
+    'claim, weighs nothing, and the images decide.',
+];
+
+/**
  * Residue rubric lines for the final text-only synthesis prompt.
  *
  * For breakage reviews the `adLayoutResidue` field is repurposed as the filtering-regression guard:
@@ -177,6 +198,7 @@ export function synthesisResidueRubric(kind: SymptomKind, scope?: CandidateNetwo
             'the symptom open; it is exactly what adLayoutResidue=present reports. Whether residue',
             "still passes is the runner's decision, so never hide residue to get a rule through",
             'and never hold the symptom open for it. Page integrity is independent of both.',
+            ...DOM_CHECK_RESIDUE_RUBRIC,
         ];
     }
     return [
@@ -186,5 +208,6 @@ export function synthesisResidueRubric(kind: SymptomKind, scope?: CandidateNetwo
         'when any such residue remains, absent only when the full advertising footprint is',
         'gone, and unclear when the visual evidence cannot distinguish the two. Page integrity',
         'is independent: a readable intact page with residual ad layout is still not fixed.',
+        ...DOM_CHECK_RESIDUE_RUBRIC,
     ];
 }

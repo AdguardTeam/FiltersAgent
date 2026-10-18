@@ -1,5 +1,6 @@
 import { APPLY_RULE_TOOL_DEADLINE_MS } from '../../src/orchestrator/browser-tool-deadlines';
 import { MAX_CANDIDATE_ATTEMPTS } from '../../src/orchestrator/agent-runtime-candidate-context';
+import { MAX_DOM_CHECKS, type DomCheckRecord } from '../../src/types/dom-check';
 import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -1051,6 +1052,7 @@ describe('AgentRuntime', () => {
         let candidateObservation = 0;
         let fixtureAttempt = 0;
         const validationArtifactIds: string[] = [];
+        const reviewedDomChecks: Array<readonly DomCheckRecord[] | undefined> = [];
         const candidateRule = 'nettg.pl##.articleAdSlot';
         const candidateRuleHash = createHash('sha256').update(candidateRule).digest('hex');
         const artifactsDir = join(filtersPath, 'artifacts');
@@ -1269,6 +1271,7 @@ describe('AgentRuntime', () => {
                         input,
                         options,
                     ): Promise<CandidateVisualVerifierResult> => {
+                        reviewedDomChecks.push(options.domChecks);
                         const verified = verificationByToken.get(input.phaseTokenId) === true;
                         const suffix = deriveCandidateArtifactExecutionSuffix(input.phaseTokenId);
                         const artifactId =
@@ -1321,6 +1324,10 @@ describe('AgentRuntime', () => {
         await runtime.registry.dispatch('lookup_rule_guidance', { topic: 'element_hiding' });
 
         const candidateResults: Record<string, unknown>[] = [];
+        const slotCheck = {
+            expression: "document.querySelector('.articleAdSlot').offsetHeight",
+            claim: 'The emptied slot keeps no reserved height.',
+        };
         for (let attempt = 0; attempt < 2; attempt += 1) {
             await runtime.registry.dispatch('launch_browser', {
                 extension: 'prepared',
@@ -1333,6 +1340,8 @@ describe('AgentRuntime', () => {
             }
             const candidateResult = await runtime.registry.dispatch('apply_rule', {
                 candidateRule,
+                // The second experiment measures the slot the first review called residue.
+                ...(attempt === 1 ? { domChecks: [slotCheck] } : {}),
             });
             candidateResults.push(candidateResult);
             expect(candidateResult).toMatchObject({
@@ -1373,6 +1382,10 @@ describe('AgentRuntime', () => {
         expect(new Set(artifactIds).size).toBe(artifactIds.length);
         expect(new Set(artifactPaths).size).toBe(artifactPaths.length);
         expect(new Set(validationArtifactIds).size).toBe(2);
+        expect(reviewedDomChecks[0]).toBeUndefined();
+        expect(reviewedDomChecks[1]).toEqual([
+            expect.objectContaining({ expression: slotCheck.expression, claim: slotCheck.claim }),
+        ]);
         expect(projectEnvironmentResult(execution)?.candidateValidationEvidence).toMatchObject({
             validationArtifactId: validationArtifactIds[1],
             sessionId: expect.stringContaining('execution-2'),
@@ -5371,6 +5384,85 @@ describe('AgentRuntime', () => {
         ).resolves.toMatchObject({ errorKind: 'duplicate_candidate' });
     });
 
+    it('judges a residue rejection again only under DOM checks it was not judged under', async () => {
+        const applyRule = vi.fn(async () => ({
+            accepted: true,
+            visualReview: { verdict: 'rejected', adLayoutResidue: 'present' },
+        }));
+        const browserRegistry = emptyRegistry();
+        browserRegistry.register({
+            definition: {
+                type: 'function',
+                function: {
+                    name: 'apply_rule',
+                    description: 'Collect candidate browser and vision evidence',
+                    parameters: { type: 'object', properties: {} },
+                },
+            },
+            handler: applyRule,
+        });
+        const runtime = await createExtensionRuntime(runtimeOptions(), {
+            createBaseRegistry: async () => registryWithScreenshotAnalysis(),
+            createBrowserSession: async () => ({ close: vi.fn() }) as unknown as BrowserSession,
+            createBrowserRegistry: async () => browserRegistry,
+        });
+        await runtime.registry.dispatch('launch_browser', {
+            extension: 'none',
+            targetUrl: 'https://nettg.pl/',
+            profile: browserProfile,
+        });
+        await runtime.registry.dispatch('analyze_screenshot', {
+            issueScreenshotIndex: 1,
+            prompt: 'Describe the reporter-visible defect.',
+        });
+        const candidateRule = 'nettg.pl##.banner';
+        const track = {
+            expression: "getComputedStyle(document.querySelector('.grid')).backgroundColor",
+            claim: 'The blank column is a transparent grid track.',
+        };
+        const apply = (domChecks?: unknown) =>
+            runtime.registry.dispatch('apply_rule', {
+                candidateRule,
+                ...(domChecks === undefined ? {} : { domChecks }),
+            });
+
+        await expect(apply()).resolves.toMatchObject({
+            remainingCandidateAttempts: MAX_CANDIDATE_ATTEMPTS - 1,
+        });
+        // A check that writes to the page is refused before anything runs or is spent.
+        await expect(
+            apply([{ expression: "document.body.style.display = 'none'", claim: 'Hidden.' }]),
+        ).resolves.toMatchObject({
+            errorKind: 'dom_check_rejected',
+            checkIndex: 0,
+            remainingCandidateAttempts: MAX_CANDIDATE_ATTEMPTS - 1,
+        });
+        await expect(
+            apply(Array.from({ length: MAX_DOM_CHECKS + 1 }, () => track)),
+        ).resolves.toMatchObject({ errorKind: 'dom_checks_invalid' });
+        // A blank check measures nothing, so it cannot buy the candidate another run.
+        await expect(apply([{ expression: '   ', claim: track.claim }])).resolves.toMatchObject({
+            errorKind: 'dom_checks_invalid',
+        });
+        await expect(apply([{ expression: track.expression, claim: ' ' }])).resolves.toMatchObject({
+            errorKind: 'dom_checks_invalid',
+        });
+        expect(applyRule).toHaveBeenCalledTimes(1);
+
+        // Measuring the space the review called residue is a new experiment of the same
+        // candidate, and spends no candidate attempt.
+        await expect(apply([track])).resolves.toMatchObject({
+            accepted: true,
+            remainingCandidateAttempts: MAX_CANDIDATE_ATTEMPTS - 1,
+        });
+        expect(applyRule).toHaveBeenCalledTimes(2);
+        // Rewording a claim measures nothing new.
+        await expect(
+            apply([{ ...track, claim: 'The column is page layout, not residue.' }]),
+        ).resolves.toMatchObject({ errorKind: 'duplicate_candidate' });
+        expect(applyRule).toHaveBeenCalledTimes(2);
+    });
+
     it('requires every unique screenshot and guidance evidence before candidate attempts', async () => {
         const baseRegistry = emptyRegistry();
         const analyzeScreenshot = vi.fn(async () => ({
@@ -5508,6 +5600,16 @@ describe('AgentRuntime', () => {
         const apply = (candidateRule: string) =>
             runtime.registry.dispatch('apply_rule', { candidateRule });
 
+        // A call refused before the candidate reaches the ledger states the count too.
+        await expect(
+            runtime.registry.dispatch('apply_rule', {
+                candidateRule: 'nettg.pl##.banner',
+                operation: 'rewrite',
+            }),
+        ).resolves.toMatchObject({
+            errorKind: 'candidate_shape_invalid',
+            remainingCandidateAttempts: MAX_CANDIDATE_ATTEMPTS,
+        });
         await expect(apply('nettg.pl##.banner')).resolves.toMatchObject({
             visualReview: { verdict: 'rejected' },
             remainingCandidateAttempts: MAX_CANDIDATE_ATTEMPTS - 1,

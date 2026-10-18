@@ -158,9 +158,10 @@ const ResolveWithoutPatchRunStatusSchema = v.picklist(NO_PATCH_RUN_STATUSES);
  *
  * `candidateForReview` is the one place a rule may appear on this outcome: a candidate that passed
  * lint and risk scoring and that no review confirmed, because `apply_rule` did not reject it or, on
- * an ads report, its review rejected it only for ad layout residue on an intact, undamaged page. It
- * is not a publication channel — the propose-rule outcome remains the only one — it is what keeps
- * the run's best finding out of the prose and in a field a reader can act on.
+ * any report but incorrect blocking, its review rejected it only for ad layout residue on an
+ * intact, undamaged page. It is not a publication channel — the propose-rule outcome remains the
+ * only one — it is what keeps the run's best finding out of the prose and in a field a reader can
+ * act on.
  */
 const AnalysisOnlyOutcomeSchema = v.object({
     outcome: v.literal(FixOutcomeKind.AnalysisOnly),

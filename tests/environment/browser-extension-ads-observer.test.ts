@@ -48,6 +48,11 @@ import type {
 import { BlockerVerificationMethod } from '../../src/environment/environment-proofs';
 import type { NormalizedSafeInteractionPlan } from '../../src/environment/safe-interaction';
 import {
+    MAX_DOM_CHECK_RESULT_BYTES,
+    type DomCheck,
+    type DomCheckRecord,
+} from '../../src/types/dom-check';
+import {
     ageDialogRevealPlan,
     fakeInteractionSession,
     type InteractionPhaseScript,
@@ -721,6 +726,41 @@ interface ExtensionExperimentOptions {
         plan: NormalizedSafeInteractionPlan;
         scripts: Partial<Record<'A' | 'B' | 'C', InteractionPhaseScript>>;
     };
+
+    /**
+     * DOM checks apply_rule received, with what each phase's page answers to an expression; none
+     * when omitted.
+     */
+    domChecks?: {
+        checks: DomCheck[];
+        answer: (phase: 'A' | 'B' | 'C', expression: string) => unknown;
+    };
+
+    /**
+     * Collects what the observer handed its seams and the model, for assertions; ignored when
+     * omitted.
+     */
+    seen?: ExperimentSeams;
+}
+
+/**
+ * What one fixture experiment's observer handed its seams and returned to the model.
+ */
+interface ExperimentSeams {
+    /**
+     * Selector of every structural probe, in phase order.
+     */
+    probedSelectors: string[];
+
+    /**
+     * DOM checks the visual review received, when it ran.
+     */
+    reviewDomChecks?: readonly DomCheckRecord[];
+
+    /**
+     * The apply_rule answer the observer built in phase C.
+     */
+    applyRuleResult?: Record<string, unknown> | null;
 }
 
 /**
@@ -777,6 +817,7 @@ async function runExtensionExperiment(
         attemptNumber: 1,
         noSandbox: false,
         ...(options.reveal ? { interactionPlan: options.reveal.plan } : {}),
+        ...(options.domChecks ? { domChecks: options.domChecks.checks } : {}),
         dependencies: {
             runPhase: async (input, phaseConfig) => {
                 await phaseConfig.interact?.();
@@ -820,12 +861,14 @@ async function runExtensionExperiment(
                     antiAdblockDetected: false,
                 };
             },
-            probeStructuralSnapshot: async () =>
-                ({
+            probeStructuralSnapshot: async (_input, _evaluator, selector) => {
+                options.seen?.probedSelectors.push(selector);
+                return {
                     probeSucceeded: options.probeSucceeded ?? true,
                     targetCount: 1,
                     targetVisibleCount: 1,
-                }) as StructuralSnapshot,
+                } as StructuralSnapshot;
+            },
             inspectFullPageVisualCapture: async (input, inventoryOptions) => {
                 const artifactId = `inventory-${input.phase.toLowerCase()}`;
                 inventoryOptions.recorder.addArtifact({
@@ -861,6 +904,9 @@ async function runExtensionExperiment(
                     afterCoverageComplete: true,
                 }) as unknown as ResolvedCandidateVisualEvidence,
             reviewCandidateVisually: async (_input, reviewOptions) => {
+                if (options.seen) {
+                    options.seen.reviewDomChecks = reviewOptions.domChecks;
+                }
                 // The scope, verdict and bases come from the production derivations, so this
                 // fixture supplies the model's observations and nothing the runner owns.
                 const scope = deriveCandidateNetworkScope(
@@ -928,7 +974,9 @@ async function runExtensionExperiment(
                           options.reveal.scripts[request.phase],
                           new URL(REPORTED_URL).origin,
                       )
-                    : session,
+                    : options.domChecks
+                      ? checkedSession(request.phase, options.domChecks.answer)
+                      : session,
                 adapterProof: {
                     leaseId: `lease-${request.phase}`,
                     adapterStateDigest: state.stateDigest,
@@ -1004,7 +1052,7 @@ async function runExtensionExperiment(
         }),
     };
 
-    return await runAdsEnvironmentExperiment({
+    const experiment = await runAdsEnvironmentExperiment({
         runId: 'run-1',
         experimentId: 'experiment-1',
         adapter,
@@ -1013,6 +1061,36 @@ async function runExtensionExperiment(
         candidate: { operation: 'add', rule: candidateRule },
         observe: async (input) => await observer.observe(input),
     });
+    if (options.seen) {
+        options.seen.applyRuleResult = observer.result();
+    }
+    return experiment;
+}
+
+/**
+ * A phase session whose page answers evaluate_js expressions the way the fixture says.
+ *
+ * @param phase - Phase the session belongs to.
+ * @param answer - What the page returns for an expression in that phase; a throw is a page error.
+ * @returns The phase session.
+ */
+function checkedSession(
+    phase: 'A' | 'B' | 'C',
+    answer: (phase: 'A' | 'B' | 'C', expression: string) => unknown,
+): IBrowserSession {
+    return {
+        artifactsDir: tmpdir(),
+        isClosed: false,
+        getPage: () =>
+            ({
+                evaluate: async (expression: string) => answer(phase, expression),
+            }) as unknown as Page,
+        close: async () => undefined,
+        getNetworkLog: () => [],
+        resetNetworkLog: () => undefined,
+        getConsoleLog: () => [],
+        consoleCoverage: ConsoleCoverage.BrowserLogOnly,
+    } as unknown as IBrowserSession;
 }
 
 /**
@@ -1168,6 +1246,129 @@ describe('an extension experiment behind reveal steps', () => {
         const candidatePhase = experiment.phases.find((phase) => phase.phase === 'C');
         expect(candidatePhase?.completion).toMatchObject({
             candidateValidation: { verified: false },
+        });
+    });
+});
+
+describe('an extension experiment carrying DOM checks', () => {
+    // nettg.pl: two reviewers split on the same pixels over a white column where a sidebar had
+    // been. The page answers it, so the checks must run on the very loads the review compares.
+    const RULE = 'sarkisozleri.bbs.tr##.banner, .sidebar';
+    const BACKGROUND = "getComputedStyle(document.querySelector('.sidebar-track')).backgroundColor";
+    const HEIGHT = "document.querySelector('.sidebar').offsetHeight";
+    const checks: DomCheck[] = [
+        { expression: BACKGROUND, claim: 'The blank column is a transparent grid track.' },
+        { expression: HEIGHT, claim: 'The sidebar keeps no reserved height.' },
+    ];
+
+    it('measures the checks on the baseline and candidate pages the review compares', async () => {
+        const evaluated: string[] = [];
+        const seen: ExperimentSeams = { probedSelectors: [] };
+        await runExtensionExperiment(RULE, {
+            modelOutput: { ...CLEAN_UNCLEAR_OUTPUT, pageIntegrity: 'intact' },
+            seen,
+            domChecks: {
+                checks,
+                answer: (phase, expression) => {
+                    evaluated.push(phase);
+                    if (expression === BACKGROUND) {
+                        return phase === 'B' ? 'rgb(249, 249, 249)' : 'rgba(0, 0, 0, 0)';
+                    }
+                    if (phase === 'C') {
+                        throw new Error("Cannot read properties of null (reading 'offsetHeight')");
+                    }
+                    return 1_250;
+                },
+            },
+        });
+
+        // The unfiltered control never reaches the review, so the checks do not run there.
+        expect(evaluated).toEqual(['B', 'B', 'C', 'C']);
+        const expected = [
+            {
+                expression: BACKGROUND,
+                claim: checks[0].claim,
+                before: { status: 'measured', result: '"rgb(249, 249, 249)"', truncated: false },
+                after: { status: 'measured', result: '"rgba(0, 0, 0, 0)"', truncated: false },
+            },
+            {
+                expression: HEIGHT,
+                claim: checks[1].claim,
+                before: { status: 'measured', result: '1250', truncated: false },
+                after: {
+                    status: 'failed',
+                    error: expect.stringContaining('offsetHeight') as unknown as string,
+                },
+            },
+        ];
+        expect(seen.reviewDomChecks).toEqual(expected);
+        // The model reads the same answers, so its next attempt can ask the page differently.
+        expect(seen.applyRuleResult).toMatchObject({ domChecks: expected });
+    });
+
+    it('bounds an answer too large for the review', async () => {
+        const seen: ExperimentSeams = { probedSelectors: [] };
+        await runExtensionExperiment(RULE, {
+            modelOutput: { ...CLEAN_UNCLEAR_OUTPUT, pageIntegrity: 'intact' },
+            seen,
+            domChecks: {
+                checks: [checks[0]],
+                answer: () => 'x'.repeat(MAX_DOM_CHECK_RESULT_BYTES * 4),
+            },
+        });
+
+        const [record] = seen.reviewDomChecks ?? [];
+        // Cut for the review, kept whole as an artifact the agent can read back.
+        expect(record?.after).toMatchObject({
+            status: 'measured',
+            truncated: true,
+            artifactId: expect.any(String) as unknown as string,
+        });
+        expect(
+            Buffer.byteLength(record?.after.status === 'measured' ? record.after.result : ''),
+        ).toBeLessThanOrEqual(MAX_DOM_CHECK_RESULT_BYTES);
+    });
+
+    it('leaves the review without checks when apply_rule attached none', async () => {
+        const seen: ExperimentSeams = { probedSelectors: [] };
+        await runExtensionExperiment(RULE, { seen });
+
+        expect(seen.reviewDomChecks).toBeUndefined();
+        expect(seen.applyRuleResult).not.toHaveProperty('domChecks');
+    });
+});
+
+describe('an extension experiment over a CSS injection candidate', () => {
+    it("probes the rule's selector without its style block", async () => {
+        // The probe used to receive `.banner { display: none !important; }`, which
+        // querySelectorAll refuses, so CSS injection candidates carried no structural facts.
+        const seen: ExperimentSeams = { probedSelectors: [] };
+        await runExtensionExperiment(
+            'sarkisozleri.bbs.tr#$#.banner { display: none !important; }',
+            {
+                seen,
+            },
+        );
+
+        expect(seen.probedSelectors).toEqual(['.banner', '.banner', '.banner']);
+        expect(seen.applyRuleResult).toMatchObject({ validatedSelector: '.banner' });
+    });
+});
+
+describe('an extension experiment over a candidate that names no element', () => {
+    it('reports the target as not probed instead of visible', async () => {
+        // A scriptlet leaves the probe measuring `body`; calling that the target would tell the
+        // review and the model the target survived the candidate.
+        const seen: ExperimentSeams = { probedSelectors: [] };
+        await runExtensionExperiment(
+            "sarkisozleri.bbs.tr#%#//scriptlet('set-constant', 'ads', 'false')",
+            {
+                seen,
+            },
+        );
+
+        expect(seen.applyRuleResult).toMatchObject({
+            adElementStatus: { phaseB: 'not_probed', phaseC: 'not_probed' },
         });
     });
 });

@@ -28,7 +28,7 @@ import { checkAntiAdblock } from './anti-adblock-check';
 import {
     applyRule,
     clearAppliedNetworkRules,
-    extractAdSelector,
+    resolveValidatedSelector,
     type RuleApplicationResult,
 } from './rule-applicator';
 import { RuleKind, normalizeRule } from '../repo/rule-normalizer';
@@ -1937,7 +1937,7 @@ export async function probeStructuralSnapshot(
  * @param snapshot - Runner-owned same-document structural measurements.
  * @returns A conservative ad-element presence classification.
  */
-function presenceFromStructuralSnapshot(snapshot: StructuralSnapshot): AdElementPresence {
+export function presenceFromStructuralSnapshot(snapshot: StructuralSnapshot): AdElementPresence {
     if (!snapshot.probeSucceeded) {
         return AdElementPresence.NotProbed;
     }
@@ -1969,28 +1969,6 @@ function geometryFromStructuralSnapshot(snapshot: StructuralSnapshot): ElementGe
         width: firstMeasurement.width,
         height: firstMeasurement.height,
     };
-}
-
-/**
- * Resolve the selector whose browser evidence may validate a candidate.
- *
- * Cosmetic candidates are bound to their own selector so a model-supplied selector cannot make one
- * rule appear validated by probing a different element. Network rules have no embedded CSS
- * selector, so they may use the model-supplied selector that identifies the affected page element.
- *
- * @param candidateRule - The candidate rule being validated.
- * @param adElementSelector - Optional model-supplied selector for a network candidate.
- * @returns The selector bound to validation evidence, or an empty string when none is safe.
- */
-function resolveValidatedSelector(candidateRule: string, adElementSelector?: string): string {
-    const normalizedCandidate = normalizeRule(candidateRule);
-    if (normalizedCandidate.kind === RuleKind.Cosmetic) {
-        return extractAdSelector(candidateRule)?.trim() || '';
-    }
-    if (normalizedCandidate.kind === RuleKind.Network) {
-        return adElementSelector?.trim() || '';
-    }
-    return '';
 }
 
 /**

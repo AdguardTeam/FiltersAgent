@@ -1,13 +1,17 @@
 /**
  * The path-free candidate vocabulary the {@link AgentRuntime} shares with the modules split out of
- * it: the per-run budgets, the candidate ledger key, and prompt-safe target-URL binding.
+ * it: the per-run budgets, the candidate ledger key, the candidate held across the browser
+ * dispatch, and prompt-safe target-URL binding.
  *
  * It holds no runtime state and imports nothing from the runtime, so the split modules never import
  * the runtime back.
  */
 import { CandidateOperation } from '../environment/filtering-environment';
+import type { NormalizedSafeInteractionPlan } from '../environment/safe-interaction';
 import { decodeIssueTextUrl } from '../github/issue-text-url';
+import type { NormalizedRule } from '../repo/rule-normalizer';
 import { FixOutcomeKind, type FixOutcome } from '../types/fix-outcome';
+import type { DomCheckPlan } from './apply-rule-dom-checks';
 
 /**
  * Maximum distinct candidates one run may validate with `apply_rule`.
@@ -28,11 +32,6 @@ export function remainingCandidateAttempts(spentAttempts: number): number {
 }
 
 /**
- * Maximum browser-bound executions of one semantic candidate after transient vision failures.
- */
-export const MAX_CANDIDATE_VALIDATION_EXECUTIONS = 3;
-
-/**
  * Maximum technical browser failures allowed for one prompt-safe target during a run.
  */
 export const MAX_TECHNICAL_BROWSER_FAILURES_PER_TARGET = 3;
@@ -49,6 +48,53 @@ export const MAX_TECHNICAL_BROWSER_FAILURES_PER_TARGET = 3;
  */
 export function candidateLedgerKey(operation: CandidateOperation, canonical: string): string {
     return `${operation}:${canonical}`;
+}
+
+/**
+ * Candidate metadata retained across the browser dispatch boundary.
+ */
+export interface PendingCandidateAttempt {
+    /**
+     * The model-proposed rule exactly as it would be published, outer whitespace trimmed.
+     *
+     * The experiment applies these bytes, not the normalized form: the verdict and the published
+     * evidence bind the validation to the rule text the run publishes, and the normalized form
+     * reorders and lowercases a network rule's modifiers.
+     */
+    rule: string;
+
+    /**
+     * Shared normalized representation of the model-proposed rule.
+     */
+    normalized: NormalizedRule;
+
+    /**
+     * One-based runtime candidate attempt number.
+     */
+    attemptNumber: number;
+
+    /**
+     * Candidate operation against the published baseline; add when omitted by the model.
+     */
+    operation: CandidateOperation;
+
+    /**
+     * Exact published baseline line targeted by an edit or remove operation, verbatim.
+     *
+     * Never normalized: baseline mutation receipts compare the exact published bytes.
+     */
+    originalRule?: string;
+
+    /**
+     * Reveal steps this call passed, replayed in every phase; absent when it passed none.
+     */
+    revealPlan?: NormalizedSafeInteractionPlan;
+
+    /**
+     * DOM checks this call attached, measured in the baseline and the candidate phase; absent when
+     * it attached none.
+     */
+    domChecks?: DomCheckPlan;
 }
 
 /**

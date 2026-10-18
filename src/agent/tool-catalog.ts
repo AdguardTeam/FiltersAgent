@@ -19,6 +19,8 @@ import {
     SyntheticTextTokenSchema,
 } from '../environment/safe-interaction';
 import { RuleGuidanceQuerySchema, RuleGuidanceTopicSchema } from '../knowledge/rule-guidance';
+import { MAX_CANDIDATE_VALIDATION_EXECUTIONS } from '../types/candidate-limits';
+import { DOM_CHECK_TIMEOUT_MS, DomChecksRequestSchema, MAX_DOM_CHECKS } from '../types/dom-check';
 import { MissingInformationEntrySchema } from '../types/missing-information';
 import { ConsentStrategySchema, ViewportSchema } from '../types/repro-profile';
 import { SETTINGS_PROFILE_KIND_VALUES } from '../types/settings-profile-kind';
@@ -179,13 +181,20 @@ export const TOOL_GUIDANCE: Readonly<Record<string, string>> = {
         'Performs a bounded sequence of actions (scroll, hover, click, type, wait, reload, back) on the page you are investigating and reports what each one provoked: requests to new hosts, tabs the site opened, dialogs it raised, overlays that appeared or disappeared, and whether an overlay swallowed the click. Use it to find the one interaction that makes the reported symptom appear. Unsafe controls (sign-in, payment, upload, publishing, device permissions) are refused, and text is never yours to supply.',
     [ToolName.ApplyRule]:
         "Runs a collect-only A/B/C browser experiment against the trusted reported URL and repo baseline. It captures the exact applied rule, viewport and full-page screenshots, DOM, HAR and settings facts, then requests the dedicated vision model's typed semantic verdict. " +
-        "Each distinct candidate spends one of the run's candidate attempts — running the same candidate again spends none, nor does a request refused for its shape, its operation, the published line it names or its session — and every answer states `remainingCandidateAttempts`. " +
+        "Each distinct candidate spends one of the run's candidate attempts — running the same candidate again spends none, nor does a request refused for its shape, its operation, the published line it names or its session — and the answer states `remainingCandidateAttempts`. " +
         "The run's first experiment locks the validation baseline to its session's filter lists, Stealth Mode state and browser profile: a call from a session that differs is refused, and when the issue carries a reporter settings import and the launch takes `settings`, only the `reported_on_current` session runs experiments. " +
-        'When the symptom appears only after the page waits or is touched — a popup that opens seconds after load, content behind an age or consent dialog — pass `revealSteps` in the interact_page step grammar: the host performs them in every phase after the rules are applied and before any capture, and reports what each phase did under `revealSteps`. Rehearse the sequence with interact_page first. Act only on controls the candidate does not hide or remove (wait, scroll, dismiss a dialog), never on the symptom element itself: a step that finds its control in phase B but not in phase C withholds the verdict.',
+        'When the symptom appears only after the page waits or is touched — a popup that opens seconds after load, content behind an age or consent dialog — pass `revealSteps` in the interact_page step grammar: the host performs them in every phase after the rules are applied and before any capture, and reports what each phase did under `revealSteps`. Rehearse the sequence with interact_page first. Act only on controls the candidate does not hide or remove (wait, scroll, dismiss a dialog), never on the symptom element itself: a step that finds its control in phase B but not in phase C withholds the verdict. ' +
+        "When, on any report but incorrect blocking, the review rejected a candidate only for ad layout residue — blank space, a gap or an empty column where the ad was — and you suspect that space is the page's own layout, pass the same candidate again with `domChecks`: " +
+        `up to ${MAX_DOM_CHECKS} \`{ expression, claim }\` pairs, ` +
+        "each a read-only expression held to the evaluate_js rules and the one sentence it should prove, such as that the column is an empty track of a transparent grid or that the gap is the sections' own margins. Rehearse each expression with evaluate_js first and let it answer quickly when its element is gone: " +
+        `a check that does not settle within ${DOM_CHECK_TIMEOUT_MS / 1_000} seconds fails, and the phase skips the checks after it. ` +
+        'The host evaluates every check in phase B and phase C on the page loads the screenshots come from, the review weighs the results, and the answer returns them under `domChecks`. A result showing an emptied container that still paints a background or keeps a reserved height confirms the residue, and no check outweighs visible advertising. Checks this candidate was not judged under make a new experiment that spends no candidate attempt, ' +
+        `within the ${MAX_CANDIDATE_VALIDATION_EXECUTIONS} runs one candidate gets in all, shared with inconclusive-review retries and new \`revealSteps\`; past them the same candidate answers \`duplicate_candidate\`. ` +
+        'Checks measure the space the review named and are never a way to run an equivalent candidate again for a different verdict.',
     [ToolName.GetDetail]:
         'Retrieves a byte-bounded filtered slice of a persisted artifact by ID. Use when a tool result says "Use get_detail() to inspect slices" — pass the artifact ID and optional filter (key path, limit) to inspect large results like DOM, HAR, ad-slot facts, or evaluate_js results.',
     [ToolName.FinishFix]:
-        'Finishes a fix run with one typed FixOutcome: the typed decision the operator publishes, or the analysis-only report of what blocked a rule. An analysis-only outcome carries `candidateForReview` when no review confirmed a rule that `apply_rule` did not reject, or, on an ads report, rejected only for ad layout residue: adLayoutResidue present, symptom resolved or unclear, remainingInstances empty, pageIntegrity intact, observedDamage empty — the rule, the list file chosen for it, and why it stayed unverified. This is the only terminal channel of a fix run. Call exactly once, when the evidence verdict is established. A submission that fails validation is returned with the errors; correct and resubmit.',
+        'Finishes a fix run with one typed FixOutcome: the typed decision the operator publishes, or the analysis-only report of what blocked a rule. An analysis-only outcome carries `candidateForReview` when no review confirmed a rule that `apply_rule` did not reject, or, on any report but incorrect blocking, rejected only for ad layout residue: adLayoutResidue present, symptom resolved or unclear, remainingInstances empty, pageIntegrity intact, observedDamage empty — the rule, the list file chosen for it, and why it stayed unverified. This is the only terminal channel of a fix run. Call exactly once, when the evidence verdict is established. A submission that fails validation is returned with the errors; correct and resubmit.',
     [ToolName.SubmitAnalysis]:
         'Submits the complete analysis of the issue. This is the only terminal channel of an analyze run. Call exactly once, when the investigation is finished and the report is final. A submission that fails validation is returned with the errors; correct and resubmit.',
     [ToolName.SubmitReplayVerdict]:
@@ -270,6 +279,7 @@ export const TOOL_PARAMETER_SCHEMAS: Readonly<
         originalRule: v.optional(v.string()),
         symptomDescription: v.optional(v.string()),
         revealSteps: v.optional(SafeInteractionStepsRequestSchema),
+        domChecks: v.optional(DomChecksRequestSchema),
     }),
     [ToolName.InteractPage]: v.object({
         steps: SafeInteractionStepsRequestSchema,

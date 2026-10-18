@@ -2,6 +2,7 @@ import type { SingleShotClient } from '../pi/single-shot-types';
 import type { CandidateNetworkVerification } from './candidate-network-verification';
 import type { SymptomKind } from './symptom-rubric';
 import type { TraceRecorder } from '../tracer/trace-recorder';
+import type { DomCheckRecord } from '../types/dom-check';
 
 /**
  * The candidate visual review's input vocabulary: the runner-resolved screenshots one review reads,
@@ -187,6 +188,12 @@ export interface CandidateVisualVerifierOptions {
      * Optional bounded browser facts supplied as context rather than a deterministic verdict.
      */
     browserFacts?: string;
+
+    /**
+     * DOM checks the agent attached to apply_rule, with what each returned on the baseline and the
+     * candidate page loads these images come from. Untrusted page data the residue rubric weighs.
+     */
+    domChecks?: readonly DomCheckRecord[];
 
     /**
      * Trusted reported page URL the experiment navigated to, never model input.

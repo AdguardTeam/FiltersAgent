@@ -1,6 +1,4 @@
-import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
 import { createBrowserToolHandlers } from '../browser/browser-tools';
 import { createTrustedPageEvaluator } from '../browser/trusted-page-evaluator';
 import { inspectFullPageVisualCapture } from '../analyzer/full-page-capture-inspection';
@@ -16,6 +14,7 @@ import {
 import type { NetworkRequestEntry } from '../browser/browser-interfaces';
 import { normalizeRule } from '../repo/rule-normalizer';
 import {
+    presenceFromStructuralSnapshot,
     probeStructuralSnapshot,
     runPhase,
     type AdsEnvironmentPhaseObservationInput,
@@ -29,19 +28,16 @@ import {
 } from '../types/candidate-visual-review';
 import type { ReproProfile } from '../types/repro-profile';
 import {
+    AdElementPresence,
     PhaseLabel,
-    type AdElementPresence,
     type FactualValidationResult,
     type FullPageTileWindow,
     type PhaseResult,
-    type RuleApplicationFact,
     type StructuralSnapshot,
 } from '../types/validation';
+import { resolveValidatedSelector } from '../validator/rule-applicator';
 import type { TrustedValidationContext } from '../validator/trusted-validation-context';
-import {
-    deriveCandidateArtifactExecutionSuffix,
-    formatCandidateArtifactExecutionSuffix,
-} from '../types/candidate-artifact-identity';
+import { deriveCandidateArtifactExecutionSuffix } from '../types/candidate-artifact-identity';
 import {
     EnvironmentAdapterLimitationCode,
     EnvironmentLimitationStage,
@@ -53,6 +49,14 @@ import {
 import { ReporterSymptomPresence } from '../types/reporter-symptom-presence';
 import { InteractionReplay, type InteractionReplayProjection } from './interaction-replay';
 import type { NormalizedSafeInteractionPlan } from './safe-interaction';
+import { measureDomChecks, pairDomCheckMeasurements } from './dom-check-runner';
+import {
+    environmentArtifact,
+    persistFactualValidation,
+    phaseScreenshotIds,
+    withExtensionRuleFacts,
+} from './extension-phase-records';
+import type { DomCheck, DomCheckMeasurement, DomCheckRecord } from '../types/dom-check';
 
 /**
  * Runtime-owned inputs shared by all phases of one Extension candidate experiment.
@@ -117,6 +121,11 @@ export interface BrowserExtensionAdsObserverOptions {
      * Reveal steps the model passed to apply_rule, replayed identically in every phase.
      */
     interactionPlan?: NormalizedSafeInteractionPlan;
+
+    /**
+     * DOM checks the model attached to apply_rule, measured after capture in phases B and C.
+     */
+    domChecks?: readonly DomCheck[];
 
     /**
      * Optional bounded browser and vision seams used by behavioral fixtures.
@@ -235,132 +244,19 @@ interface ObservedExtensionPhase {
 }
 
 /**
- * Convert one structural probe into the existing factual presence vocabulary.
+ * The candidate target's presence in one phase, as the factual record states it.
  *
- * @param snapshot - Trusted candidate-target structure.
- * @returns Conservative rendered presence classification.
- */
-function structuralPresence(snapshot: StructuralSnapshot): AdElementPresence {
-    if (!snapshot.probeSucceeded) {
-        return 'not_probed';
-    }
-    if (snapshot.targetCount === 0) {
-        return 'not_found';
-    }
-    if (snapshot.targetVisibleCount === 0) {
-        return 'hidden';
-    }
-    if (snapshot.targetVisibleCount === snapshot.targetCount) {
-        return 'visible';
-    }
-    return 'not_probed';
-}
-
-/**
- * Build rule-accounting facts for rules executed by the locked Extension engine.
+ * A candidate that names no element — a scriptlet, a network rule without `adElementSelector` —
+ * leaves the probe measuring `body`, which says nothing about the target: reporting it `visible`
+ * would tell the review and the model the target survived the candidate.
  *
- * @param rules - Exact repository or candidate rules represented by the phase.
- * @returns Applied facts whose engine proof lives in the adapter phase record.
+ * @param observed - The phase's probe and whether it was bound to the candidate's selector.
+ * @returns The presence, `not_probed` for an unbound probe.
  */
-function extensionRuleFacts(rules: readonly string[]): RuleApplicationFact[] {
-    return rules.map((rule) => ({ rule, status: 'applied' as const }));
-}
-
-/**
- * Replace injection-oriented rule fields with adapter-owned Extension execution facts.
- *
- * @param result - Phase facts captured without browser-side rule injection.
- * @param rules - Rules whose execution is proven by the adapter state.
- * @returns Compatibility phase result for existing candidate consumers.
- */
-function withExtensionRuleFacts(result: PhaseResult, rules: readonly string[]): PhaseResult {
-    return {
-        ...result,
-        appliedRules: [...rules],
-        ruleApplications: extensionRuleFacts(rules),
-    };
-}
-
-/**
- * Resolve one unique trace artifact into the common environment vocabulary.
- *
- * @param recorder - Authoritative trace artifact registry.
- * @param artifactId - Exact artifact identity to resolve.
- * @param kind - Common artifact role.
- * @returns Canonical common artifact reference.
- */
-function environmentArtifact(
-    recorder: TraceRecorder,
-    artifactId: string,
-    kind: EnvironmentArtifactReference['kind'],
-): EnvironmentArtifactReference {
-    const matches = recorder.getArtifacts().filter((artifact) => artifact.id === artifactId);
-    if (matches.length !== 1) {
-        throw new Error(`Environment artifact is missing or ambiguous: ${artifactId}`);
-    }
-    return { artifactId, kind, path: matches[0].path };
-}
-
-/**
- * Resolve every screenshot identity carried by one phase without duplicating references.
- *
- * @param result - Phase result carrying viewport, overview, and tile identities.
- * @returns Ordered unique screenshot identities.
- */
-function phaseScreenshotIds(result: PhaseResult): string[] {
-    return [
-        result.screenshotArtifactId,
-        ...(result.fullPageScreenshotArtifactId ? [result.fullPageScreenshotArtifactId] : []),
-        ...(result.tileCoverage?.tiles.map((tile) => tile.artifactId) ?? []),
-    ].filter(
-        (artifactId, index, values) =>
-            artifactId.length > 0 && values.indexOf(artifactId) === index,
-    );
-}
-
-/**
- * Derive the selector bound to candidate evidence.
- *
- * @param candidateRule - Exact candidate rule.
- * @param explicitSelector - Optional selector for network filtering.
- * @returns Candidate-owned cosmetic selector or the explicit network selector.
- */
-function validationSelector(candidateRule: string, explicitSelector?: string): string {
-    const cosmetic = /#(?:[@$?%])?#(.+)$/u.exec(candidateRule)?.[1]?.trim();
-    return cosmetic || explicitSelector?.trim() || '';
-}
-
-/**
- * Persist one factual result under the compatibility identity used by existing consumers.
- *
- * @param result - Complete factual candidate experiment.
- * @param candidateRule - Exact candidate bound to the artifact identity.
- * @param executionSuffix - Recorder-token-derived physical execution identity.
- * @param artifactsDir - Runner-owned artifact directory.
- * @param recorder - Trace artifact owner.
- * @returns Canonical validation artifact reference.
- */
-function persistFactualValidation(
-    result: FactualValidationResult,
-    candidateRule: string,
-    executionSuffix: string,
-    artifactsDir: string,
-    recorder: TraceRecorder,
-): EnvironmentArtifactReference {
-    const candidateHash = createHash('sha256').update(candidateRule).digest('hex').slice(0, 12);
-    const suffix = formatCandidateArtifactExecutionSuffix(executionSuffix);
-    const artifactId = `validation-${candidateHash}${suffix}`;
-    const path = join(artifactsDir, `factual-validation-${candidateHash}${suffix}.json`);
-    mkdirSync(artifactsDir, { recursive: true });
-    const serialized = JSON.stringify(result, null, 2);
-    writeFileSync(path, serialized);
-    recorder.addArtifact({
-        id: artifactId,
-        path,
-        type: 'application/json',
-        bytes: Buffer.byteLength(serialized),
-    });
-    return { artifactId, kind: 'validation', path };
+function boundPresence(observed: ObservedExtensionPhase): AdElementPresence {
+    return observed.structureBoundToSelector
+        ? presenceFromStructuralSnapshot(observed.structure)
+        : AdElementPresence.NotProbed;
 }
 
 /**
@@ -404,6 +300,11 @@ export class BrowserExtensionAdsObserver {
      */
     private readonly interactionReplay: InteractionReplay | null;
 
+    /**
+     * What the DOM checks returned on the baseline page, kept until phase C pairs them.
+     */
+    private baselineDomChecks: DomCheckMeasurement[] = [];
+
     constructor(private readonly options: BrowserExtensionAdsObserverOptions) {
         this.blockedHost = judgeableBlockedHost(
             options.candidateRule,
@@ -434,7 +335,7 @@ export class BrowserExtensionAdsObserver {
             allowedOrigin: this.options.trustedValidationContext.reportedUrl,
             consentStrategy: this.options.profile.consentStrategy,
         });
-        const selector = validationSelector(
+        const selector = resolveValidatedSelector(
             this.options.candidateRule,
             this.options.adElementSelector,
         );
@@ -491,6 +392,19 @@ export class BrowserExtensionAdsObserver {
             );
         } else {
             structure = await probeStructuralSnapshot(evaluator, targetSelector);
+        }
+        // Measured on the load the screenshots captured, and after every other read of the page: a
+        // check that holds the main thread can then cost only the checks after it.
+        const domChecks =
+            input.phase === PhaseLabel.A || !this.options.domChecks
+                ? []
+                : await measureDomChecks(page, this.options.domChecks, {
+                      phase: input.phase,
+                      artifactsDir: this.options.artifactsDir,
+                      recorder: this.options.recorder,
+                  });
+        if (input.phase === PhaseLabel.B) {
+            this.baselineDomChecks = domChecks;
         }
         const inventoryOptions: Parameters<typeof inspectFullPageVisualCapture>[0] = {
             vision: this.options.vision,
@@ -575,7 +489,15 @@ export class BrowserExtensionAdsObserver {
         if (input.phase !== PhaseLabel.C) {
             return this.phaseCompletion(input, observed, null, null);
         }
-        return await this.candidateCompletion(input, observed);
+        return await this.candidateCompletion(
+            input,
+            observed,
+            pairDomCheckMeasurements(
+                this.options.domChecks ?? [],
+                this.baselineDomChecks,
+                domChecks,
+            ),
+        );
     }
 
     /**
@@ -738,11 +660,14 @@ export class BrowserExtensionAdsObserver {
      *
      * @param input - Adapter phase C proof and session.
      * @param candidatePhase - Observed phase C material.
+     * @param domChecks - The attached DOM checks with what they returned in B and C; empty for
+     *   none.
      * @returns Complete phase C outcome.
      */
     private async candidateCompletion(
         input: AdsEnvironmentPhaseObservationInput,
         candidatePhase: ObservedExtensionPhase,
+        domChecks: DomCheckRecord[],
     ): Promise<ValidatorPhaseCompletion> {
         const control = this.phases.get('B');
         const phaseA = this.phases.get('A');
@@ -756,7 +681,7 @@ export class BrowserExtensionAdsObserver {
             ...existingRules,
             this.options.candidateRule,
         ]);
-        const selector = validationSelector(
+        const selector = resolveValidatedSelector(
             this.options.candidateRule,
             this.options.adElementSelector,
         );
@@ -772,17 +697,18 @@ export class BrowserExtensionAdsObserver {
             validatedSelector: selector,
             adElementStatus: {
                 selector,
-                phaseB: structuralPresence(control.structure),
-                phaseC: structuralPresence(candidatePhase.structure),
+                phaseB: boundPresence(control),
+                phaseC: boundPresence(candidatePhase),
             },
             structureFacts: {
                 before: control.structure,
                 after: candidatePhase.structure,
             },
+            ...(domChecks.length > 0 ? { domChecks } : {}),
             summary: [
                 'Candidate experiment used adapter-owned Extension filtering states.',
-                `Before target presence: ${structuralPresence(control.structure)}.`,
-                `After target presence: ${structuralPresence(candidatePhase.structure)}.`,
+                `Before target presence: ${boundPresence(control)}.`,
+                `After target presence: ${boundPresence(candidatePhase)}.`,
                 'Page safety remains a vision-owned decision.',
             ].join('\n'),
         };
@@ -824,6 +750,7 @@ export class BrowserExtensionAdsObserver {
                     after: candidatePhase.visionVerified,
                 },
             }),
+            ...(domChecks.length > 0 ? { domChecks } : {}),
             artifactsDir: this.options.artifactsDir,
             vision: this.options.vision,
             recorder: this.options.recorder,

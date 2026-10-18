@@ -113,7 +113,8 @@ export interface BrowserToolConfig {
     pageStabilityPollMs?: number;
 
     /**
-     * Maximum character length for evaluate_js expressions. Default 2000.
+     * Maximum character length for evaluate_js expressions. Default
+     * {@link MAX_EVALUATE_JS_EXPRESSION_CHARS}.
      */
     evaluateJsMaxLength?: number;
 
@@ -199,6 +200,14 @@ export interface BrowserToolHandlers {
  * the producer rather than restated there.
  */
 export const EVALUATE_JS_POLICY_REJECTION_KIND = ExpressionRejectionKind.Policy;
+
+/**
+ * Longest evaluate_js expression the read-only validator admits, in characters.
+ *
+ * A focused diagnostic fits; a script long enough to need more is split into several calls. The DOM
+ * checks attached to apply_rule are held to the same bound, because the same handler runs them.
+ */
+export const MAX_EVALUATE_JS_EXPRESSION_CHARS = 2_000;
 
 /**
  * Maximum serialized size of the complete validated ad-slot inspection artifact.
@@ -326,7 +335,7 @@ export function createBrowserToolHandlers(config: BrowserToolConfig): BrowserToo
     );
     const consentStrategy = config.consentStrategy ?? ConsentStrategy.Untouched;
     const logger = config.logger;
-    const maxEvalLen = config.evaluateJsMaxLength ?? 2000;
+    const maxEvalLen = config.evaluateJsMaxLength ?? MAX_EVALUATE_JS_EXPRESSION_CHARS;
     const resolveHostname = config.resolveHostname ?? defaultHostnameResolver;
     const inFlightDnsResolutions = new Map<string, Promise<string[]>>();
     const resolveHostnameFresh: HostnameResolver = (hostname) => {

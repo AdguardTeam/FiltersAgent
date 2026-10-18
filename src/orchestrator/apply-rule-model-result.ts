@@ -30,6 +30,7 @@ const DECISION_KEYS = [
     'validationArtifactId',
     'validationAttempt',
     'revealSteps',
+    'domChecks',
     'summary',
     'adElementStatus',
     'validatedSelector',

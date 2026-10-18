@@ -146,6 +146,33 @@ export function extractAdSelector(rule: string): string | null {
 }
 
 /**
+ * Resolve the selector whose browser evidence may validate a candidate.
+ *
+ * Cosmetic candidates are bound to their own selector so a model-supplied selector cannot make one
+ * rule appear validated by probing a different element; a CSS injection rule contributes its
+ * selector without the declaration block, which `querySelectorAll` would refuse. Network rules have
+ * no embedded CSS selector, so they may use the model-supplied selector that identifies the
+ * affected page element. A scriptlet names no element, so it has none.
+ *
+ * @param candidateRule - The candidate rule being validated.
+ * @param adElementSelector - Optional model-supplied selector for a network candidate.
+ * @returns The selector bound to validation evidence, or an empty string when none is safe.
+ */
+export function resolveValidatedSelector(
+    candidateRule: string,
+    adElementSelector?: string,
+): string {
+    const normalizedCandidate = normalizeRule(candidateRule);
+    if (normalizedCandidate.kind === RuleKind.Cosmetic) {
+        return extractAdSelector(candidateRule)?.trim() || '';
+    }
+    if (normalizedCandidate.kind === RuleKind.Network) {
+        return adElementSelector?.trim() || '';
+    }
+    return '';
+}
+
+/**
  * Build a glob pattern from a URL pattern for `page.route()`.
  *
  * Wraps the pattern in Playwright double-star wildcards so it matches anywhere in a full URL,

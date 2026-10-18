@@ -175,9 +175,13 @@ export function benchmarkFailureKind(runResult: FixRunResult | null): BenchmarkF
  * `environmentExecution` is read from the prepared sessions the agent launched.
  *
  * The two sources hold different bars. Phase B counts when its `targetObservation.symptomPresent`
- * is set, and the runner sets it unless vision found the symptom absent, so an indeterminate
- * classification counts. A prepared session counts only with a vision-verified, complete capture
- * classified `present`.
+ * is set, which is the runner's judgement rather than vision's alone. On a breakage report the
+ * structural probe decides when it measured the content — by the candidate's own selector, or for a
+ * network rule by the `adElementSelector` passed to `apply_rule`: fewer matches render than in the
+ * unfiltered control, or, when that control is not comparable, fewer than the page holds. Otherwise
+ * a request the baseline let through to the host a block candidate names counts, and so does any
+ * vision classification but `absent`, an indeterminate one included. A prepared session counts only
+ * with a vision-verified, complete capture classified `present`.
  *
  * @param result - Schema-validated result loaded from run-result.json.
  * @returns Whether a baseline phase or a prepared session counted the reported problem as present.

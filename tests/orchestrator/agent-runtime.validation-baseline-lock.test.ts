@@ -1,6 +1,8 @@
+import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import * as v from 'valibot';
 import { describe, expect, it, vi } from 'vitest';
 import { ConsoleCoverage, type IBrowserSession } from '../../src/browser/browser-interfaces';
 import type { BrowserSession } from '../../src/browser/browser-session';
@@ -8,6 +10,7 @@ import { BlockerVerificationMethod } from '../../src/environment/environment-pro
 import { ExtensionManifestVersion } from '../../src/environment/extension-preparation';
 import { officialAdguardListRef } from '../../src/environment/filter-list-ref';
 import type {
+    EnvironmentArtifactReference,
     FilteringEnvironmentAdapter,
     FilteringEnvironmentAdapterState,
     ValidatorPhaseCompletion,
@@ -19,6 +22,12 @@ import {
     REPORTER_SETTINGS_SESSION_REQUIRED,
     VALIDATION_BASELINE_LOCKED,
 } from '../../src/orchestrator/validation-baseline-lock';
+import {
+    CandidateVisualReviewSchema,
+    deriveCandidateVisualVerdict,
+    type CandidateVisualReviewModelOutput,
+} from '../../src/types/candidate-visual-review';
+import { deriveCandidateNetworkScope } from '../../src/validator/candidate-network-scope';
 import type { AdsEnvironmentPhaseObservationInput } from '../../src/validator/phase-orchestrator';
 import {
     fakePreparedExtensionSurface,
@@ -82,8 +91,7 @@ function fakePhaseSession(): IBrowserSession {
 }
 
 /**
- * A ready browser-extension adapter that opens phases A and B; the observer below ends every
- * experiment there, so phase C is never requested.
+ * A ready browser-extension adapter that opens every phase, phase C with the candidate installed.
  */
 function readyAdapter(): FilteringEnvironmentAdapter & { prepare: ReturnType<typeof vi.fn> } {
     return {
@@ -92,6 +100,11 @@ function readyAdapter(): FilteringEnvironmentAdapter & { prepare: ReturnType<typ
         prepare: vi.fn(async () => ({ ready: true as const, state: adapterState() })),
         openPhase: async (request) => {
             const sessionId = `${request.experimentId}-${request.phase}`;
+            const candidateRule = request.phase === 'C' ? (request.candidate?.rule ?? null) : null;
+            const candidateDigest =
+                candidateRule === null
+                    ? null
+                    : createHash('sha256').update(candidateRule).digest('hex');
             return {
                 ready: true,
                 handle: {
@@ -103,11 +116,13 @@ function readyAdapter(): FilteringEnvironmentAdapter & { prepare: ReturnType<typ
                         filteringState:
                             request.phase === 'A'
                                 ? ('disabled' as const)
-                                : ('published_baseline' as const),
+                                : candidateDigest === null
+                                  ? ('published_baseline' as const)
+                                  : ('published_baseline_plus_candidate' as const),
                         sessionId,
                         actualContext,
                         baselineDigest: request.phase === 'A' ? null : baselineDigest,
-                        candidateDigest: null,
+                        candidateDigest,
                         extension:
                             request.phase === 'A'
                                 ? null
@@ -118,10 +133,11 @@ function readyAdapter(): FilteringEnvironmentAdapter & { prepare: ReturnType<typ
                                       enabledListKeys: ['adguard:2'],
                                       activeRulesetListKeys: ['adguard:2'],
                                       stealthEnabled: false,
-                                      userRulesDigest: null,
+                                      userRulesDigest: candidateDigest,
                                       application: {
                                           method: BlockerVerificationMethod.ExtensionState,
-                                          appliedRules: [],
+                                          appliedRules:
+                                              candidateRule === null ? [] : [candidateRule],
                                           actionLog: [],
                                       },
                                   },
@@ -159,6 +175,118 @@ async function baselineWithoutSymptom(
         vision: null,
         candidateValidation: null,
         rejectedCandidates: [],
+    };
+}
+
+/**
+ * One artifact a phase of the judged experiment owns.
+ *
+ * @param experiment - The experiment, read from the fixture's `<experiment>-<phase>` session id.
+ * @param name - The artifact's role.
+ * @param kind - The artifact kind the execution recorder checks.
+ * @returns The reference.
+ */
+function experimentArtifact(
+    experiment: string,
+    name: string,
+    kind: EnvironmentArtifactReference['kind'],
+): EnvironmentArtifactReference {
+    const artifactId = `${experiment}-${name}`;
+    return { artifactId, kind, path: join(tmpdir(), `${artifactId}.bin`) };
+}
+
+/**
+ * Phase B shows the symptom and phase C verifies the candidate, so the experiment judges it.
+ */
+async function judgedCandidate(
+    input: AdsEnvironmentPhaseObservationInput,
+): Promise<ValidatorPhaseCompletion> {
+    const experiment = input.proof.sessionId.replace(/-[ABC]$/u, '');
+    const beforeViewport = experimentArtifact(experiment, 'before-viewport', 'screenshot');
+    const beforeFullPage = experimentArtifact(experiment, 'before-full', 'screenshot');
+    const observed = {
+        kind: 'observed' as const,
+        sessionId: input.proof.sessionId,
+        targetUrl: 'https://nettg.pl/',
+        navigationVerified: true,
+        rejectedCandidates: [],
+    };
+    if (input.phase !== 'C' || !input.proof.candidateDigest) {
+        return {
+            ...observed,
+            targetObservation: { symptomPresent: input.phase === 'B', pageUsable: true },
+            artifacts: input.phase === 'B' ? [beforeViewport, beforeFullPage] : [],
+            vision: null,
+            candidateValidation: null,
+        };
+    }
+    const candidateRule = 'nettg.pl##.banner';
+    const afterViewport = experimentArtifact(experiment, 'after-viewport', 'screenshot');
+    const afterFullPage = experimentArtifact(experiment, 'after-full', 'screenshot');
+    // The review binds the validation by the runner's identity format: candidate hash, then
+    // execution.
+    const execution = createHash('sha256').update(experiment).digest('hex').slice(0, 16);
+    const validationId = `validation-${input.proof.candidateDigest.slice(0, 12)}-execution-${execution}`;
+    const validationArtifact: EnvironmentArtifactReference = {
+        artifactId: validationId,
+        kind: 'validation',
+        path: join(tmpdir(), `${validationId}.json`),
+    };
+    const visualReviewArtifact = experimentArtifact(experiment, 'visual-review', 'vision');
+    const output: CandidateVisualReviewModelOutput = {
+        symptom: 'resolved',
+        symptomScope: 'The advertising banners on the reported page.',
+        adLayoutResidue: 'absent',
+        coverageComplete: true,
+        beforeInstances: [
+            {
+                artifactId: beforeViewport.artifactId,
+                landmark: 'Article body',
+                description: 'An advertising banner.',
+            },
+        ],
+        remainingInstances: [],
+        pageIntegrity: 'intact',
+        rationale: 'The banners are gone and the page is intact.',
+        observedDamage: [],
+    };
+    const scope = deriveCandidateNetworkScope(candidateRule, 'https://nettg.pl/');
+    const visualReview = v.parse(CandidateVisualReviewSchema, {
+        ...output,
+        verdict: deriveCandidateVisualVerdict(output, scope),
+        candidateNetworkScope: scope,
+        validationArtifactId: validationArtifact.artifactId,
+        candidateRuleHash: input.proof.candidateDigest,
+        beforeViewportArtifactId: beforeViewport.artifactId,
+        afterViewportArtifactId: afterViewport.artifactId,
+        beforeFullPageArtifactId: beforeFullPage.artifactId,
+        afterFullPageArtifactId: afterFullPage.artifactId,
+        model: 'vision-stub',
+    });
+    return {
+        ...observed,
+        targetObservation: { symptomPresent: false, pageUsable: true },
+        artifacts: [afterViewport, afterFullPage, validationArtifact, visualReviewArtifact],
+        vision: { artifactId: visualReviewArtifact.artifactId, verdict: visualReview.verdict },
+        candidateValidation: {
+            validationArtifactId: validationArtifact.artifactId,
+            candidateDigest: input.proof.candidateDigest,
+            candidateRule,
+            verified: true,
+            screenshotArtifactIds: [
+                beforeViewport.artifactId,
+                afterViewport.artifactId,
+                beforeFullPage.artifactId,
+                afterFullPage.artifactId,
+            ],
+            validationArtifact,
+            visualReviewArtifact,
+            beforeViewport,
+            afterViewport,
+            beforeFullPage,
+            afterFullPage,
+        },
+        visualReview,
     };
 }
 
@@ -310,6 +438,42 @@ describe('AgentRuntime validation baseline', () => {
             });
             expect(relaunched).toMatchObject({ errorKind: 'baseline_symptom_absent' });
             expect(observe.mock.calls.length).toBeGreaterThan(observedBefore);
+        } finally {
+            await dispose();
+        }
+    });
+
+    it('admits a judged candidate again only under DOM checks it was not judged under', async () => {
+        const { runtime, launch, observe, dispose } = await preparedRuntime();
+        // A judged verdict, so a repeat gets through only as a new plan; which verdict does not
+        // matter to the gate.
+        observe.mockImplementation(judgedCandidate);
+        try {
+            await launch([2]);
+            const first = await runtime.registry.dispatch('apply_rule', {
+                candidateRule: 'nettg.pl##.banner',
+            });
+            expect(first).toMatchObject({ environmentExperiment: 'verified' });
+            await expect(
+                runtime.registry.dispatch('apply_rule', { candidateRule: 'nettg.pl##.banner' }),
+            ).resolves.toMatchObject({ errorKind: 'duplicate_candidate' });
+            const observedBefore = observe.mock.calls.length;
+
+            // Measuring the space a review named re-runs the candidate in the session that locked
+            // the baseline: the lock judges the session, not the plan, so it admits the call.
+            const measured = await runtime.registry.dispatch('apply_rule', {
+                candidateRule: 'nettg.pl##.banner',
+                domChecks: [
+                    {
+                        expression: "getComputedStyle(document.querySelector('.grid')).display",
+                        claim: 'The blank column is a track of the page grid.',
+                    },
+                ],
+            });
+
+            expect(measured).toMatchObject({ environmentExperiment: 'verified' });
+            expect(observe.mock.calls.length).toBeGreaterThan(observedBefore);
+            expect(measured.remainingCandidateAttempts).toBe(first.remainingCandidateAttempts);
         } finally {
             await dispose();
         }

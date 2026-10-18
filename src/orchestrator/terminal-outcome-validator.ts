@@ -20,8 +20,8 @@ import { normalizeRule } from '../repo/rule-normalizer';
 import { ExtensionMode, type SymptomObservation } from '../types/fix-run-result';
 import { ReporterSymptomPresence } from '../types/reporter-symptom-presence';
 import type { FinishFixValidationRejection } from '../types/terminal-rejection';
+import { MAX_CANDIDATE_VALIDATION_EXECUTIONS } from '../types/candidate-limits';
 import {
-    MAX_CANDIDATE_VALIDATION_EXECUTIONS,
     MAX_TECHNICAL_BROWSER_FAILURES_PER_TARGET,
     candidateLedgerKey,
 } from './agent-runtime-candidate-context';
@@ -383,7 +383,7 @@ export function validateTerminalOutcome(
             guidance = [
                 'Use the visualReview returned by apply_rule as the only candidate verification verdict.',
                 'Choose a semantically different candidate when the review rejected the rule, otherwise finish analysis_only.',
-                'Once no distinct candidate or attempt is left, on an ads report a rule the review rejected only for ad layout residue (adLayoutResidue present, symptom resolved or unclear, remainingInstances empty, pageIntegrity intact, observedDamage empty) finishes analysis_only as candidateForReview, the residue named in unverifiedReason; on an incorrect-blocking report residue means the exception brought ads back, and the rule is not carried.',
+                'Once no distinct candidate or attempt is left, on any report but incorrect blocking a rule the review rejected only for ad layout residue (adLayoutResidue present, symptom resolved or unclear, remainingInstances empty, pageIntegrity intact, observedDamage empty) finishes analysis_only as candidateForReview, the residue named in unverifiedReason; on an incorrect-blocking report residue means the exception brought ads back, and the rule is not carried.',
                 'Do not substitute a manual analyze_screenshot opinion for the runner-bound visualReview.',
             ];
         }

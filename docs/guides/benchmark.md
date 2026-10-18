@@ -187,12 +187,18 @@ symptom seen only without the blocker, or only with the agent's candidate
 applied, does not count.
 
 - Once an `apply_rule` experiment has prepared the environment, only the
-  baseline phase of an experiment counts. It counts unless vision found the
-  problem absent there, so an indeterminate classification counts as
-  reproduced. A run refused after preparation, or whose baseline phase failed,
-  is `not_reproduced` even when the agent's own prepared session showed the
-  problem. An `apply_rule` call refused before the environment is built
-  prepares nothing.
+  baseline phase of an experiment counts, by the runner's judgement rather
+  than by vision alone. On a breakage report the structural probe decides when
+  it measured the missing content: by the candidate's own selector, or, for a
+  network rule, by the `adElementSelector` passed to `apply_rule`. The phase
+  counts when fewer matches render than without the blocker, or, when the
+  phase without the blocker cannot be compared, fewer than the page holds.
+  Otherwise the phase counts when the page let a request through to the host
+  a blocking candidate names, or when vision did not find the problem absent,
+  so an indeterminate classification counts as reproduced. A run refused after
+  preparation, or whose baseline phase failed, is `not_reproduced` even when
+  the agent's own prepared session showed the problem. An `apply_rule` call
+  refused before the environment is built prepares nothing.
 - Without a prepared environment, a prepared session the agent launched counts
   when its complete, vision-verified capture shows the problem.
 

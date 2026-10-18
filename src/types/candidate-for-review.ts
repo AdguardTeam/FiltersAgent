@@ -1,14 +1,15 @@
 /**
  * The candidate an analysis-only run found but could not verify.
  *
- * A run that linted a rule, scored its risk and applied it without a rejection — or, on an ads
- * report, with a review that rejected it only for the ad layout residue it left, the page intact
- * and undamaged — yet never obtained a verifying review, would otherwise end with the rule
- * surviving only inside its own prose: the terminal outcome carries no rule field, the run result
- * carries `candidatePatch: null`, and the issue comment says "Analysis-only findings, no verified
- * change" — even when the rule is one wildcard away from the fix a maintainer would land. This is
- * the typed place for that rule. It changes nothing about publication: an unverified candidate is
- * still never a rule proposal, and a result carrying one still carries no candidate patch.
+ * A run that linted a rule, scored its risk and applied it without a rejection — or, on any report
+ * but incorrect blocking, with a review that rejected it only for the ad layout residue it left,
+ * the page intact and undamaged — yet never obtained a verifying review, would otherwise end with
+ * the rule surviving only inside its own prose: the terminal outcome carries no rule field, the run
+ * result carries `candidatePatch: null`, and the issue comment says "Analysis-only findings, no
+ * verified change" — even when the rule is one wildcard away from the fix a maintainer would land.
+ * This is the typed place for that rule. It changes nothing about publication: an unverified
+ * candidate is still never a rule proposal, and a result carrying one still carries no candidate
+ * patch.
  */
 import * as v from 'valibot';
 

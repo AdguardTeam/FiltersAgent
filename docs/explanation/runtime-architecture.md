@@ -61,6 +61,23 @@ a verdict is never read as one for a session it did not run in. The CLI route
 has no such lock: its lists come from the activated CLI selection and its
 browser profile from the latest session.
 
+Pixels alone cannot tell whether blank space left after a candidate is ad
+residue or the page's own layout, and two vision models can split on the same
+captures. When the review rejects a candidate only for that residue, the agent
+can send the same candidate again with DOM checks: read-only expressions held
+to the `evaluate_js` rules, each with the claim it should prove. The runner
+evaluates them in phases B and C on the page loads the screenshots come from,
+records the bounded answers in the factual validation and the `apply_rule`
+answer, and hands them to the review as untrusted page data. Blank space a
+check proves to be an empty transparent grid track or the page's own margins
+counts as layout; an emptied container that still paints a background or keeps
+a reserved height counts as residue; no check outweighs visible advertising.
+Code never reads what a check means. New checks make a new experiment of the
+same candidate, which spends no candidate attempt but counts toward the three
+runs one candidate gets in all, shared with retries after an inconclusive
+review and with new reveal steps. Each check gets a few seconds on the page;
+one that does not settle fails, and the phase skips the checks after it.
+
 ## Issue revisions and limits
 
 A live issue and an `export issue` bundle enter the same verified-revision

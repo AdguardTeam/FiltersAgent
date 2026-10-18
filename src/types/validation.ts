@@ -1,4 +1,5 @@
 import * as v from 'valibot';
+import { DomCheckRecordSchema } from './dom-check';
 
 /**
  * Labels for the three validation phases.
@@ -289,6 +290,7 @@ export const FactualValidationResultSchema = v.object({
     validatedSelector: v.string(),
     adElementStatus: AdElementStatusSchema,
     structureFacts: v.optional(CandidateStructureFactsSchema),
+    domChecks: v.optional(v.array(DomCheckRecordSchema)),
     summary: v.string(),
 });
 

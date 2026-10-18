@@ -24,6 +24,11 @@ The format is based on [Keep a Changelog], and this project adheres to
 - Added a free reachability check of each benchmark case's site before the
   agent starts; a site that does not answer ends the case as
   `site_unreachable` without spending a model.
+- Added `domChecks` to `apply_rule`: after a review rejects a candidate only
+  for ad layout residue, the agent can send it again with read-only DOM
+  checks, which run on the baseline and candidate pages the screenshots come
+  from and let the review count blank space the page's own layout leaves as
+  layout instead of residue.
 
 ### Changed
 
@@ -44,9 +49,9 @@ The format is based on [Keep a Changelog], and this project adheres to
 - Changed benchmark runs to show the agent each issue as open, without `A:`
   labels or an assignee, and to refuse a case whose checkout loads a
   repository instruction.
-- Changed analysis-only reports of missed ads to carry a rule the visual
-  review rejected only for ad layout residue, with the page intact and
-  undamaged, as the candidate for review instead of dropping it.
+- Changed analysis-only runs on any report but incorrect blocking to carry
+  a rule the visual review rejected only for ad layout residue, with the page
+  intact and undamaged, as the candidate for review instead of dropping it.
 - Changed `apply_rule` to tell the agent how many candidate attempts the run
   has left, so it tries further rules instead of stopping early.
 
@@ -73,6 +78,9 @@ The format is based on [Keep a Changelog], and this project adheres to
   failures.
 - Fixed provider tuning validation errors omitting the environment variable
   names.
+- Fixed CSS injection (`#$#`) candidates getting no structural facts in
+  `apply_rule`: the probe now measures the rule's selector without its style
+  block.
 - Fixed full-page visual review on Claude vision models: screenshots longer
   than 8000 px are now scaled to the provider's image limits instead of being
   rejected, and a provider rejection of a vision request is reported as a

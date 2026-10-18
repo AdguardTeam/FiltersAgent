@@ -11,6 +11,13 @@ import { composeReporterSymptomScope } from '../../src/validator/reporter-sympto
 import { SingleShotResultKind, type SingleShotClient } from '../../src/pi/single-shot-types';
 import type { SingleShotMessage } from '../../src/pi/single-shot-input';
 import { CandidateInstanceDisposition } from '../../src/types/candidate-visual-review';
+import { MAX_EVALUATE_JS_EXPRESSION_CHARS } from '../../src/browser/browser-tools';
+import {
+    MAX_DOM_CHECKS,
+    MAX_DOM_CHECK_CLAIM_CHARS,
+    MAX_DOM_CHECK_RESULT_BYTES,
+    type DomCheckRecord,
+} from '../../src/types/dom-check';
 import {
     HermeticScenario,
     type HermeticProvider,
@@ -369,7 +376,111 @@ afterEach(async () => {
     provider = undefined;
 });
 
+/**
+ * Every text the review sent the vision model, across all of its calls.
+ *
+ * @param chat - The structured recorder of the review.
+ * @returns The text of every text message.
+ */
+function sentTexts(chat: ReturnType<typeof vi.fn>): string[] {
+    return chat.mock.calls.flatMap(([options]) =>
+        (options as { messages: SingleShotMessage[] }).messages.flatMap((message) =>
+            'text' in message && typeof message.text === 'string' ? [message.text] : [],
+        ),
+    );
+}
+
+/**
+ * DOM checks at every bound, their answers full of quotes that JSON escapes again.
+ *
+ * @returns The records the review would receive.
+ */
+function checksAtEveryBound(): DomCheckRecord[] {
+    return Array.from({ length: MAX_DOM_CHECKS }, (_, index) => {
+        const answer = (state: string): string => {
+            const tail = `"${state}-${index}"`;
+            const quotes = '\\"'.repeat((MAX_DOM_CHECK_RESULT_BYTES - tail.length - 2) / 2);
+            return `"${quotes}${tail.slice(1)}`;
+        };
+        return {
+            expression: `'${'"'.repeat(MAX_EVALUATE_JS_EXPRESSION_CHARS - 2)}'`,
+            claim: 'c'.repeat(MAX_DOM_CHECK_CLAIM_CHARS),
+            before: { status: 'measured', result: answer('BEFORE'), truncated: false },
+            after: { status: 'measured', result: answer('AFTER'), truncated: false },
+        };
+    });
+}
+
 describe('reviewCandidateVisually', () => {
+    it('hands the reviewer both answers of every check at every bound', async () => {
+        // The last check's AFTER answer decides the residue question, and a block cut by length
+        // would lose exactly it.
+        const root = mkdtempSync(join(tmpdir(), 'candidate-visual-review-dom-checks-'));
+        const recorder = new TraceRecorder({ runId: 'visual-review', issueNumber: 3, mode: 'fix' });
+        const { vision, chat } = makeProvider({
+            symptom: 'resolved',
+            symptomScope: 'The sidebar advertising on the reported page.',
+            coverageComplete: true,
+            beforeInstances: [],
+            remainingInstances: [],
+            pageIntegrity: 'intact',
+            rationale: 'The sidebar advertising is gone.',
+            observedDamage: [],
+        });
+        const domChecks = checksAtEveryBound();
+        try {
+            await reviewCandidateVisually({ ...makeOptions(root, vision, recorder), domChecks });
+
+            const texts = sentTexts(chat);
+            const answers = domChecks
+                .flatMap(({ before, after }) => [before, after])
+                .map((measurement) =>
+                    measurement.status === 'measured' ? measurement.result : measurement.error,
+                );
+            for (const answer of answers) {
+                expect(texts.some((text) => text.includes(answer))).toBe(true);
+            }
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it('leaves DOM checks out of an incorrect-blocking review', async () => {
+        // Checks settle ad residue; a breakage review judges restored content and has no rubric
+        // that weighs them.
+        const root = mkdtempSync(join(tmpdir(), 'candidate-visual-review-breakage-checks-'));
+        const recorder = new TraceRecorder({ runId: 'visual-review', issueNumber: 3, mode: 'fix' });
+        const { vision, chat } = makeProvider({
+            symptom: 'resolved',
+            symptomScope: 'The dealer map region on the reported page.',
+            coverageComplete: true,
+            beforeInstances: [],
+            remainingInstances: [],
+            pageIntegrity: 'intact',
+            rationale: 'The map renders again and no advertising appeared.',
+            observedDamage: [],
+        });
+        const claim = 'The map container keeps its reserved height.';
+        try {
+            await reviewCandidateVisually({
+                ...makeOptions(root, vision, recorder),
+                symptomKind: 'incorrect_blocking',
+                domChecks: [
+                    {
+                        expression: "document.querySelector('.map').offsetHeight",
+                        claim,
+                        before: { status: 'measured', result: '0', truncated: false },
+                        after: { status: 'measured', result: '480', truncated: false },
+                    },
+                ],
+            });
+
+            expect(sentTexts(chat).some((text) => text.includes(claim))).toBe(false);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
     it('swaps the ads residue rubric for breakage semantics in incorrect-blocking reviews', async () => {
         const root = mkdtempSync(join(tmpdir(), 'candidate-visual-review-breakage-'));
         const recorder = new TraceRecorder({ runId: 'visual-review', issueNumber: 3, mode: 'fix' });
