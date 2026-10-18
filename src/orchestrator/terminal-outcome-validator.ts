@@ -39,10 +39,11 @@ import {
 import type { TerminalValidationView } from './terminal-validation-view';
 import {
     hasCompleteTerminalVision,
-    TerminalVisionNextAction,
     terminalVisionRequirements,
     validateCurrentFirstTerminalVision,
 } from './terminal-vision-requirements';
+import { TerminalVisionNextAction } from './terminal-vision-session';
+import { closedSessionGuidance } from './rejection-guidance';
 
 /**
  * Return the latest complete structured symptom presence for one browser environment, with whether
@@ -301,6 +302,12 @@ export function validateTerminalOutcome(
             ) {
                 requiredAction = 'inspect_full_page_capture';
             }
+            // A closed session cannot take a capture: its requirement is met by launching the
+            // same environment again, so the launch is offered and the session named.
+            const relaunches = incomplete.filter(
+                (requirement) =>
+                    requirement.nextAction === TerminalVisionNextAction.RelaunchClosedSession,
+            );
             return {
                 error:
                     'Every report-only decision requires a navigated full-page capture whose ' +
@@ -310,6 +317,7 @@ export function validateTerminalOutcome(
                 retryable: true,
                 requiredAction,
                 requiredTools: [
+                    ...(relaunches.length > 0 ? ['launch_browser'] : []),
                     'open_page',
                     'screenshot',
                     'inspect_full_page_capture',
@@ -322,6 +330,12 @@ export function validateTerminalOutcome(
                     'For analyze_missing_artifacts, retry only the listed artifact IDs.',
                     'Call screenshot with captureTiles=true only when capture_complete_page is required.',
                     'For already_fixed_current, complete both unfiltered and prepared-extension environments.',
+                    ...relaunches.flatMap((requirement) =>
+                        closedSessionGuidance(
+                            requirement.sessionOrdinal,
+                            `the ${requirement.environment} environment`,
+                        ),
+                    ),
                 ],
             };
         }

@@ -98,6 +98,12 @@ export const PromptDocumentName = {
     RejectionQualifyingSession: 'rejections/qualifying-session',
 
     /**
+     * Guidance of a full-vision rejection when the qualifying session is closed and still lacks its
+     * capture: relaunch its environment. One guidance line per document line.
+     */
+    RejectionClosedQualifyingSession: 'rejections/closed-qualifying-session',
+
+    /**
      * Launch-first guidance of the current-extension full-vision rejection when no qualifying
      * session exists. One guidance line per document line.
      */

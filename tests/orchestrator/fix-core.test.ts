@@ -2477,6 +2477,149 @@ describe('runFixCore', () => {
         }
     });
 
+    it('reports the reporter-profile settings after a controlled comparison ran last', async () => {
+        const root = mkdtempSync(join(tmpdir(), 'fix-core-agentic-comparison-'));
+        const filtersPath = join(root, 'filters');
+        mkdirSync(join(filtersPath, 'BaseFilter', 'sections'), { recursive: true });
+        writeFileSync(join(filtersPath, 'BaseFilter/sections/foreign.txt'), '');
+        const importUrl =
+            'https://reports.adguard.com/settings/import.html?scheme_version=4&' +
+            'product_version=5.4.3&regular_filters=2%2C10&stealth.enabled=0';
+        const issue = localIssue();
+        issue.body = `${issue.body}\n\n### Issue configuration\n[Import](${importUrl})`;
+        const launchPrepared = (settings: Record<string, unknown>) =>
+            toolCall('launch_browser', {
+                extension: 'prepared',
+                targetUrl: 'https://example.com/article',
+                profile: browserProfile,
+                settings,
+            });
+        const piRuntime = await scriptedPiRuntime([
+            toolCall('fetch_issue', { issueNumber: 4 }),
+            toolCall('select_environment', environmentSelectionArgs()),
+            launchPrepared({ kind: 'reported_on_current', importUrl }),
+            toolCall('open_page', { url: 'https://example.com/article' }),
+            toolCall('screenshot', { captureTiles: true }),
+            toolCall('analyze_screenshot', { artifactId: 'full-page-1', prompt: 'Inspect.' }),
+            toolCall('analyze_screenshot', { artifactId: 'tile-1', prompt: 'Inspect.' }),
+            // The controlled comparison the fix task asks for once the reporter profile reproduces.
+            launchPrepared({
+                kind: 'defaults_plus_required',
+                requiredFilterIds: [2],
+                reporterImportUrl: importUrl,
+            }),
+            toolCall('open_page', { url: 'https://example.com/article' }),
+            toolCall('finish_fix', {
+                outcome: 'analysis_only',
+                reasoning: 'Both profiles show the symptom and no safe rule was found.',
+            }),
+        ]);
+        const baseRegistry = new ToolRegistry();
+        baseRegistry.register({
+            definition: {
+                type: 'function',
+                function: {
+                    name: 'analyze_screenshot',
+                    description: 'Analyze screenshot',
+                    parameters: { type: 'object', properties: {} },
+                },
+            },
+            handler: async () => ({ analysis: 'The reporter-defined defect is visible.' }),
+        });
+        let launches = 0;
+        try {
+            const result = await runFixCore(
+                { ...coreConfig(), repositoryPath: filtersPath },
+                { rawIssue: issue, facts: localFacts() },
+                {
+                    artifactsDir: join(root, 'artifacts'),
+                    browserMode: 'on',
+                    agentRuntime: {},
+                },
+                {
+                    piRuntime,
+                    agentRuntime: {
+                        ...launchReadBackDependencies([2]),
+                        // The first launch runs the reporter's filters, the comparison its own.
+                        readAdGuardExtensionState: vi.fn(async () =>
+                            readBackStateFixture(launches === 1 ? [2, 10] : [2]),
+                        ),
+                        createBaseRegistry: async () => baseRegistry,
+                        createBrowserSession: async () => {
+                            launches += 1;
+                            return {
+                                close: vi.fn(),
+                                getConsoleLog: () => [],
+                                consoleCoverage: ConsoleCoverage.BrowserLogOnly,
+                                extensionContext: fakeExtensionContext(),
+                            } as unknown as BrowserSession;
+                        },
+                        createBrowserRegistry: async ({ recorder }) => {
+                            const browserRegistry = new ToolRegistry();
+                            browserRegistry.register({
+                                definition: {
+                                    type: 'function',
+                                    function: {
+                                        name: 'open_page',
+                                        description: 'Open page',
+                                        parameters: { type: 'object', properties: {} },
+                                    },
+                                },
+                                handler: async (args) => ({ url: args.url, statusCode: 200 }),
+                            });
+                            browserRegistry.register({
+                                definition: {
+                                    type: 'function',
+                                    function: {
+                                        name: 'screenshot',
+                                        description: 'Capture page',
+                                        parameters: { type: 'object', properties: {} },
+                                    },
+                                },
+                                handler: async () => {
+                                    for (const [id, type] of [
+                                        [`viewport-${launches}`, 'screenshot'],
+                                        [`full-page-${launches}`, 'screenshot-full-page'],
+                                        [`tile-${launches}`, 'screenshot-tile'],
+                                    ] as const) {
+                                        recorder.addArtifact({
+                                            id,
+                                            path: join(root, 'artifacts', `${id}.png`),
+                                            type,
+                                            bytes: 10,
+                                        });
+                                    }
+                                    return {
+                                        artifactId: `viewport-${launches}`,
+                                        fullPageArtifactId: `full-page-${launches}`,
+                                        tileCoverage: {
+                                            complete: true,
+                                            tiles: [{ artifactId: `tile-${launches}` }],
+                                        },
+                                    };
+                                },
+                            });
+                            return browserRegistry;
+                        },
+                    },
+                },
+            );
+
+            // The benchmark and the report read the reporter environment from these fields; the
+            // comparison session launched last must not stand in for the reporter's own.
+            expect(result).toMatchObject({
+                runStatus: 'analysis_only',
+                reproductionSettingsStatus: 'applied',
+                settingsEvidence: {
+                    profileKind: 'reported_on_current',
+                    enabledListKeys: ['adguard:2', 'adguard:10'],
+                },
+            });
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
     it('lets one stateful agent select the extension and reporter settings', async () => {
         const root = mkdtempSync(join(tmpdir(), 'fix-core-agentic-'));
         const filtersPath = join(root, 'filters');

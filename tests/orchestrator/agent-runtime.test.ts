@@ -3625,6 +3625,293 @@ describe('AgentRuntime', () => {
         });
     });
 
+    it('asks to relaunch the reporter profile once the comparison launch closed its unfinished session', async () => {
+        const options = {
+            ...runtimeOptions(),
+            issue: {
+                ...rawIssue,
+                body: `${rawIssue.body}\n\n### Issue configuration\n[Import](${reporterImportUrl})`,
+            },
+            issueAttachmentArtifactIds: [],
+        };
+        const reporterSettings = { kind: 'reported_on_current', importUrl: reporterImportUrl };
+        // The reporter profile, the controlled comparison the fix task asks for, then the reporter
+        // profile again; the host read-back proves each launch's own filter set.
+        const launchedProfiles: string[] = [];
+        const runtime = await createExtensionRuntime(options, {
+            ...launchReadBackDependencies(),
+            readAdGuardExtensionState: vi.fn(async () =>
+                readBackStateFixture(launchedProfiles.at(-1) === 'reporter' ? [2, 10] : [2]),
+            ),
+            createBaseRegistry: async () => registryWithScreenshotAnalysis(),
+            createBrowserSession: async () => fakePreparedSession(),
+            createBrowserRegistry: async () => completePageRegistry(launchedProfiles.at(-1)!),
+        });
+        const launch = async (profile: string, settings: Record<string, unknown>) => {
+            launchedProfiles.push(profile);
+            return await runtime.registry.dispatch('launch_browser', {
+                extension: 'prepared',
+                targetUrl: 'https://nettg.pl/',
+                profile: browserProfile,
+                settings,
+            });
+        };
+        const outcome: FixOutcome = {
+            outcome: 'analysis_only',
+            reasoning: 'The existing rules do not remove the symptom.',
+        };
+        await fetchRuntimeIssue(runtime);
+        expect(await launch('reporter', reporterSettings)).toMatchObject({ launched: true });
+        await runtime.registry.dispatch('open_page', { url: 'https://nettg.pl/' });
+        expect(
+            await launch('controlled', {
+                kind: 'defaults_plus_required',
+                requiredFilterIds: [2],
+                reporterImportUrl,
+            }),
+        ).toMatchObject({ launched: true });
+        await captureCompletePage(runtime, 'controlled');
+
+        // The comparison launch closed the reporter session: nothing can capture its page any
+        // more, so the requirement must ask for that environment again, not for a capture there.
+        expect(runtime.validateTerminalOutcome(outcome)).toMatchObject({
+            errorKind: 'current_extension_full_vision_required',
+            currentVisionRequirement: {
+                sessionOrdinal: 1,
+                selectedSettingsProfileKind: 'reported_on_current',
+                nextAction: 'relaunch_closed_session',
+            },
+        });
+
+        expect(await launch('reporter', reporterSettings)).toMatchObject({ launched: true });
+        await runtime.registry.dispatch('open_page', { url: 'https://nettg.pl/' });
+        expect(runtime.validateTerminalOutcome(outcome)).toMatchObject({
+            currentVisionRequirement: {
+                sessionOrdinal: 3,
+                selectedSettingsProfileKind: 'reported_on_current',
+                nextAction: 'capture_complete_page',
+            },
+        });
+        await captureCompletePage(runtime, 'reporter');
+        expect(runtime.validateTerminalOutcome(outcome)).toBeUndefined();
+    });
+
+    it('asks for a fresh reporter launch once the relaunched reporter environment failed navigation', async () => {
+        const options = {
+            ...runtimeOptions(),
+            issue: {
+                ...rawIssue,
+                body: `${rawIssue.body}\n\n### Issue configuration\n[Import](${reporterImportUrl})`,
+            },
+            issueAttachmentArtifactIds: [],
+        };
+        const reporterSettings = { kind: 'reported_on_current', importUrl: reporterImportUrl };
+        const launchedProfiles: string[] = [];
+        let registries = 0;
+        const runtime = await createExtensionRuntime(options, {
+            ...launchReadBackDependencies(),
+            readAdGuardExtensionState: vi.fn(async () =>
+                readBackStateFixture(launchedProfiles.at(-1) === 'reporter' ? [2, 10] : [2]),
+            ),
+            createBaseRegistry: async () => registryWithScreenshotAnalysis(),
+            createBrowserSession: async () => fakePreparedSession(),
+            createBrowserRegistry: async () => {
+                registries += 1;
+                if (registries !== 3) {
+                    return completePageRegistry(launchedProfiles.at(-1)!);
+                }
+                // The relaunched reporter session never reaches the page.
+                const registry = emptyRegistry();
+                registry.register({
+                    definition: {
+                        type: 'function',
+                        function: {
+                            name: 'open_page',
+                            description: 'Open page',
+                            parameters: { type: 'object', properties: {} },
+                        },
+                    },
+                    handler: async () => ({
+                        error: 'Timeout 15000ms exceeded',
+                        fallbackReason: 'navigation_timeout',
+                    }),
+                });
+                return registry;
+            },
+        });
+        const launch = async (
+            profile: string,
+            settings: Record<string, unknown>,
+            reproProfile: Record<string, unknown> = browserProfile,
+        ) => {
+            launchedProfiles.push(profile);
+            return await runtime.registry.dispatch('launch_browser', {
+                extension: 'prepared',
+                targetUrl: 'https://nettg.pl/',
+                profile: reproProfile,
+                settings,
+            });
+        };
+        const outcome: FixOutcome = {
+            outcome: 'analysis_only',
+            reasoning: 'The existing rules do not remove the symptom.',
+        };
+        await fetchRuntimeIssue(runtime);
+        await launch('reporter', reporterSettings);
+        await runtime.registry.dispatch('open_page', { url: 'https://nettg.pl/' });
+        await launch('controlled', {
+            kind: 'defaults_plus_required',
+            requiredFilterIds: [2],
+            reporterImportUrl,
+        });
+        await captureCompletePage(runtime, 'controlled');
+        expect(runtime.validateTerminalOutcome(outcome)).toMatchObject({
+            currentVisionRequirement: { sessionOrdinal: 1, nextAction: 'relaunch_closed_session' },
+        });
+        await launch('reporter', reporterSettings);
+        expect(
+            await runtime.registry.dispatch('open_page', { url: 'https://nettg.pl/' }),
+        ).toMatchObject({ requiredAction: 'close_browser_then_launch_materially_different' });
+        // Still active but retired: the failure took its page tools, so the requirement must not
+        // ask for open_page in it.
+        expect(runtime.validateTerminalOutcome(outcome)).toMatchObject({
+            currentVisionRequirement: {
+                status: 'missing',
+                nextAction: 'launch_browser_and_open_page',
+            },
+        });
+        await runtime.registry.dispatch('close_browser', {});
+
+        // The reporter environment failed navigation, so launch_browser refuses it: neither the
+        // failed session nor the earlier closed one in the same environment may be named for a
+        // relaunch. The requirement asks for a fresh reporter launch instead.
+        expect(runtime.validateTerminalOutcome(outcome)).toMatchObject({
+            errorKind: 'current_extension_full_vision_required',
+            currentVisionRequirement: {
+                status: 'missing',
+                nextAction: 'launch_browser_and_open_page',
+            },
+        });
+        expect(await launch('reporter', reporterSettings)).toMatchObject({
+            errorKind: 'failed_browser_environment_reused',
+        });
+        expect(
+            await launch('reporter', reporterSettings, { ...browserProfile, locale: 'pl-PL' }),
+        ).toMatchObject({ launched: true });
+        await captureCompletePage(runtime, 'reporter');
+        expect(runtime.validateTerminalOutcome(outcome)).toBeUndefined();
+    });
+
+    it('keeps the batch inspection for the active session retired after a later navigation failure', async () => {
+        let opened = 0;
+        const registry = completePageRegistry('current');
+        registry.register({
+            definition: {
+                type: 'function',
+                function: {
+                    name: 'open_page',
+                    description: 'Open page',
+                    parameters: { type: 'object', properties: {} },
+                },
+            },
+            handler: async (args) =>
+                ++opened === 1
+                    ? { url: args.url, statusCode: 200 }
+                    : { error: 'Timeout 15000ms exceeded', fallbackReason: 'navigation_timeout' },
+        });
+        const runtime = await createExtensionRuntime(
+            { ...runtimeOptions(), issueAttachmentArtifactIds: [] },
+            {
+                ...launchReadBackDependencies(),
+                createBaseRegistry: async () => registryWithScreenshotAnalysis(),
+                createBrowserSession: async () => fakePreparedSession(),
+                createBrowserRegistry: async () => registry,
+            },
+        );
+        await fetchRuntimeIssue(runtime);
+        await runtime.registry.dispatch('launch_browser', {
+            extension: 'prepared',
+            targetUrl: 'https://nettg.pl/',
+            profile: browserProfile,
+            settings: { kind: 'agent_selected', filterIds: [2], stealthEnabled: false },
+        });
+        await runtime.registry.dispatch('open_page', { url: 'https://nettg.pl/' });
+        await runtime.registry.dispatch('screenshot', { captureTiles: true });
+        expect(
+            await runtime.registry.dispatch('open_page', { url: 'https://nettg.pl/' }),
+        ).toMatchObject({ requiredAction: 'close_browser_then_launch_materially_different' });
+
+        // The failure retired the page tools, not the capture: inspect_full_page_capture still
+        // covers it in one call instead of one analyze_screenshot per tile.
+        expect(
+            runtime.validateTerminalOutcome({
+                outcome: 'analysis_only',
+                reasoning: 'The existing rules do not remove the symptom.',
+            }),
+        ).toMatchObject({
+            currentVisionRequirement: {
+                sessionOrdinal: 1,
+                nextAction: 'inspect_full_page_capture',
+            },
+        });
+    });
+
+    it('asks to relaunch the unfiltered control once the prepared launch closed it uncaptured', async () => {
+        let launches = 0;
+        const runtime = await createExtensionRuntime(
+            { ...runtimeOptions(), issueAttachmentArtifactIds: [] },
+            {
+                ...launchReadBackDependencies(),
+                createBaseRegistry: async () => registryWithScreenshotAnalysis(),
+                createBrowserSession: async () => fakePreparedSession(),
+                createBrowserRegistry: async () => completePageRegistry(`launch-${++launches}`),
+            },
+        );
+        const launchControl = async () =>
+            await runtime.registry.dispatch('launch_browser', {
+                extension: 'none',
+                targetUrl: 'https://nettg.pl/',
+                profile: browserProfile,
+            });
+        const alreadyFixed: FixOutcome = {
+            outcome: 'resolve_without_patch',
+            runStatus: 'already_fixed_current',
+            reasoning: 'The reporter symptom is visible without filtering and absent with it.',
+            evidenceSummary: 'Unfiltered control and prepared-extension comparison.',
+        };
+        await fetchRuntimeIssue(runtime);
+        await launchControl();
+        await runtime.registry.dispatch('open_page', { url: 'https://nettg.pl/' });
+        await runtime.registry.dispatch('launch_browser', {
+            extension: 'prepared',
+            targetUrl: 'https://nettg.pl/',
+            profile: browserProfile,
+            settings: { kind: 'agent_selected', filterIds: [2], stealthEnabled: false },
+        });
+        await captureCompletePage(runtime, 'launch-2');
+
+        // The prepared launch closed the control before its capture: the rejection must offer
+        // the launch that brings the control back, not only tools that act in a live session.
+        expect(runtime.validateTerminalOutcome(alreadyFixed)).toMatchObject({
+            errorKind: 'report_only_full_vision_required',
+            requiredTools: expect.arrayContaining(['launch_browser']),
+            visionRequirements: expect.arrayContaining([
+                expect.objectContaining({
+                    environment: 'unfiltered_control',
+                    sessionOrdinal: 1,
+                    nextAction: 'relaunch_closed_session',
+                }),
+            ]),
+        });
+
+        expect(await launchControl()).toMatchObject({ launched: true });
+        await captureCompletePage(runtime, 'launch-3');
+        // Both sessions now carry complete vision; what remains is the symptom classification.
+        expect(runtime.validateTerminalOutcome(alreadyFixed)).toMatchObject({
+            errorKind: 'report_only_status_evidence_mismatch',
+        });
+    });
+
     it('keeps controlled current settings terminal-eligible when no import URL exists', async () => {
         const options = {
             ...runtimeOptions(),

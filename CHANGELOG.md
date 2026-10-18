@@ -109,6 +109,12 @@ The format is based on [Keep a Changelog], and this project adheres to
 - Fixed the outcome line of a run the filter policy decided reading
   "Analysis-only findings, no verified change": it now names the policy
   verdict.
+- Fixed runs ending as rejected after the `defaults_plus_required`
+  comparison closed an unfinished reporter-profile session: `finish_fix` now
+  asks to relaunch that profile instead of capturing in the closed session.
+- Fixed analysis-only results reporting the settings of the last
+  `defaults_plus_required` comparison instead of the reporter-profile
+  session, which the benchmark counted as `agent_mismatch`.
 
 ## [1.0.1] - 2026-10-15
 

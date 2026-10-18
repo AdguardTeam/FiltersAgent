@@ -57,10 +57,8 @@ import { wireRuntimeExecutors, type RuntimeExecutorWiring } from './agent-runtim
 import { BrowserExtensionExecutorName } from '../environment/executor-name';
 import { prepareRunExtension } from './pre-run-preparation';
 import type { PreparedExtension } from '../local/prepared-extension';
-import {
-    sessionBaselineCredited,
-    type AgentRuntimeEnvironmentEvidence,
-} from './agent-runtime-session-evidence';
+import type { AgentRuntimeEnvironmentEvidence } from './agent-runtime-session-evidence';
+import { reportedSettingsEnvironment } from './reported-settings-environment';
 import { isTargetEnvironmentFallbackReason } from '../types/browser-fallback-origin';
 import {
     type FixCoreDependencies,
@@ -603,15 +601,12 @@ export async function runAgenticFixCore(
                       isTargetEnvironmentFallbackReason(browserState.fallbackReason)
                     ? 'target_url_unavailable'
                     : derivedStatus);
-        const boundEnvironment =
-            validationEnvironment ?? noPatchEnvironment ?? runtime.getLatestEnvironment();
-        if (boundEnvironment) {
-            resultContext.domain = new URL(boundEnvironment.targetUrl).hostname;
+        const boundEnvironment = validationEnvironment ?? noPatchEnvironment;
+        const domainEnvironment = boundEnvironment ?? runtime.getLatestEnvironment();
+        if (domainEnvironment) {
+            resultContext.domain = new URL(domainEnvironment.targetUrl).hostname;
         }
-        const settingsEnvironment =
-            boundEnvironment?.extension && sessionBaselineCredited(boundEnvironment)
-                ? boundEnvironment
-                : runtime.getLatestVerifiedSettingsEnvironment();
+        const settingsEnvironment = reportedSettingsEnvironment(boundEnvironment, runtime);
         const settingsEvidence = settingsEnvironment?.settingsEvidence;
         if (settingsEvidence) {
             // A file-backed read-back observes neither the enabled set nor the Stealth state; the

@@ -248,10 +248,13 @@ repository-instruction refusals.
 `outcome.reporterEnvironment.status` is `matched`, `agent_mismatch`, or
 `unavailable`. The reporter's environment is read by code, never by a model,
 from the settings import link of the pinned report, with the parser
-`launch_browser` applies the link with. A mismatch does not change
-`outcome.status`. `unavailable` means the comparison could not be made: the
-pinned report has no single usable import link or is not MV3, or the run
-stopped before it prepared the reporter's build. `timings.siteCheckMs` is the
+`launch_browser` applies the link with. The compared session is the one the
+verified rule or no-patch verdict comes from; otherwise it is the latest
+session with the reporter's settings, so a later `defaults_plus_required`
+comparison is not a mismatch. A mismatch does not change `outcome.status`.
+`unavailable` means the comparison could not be made: the pinned report has
+no single usable import link or is not MV3, or the run stopped before it
+prepared the reporter's build. `timings.siteCheckMs` is the
 site check; `timings.preparationMs` starts after it. Usage and cost cover the
 agent.
 

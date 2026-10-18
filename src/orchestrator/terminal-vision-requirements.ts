@@ -12,38 +12,14 @@ import { ExtensionMode } from '../types/fix-run-result';
 import { SettingsProfileKind } from '../types/settings-profile-kind';
 import type { ReporterSymptomPresence } from '../types/reporter-symptom-presence';
 import type { FinishFixValidationRejection } from '../types/terminal-rejection';
-import { createPromptDocumentLoader, PromptDocumentName } from '../prompts/prompt-documents';
-import type { PlaceholderValues } from '../prompts/template';
+import { PromptDocumentName } from '../prompts/prompt-documents';
 import {
-    analyzedCaptureArtifactCount,
-    browserSessionVisionProgress,
     sessionBaselineCredited,
-    type AgentPageVisionCapture,
     type AgentRuntimeSessionState,
 } from './agent-runtime-session-evidence';
+import { closedSessionGuidance, renderGuidance } from './rejection-guidance';
 import type { TerminalValidationView } from './terminal-validation-view';
-
-/**
- * The rejection guidance documents. Model-facing prose lives in Markdown, never in code; the loader
- * reads each document once and memoizes it.
- */
-const prompts = createPromptDocumentLoader();
-
-/**
- * Render one guidance document into a rejection's guidance lines: one line per non-empty line of
- * the document, so the Markdown reads as the list the model receives.
- *
- * @param name - The registered guidance document.
- * @param values - Its placeholder fills.
- * @returns Ordered guidance lines for the model.
- */
-function renderGuidance(name: PromptDocumentName, values?: PlaceholderValues): string[] {
-    return prompts
-        .render(name, values)
-        .split('\n')
-        .map((line) => line.trim())
-        .filter((line) => line.length > 0);
-}
+import { closestVisionSessionStep, TerminalVisionNextAction } from './terminal-vision-session';
 
 /**
  * Stable model-facing name for one environment `terminalVisionRequirement` can demand complete
@@ -120,47 +96,6 @@ export const TerminalVisionRequirementStatus = {
  */
 export type TerminalVisionRequirementStatus =
     (typeof TerminalVisionRequirementStatus)[keyof typeof TerminalVisionRequirementStatus];
-
-/**
- * The shortest next step that advances one vision requirement, named for the model.
- */
-export const TerminalVisionNextAction = {
-    /**
-     * No session exists: launch one and open the target.
-     */
-    LaunchBrowserAndOpenPage: 'launch_browser_and_open_page',
-
-    /**
-     * The session never verified its navigation.
-     */
-    OpenPage: 'open_page',
-
-    /**
-     * No complete full-page capture exists in the session.
-     */
-    CaptureCompletePage: 'capture_complete_page',
-
-    /**
-     * A complete capture exists and none of it was inspected; the batch inspection covers it.
-     */
-    InspectFullPageCapture: 'inspect_full_page_capture',
-
-    /**
-     * Some tiles of the capture remain uninspected.
-     */
-    AnalyzeMissingArtifacts: 'analyze_missing_artifacts',
-
-    /**
-     * Everything is inspected; the terminal evidence only needs refreshing.
-     */
-    RefreshTerminalEvidence: 'refresh_terminal_evidence',
-} as const;
-
-/**
- * TerminalVisionNextAction value.
- */
-export type TerminalVisionNextAction =
-    (typeof TerminalVisionNextAction)[keyof typeof TerminalVisionNextAction];
 
 /**
  * One environment's vision requirement: the session closest to satisfying it and what it still
@@ -241,9 +176,9 @@ export interface TerminalVisionRequirementReport {
 /**
  * Describe the best available browser session for one terminal vision requirement.
  *
- * Complete sessions win over incomplete sessions. Otherwise the session with the most analyzed
- * artifacts from one complete capture is selected, so retry feedback points to the shortest
- * recovery path instead of every abandoned browser attempt.
+ * The session is the one {@link closestVisionSessionStep} picks: a complete one, else the one the
+ * model can advance furthest, so retry feedback points to the shortest recovery path instead of
+ * every abandoned browser attempt.
  *
  * @param view - Read-only projection of the run the judgement reads.
  * @param environment - Stable model-facing name for the required environment.
@@ -255,22 +190,8 @@ export function terminalVisionRequirement(
     environment: TerminalVisionEnvironment,
     states: AgentRuntimeSessionState[],
 ): TerminalVisionRequirementReport {
-    const completeState = states.reduce<AgentRuntimeSessionState | undefined>(
-        (latest, candidate) =>
-            candidate.navigationVerified && candidate.fullVisionVerified ? candidate : latest,
-        undefined,
-    );
-    const state =
-        completeState ??
-        [...states].reduce<AgentRuntimeSessionState | undefined>((best, candidate) => {
-            if (!best) {
-                return candidate;
-            }
-            return browserSessionVisionProgress(candidate) >= browserSessionVisionProgress(best)
-                ? candidate
-                : best;
-        }, undefined);
-    if (!state) {
+    const step = closestVisionSessionStep(view, states);
+    if (!step) {
         let extensionMode: ExtensionMode | null = null;
         if (environment === TerminalVisionEnvironment.UnfilteredControl) {
             extensionMode = ExtensionMode.None;
@@ -299,52 +220,8 @@ export function terminalVisionRequirement(
             nextAction: TerminalVisionNextAction.LaunchBrowserAndOpenPage,
         };
     }
-    const completeCapture = state.pageCaptures.reduce<AgentPageVisionCapture | undefined>(
-        (latest, candidate) =>
-            candidate.coverageComplete &&
-            candidate.requiredArtifactIds.length > 0 &&
-            candidate.requiredArtifactIds.every((artifactId) =>
-                state.analyzedArtifactIds.has(artifactId),
-            )
-                ? candidate
-                : latest,
-        undefined,
-    );
-    const capture =
-        completeCapture ??
-        [...state.pageCaptures].reduce<AgentPageVisionCapture | undefined>((best, candidate) => {
-            if (!best) {
-                return candidate;
-            }
-            return analyzedCaptureArtifactCount(state, candidate) >=
-                analyzedCaptureArtifactCount(state, best)
-                ? candidate
-                : best;
-        }, undefined);
-    let missingArtifactIds: string[] = [];
-    if (capture) {
-        missingArtifactIds = capture.requiredArtifactIds.filter(
-            (artifactId) => !state.analyzedArtifactIds.has(artifactId),
-        );
-    }
-    const analyzedArtifactCount =
-        (capture?.requiredArtifactIds.length ?? 0) - missingArtifactIds.length;
-    const canBatchInspectCapture =
-        capture !== undefined &&
-        state.sessionId === view.activeSessionId &&
-        state.pageCaptures.at(-1) === capture;
+    const { state, capture, missingArtifactIds, analyzedArtifactCount, nextAction } = step;
     const complete = state.navigationVerified && state.fullVisionVerified;
-    let nextAction: TerminalVisionNextAction = TerminalVisionNextAction.RefreshTerminalEvidence;
-    if (!state.navigationVerified) {
-        nextAction = TerminalVisionNextAction.OpenPage;
-    } else if (!capture || !capture.coverageComplete || capture.requiredArtifactIds.length === 0) {
-        nextAction = TerminalVisionNextAction.CaptureCompletePage;
-    } else if (missingArtifactIds.length > 0) {
-        nextAction =
-            analyzedArtifactCount === 0 && canBatchInspectCapture
-                ? TerminalVisionNextAction.InspectFullPageCapture
-                : TerminalVisionNextAction.AnalyzeMissingArtifacts;
-    }
     return {
         environment,
         status: complete
@@ -621,9 +498,10 @@ export function validateCurrentFirstTerminalVision(
 /**
  * Guidance for a full-vision rejection when a qualifying session already exists.
  *
- * Such a session must not be told to launch again — that loop seals the run — but to finish the
- * capture in the session it has, with the requirement's own next action. Absent a qualifying
- * session the caller keeps its launch-first guidance.
+ * A live session must not be told to launch again — that loop seals the run — but to finish the
+ * capture in the session it has, with the requirement's own next action. A closed one can take no
+ * further capture, so it is named as the environment to relaunch. Absent a qualifying session the
+ * caller keeps its launch-first guidance.
  *
  * @param requirement - The vision requirement report.
  * @param sessionDescription - What the qualifying session runs, for the model.
@@ -635,6 +513,9 @@ function qualifyingSessionGuidance(
 ): string[] | undefined {
     if (requirement.status !== TerminalVisionRequirementStatus.Incomplete) {
         return undefined;
+    }
+    if (requirement.nextAction === TerminalVisionNextAction.RelaunchClosedSession) {
+        return closedSessionGuidance(requirement.sessionOrdinal, sessionDescription);
     }
     return renderGuidance(PromptDocumentName.RejectionQualifyingSession, {
         sessionOrdinal: String(requirement.sessionOrdinal),
