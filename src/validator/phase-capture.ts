@@ -16,6 +16,11 @@ import type { BrowserFallbackReason } from '../types/browser-fallback-reason';
 import { settleLazyContent, type PageMaterialization } from './page-materialization';
 
 /**
+ * Trace phase naming a phase capture whose viewport screenshot failed.
+ */
+const VIEWPORT_SCREENSHOT_TRACE_PHASE = 'phase_viewport_screenshot';
+
+/**
  * Configuration for a single phase of validation.
  */
 export interface PhaseConfig {
@@ -162,10 +167,19 @@ export async function runPhase(config: PhaseConfig): Promise<PhaseResult> {
         captureTiles: config.captureVisualTiles === true,
         ...(tileWindow ? { tileWindow } : {}),
     });
+    const screenshotRecord = screenshotResult as Record<string, unknown>;
+    if (screenshotRecord.error !== undefined) {
+        // Judged later, the phase only says it has no viewport; the trace keeps why.
+        config.recorder.record(TraceEventType.Error, {
+            phase: VIEWPORT_SCREENSHOT_TRACE_PHASE,
+            validationPhase: config.phase,
+            error: String(screenshotRecord.error),
+            viewportPositionError: screenshotRecord.viewportPositionError,
+        });
+    }
     const harResult = await config.handlers.get_network_log({});
     const domResult = await config.handlers.get_dom({});
 
-    const screenshotRecord = screenshotResult as Record<string, unknown>;
     const harRecord = harResult as Record<string, unknown>;
     const domRecord = domResult as Record<string, unknown>;
     const screenshotArtifactValue = screenshotRecord.artifactId;

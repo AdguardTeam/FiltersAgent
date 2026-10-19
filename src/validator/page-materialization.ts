@@ -18,6 +18,11 @@ const LAZY_CONTENT_TRACE_PHASE = 'lazy_content_materialization';
 
 /**
  * Bounded same-document scroll pass used to trigger and settle lazy page content.
+ *
+ * Every scroll is `behavior: 'instant'`. A page whose stylesheet sets `scroll-behavior: smooth` on
+ * the root (Bootstrap 5, Tailwind's `scroll-smooth`) turns a plain `scrollTo` into an animation:
+ * the return to the original position would still be running when the phase's captures start, and
+ * the viewport screenshot refuses a moving viewport.
  */
 const PAGE_MATERIALIZATION_PROBE = `
 (async function () {
@@ -62,7 +67,11 @@ const PAGE_MATERIALIZATION_PROBE = `
                 };
             }
             for (var step = 0; step <= steps; step += 1) {
-                window.scrollTo(0, Math.round((boundedHeight * step) / steps));
+                window.scrollTo({
+                    left: 0,
+                    top: Math.round((boundedHeight * step) / steps),
+                    behavior: 'instant',
+                });
                 await wait(75);
             }
             await wait(250);
@@ -84,7 +93,7 @@ const PAGE_MATERIALIZATION_PROBE = `
             previousHeight = nextHeight;
         }
     } finally {
-        window.scrollTo(originalX, originalY);
+        window.scrollTo({ left: originalX, top: originalY, behavior: 'instant' });
         await wait(250);
     }
     return { materialized: true, stable: stable, height: previousHeight };

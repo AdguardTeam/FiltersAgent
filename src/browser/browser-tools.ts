@@ -27,9 +27,6 @@ import {
 } from './navigation-failure';
 import {
     stabilizePageForCapture,
-    readStableViewportPosition,
-    viewportPositionMatches,
-    type ViewportPosition,
     boundedDuration,
     boundedTargetValue,
     roundedGeometry,
@@ -48,6 +45,7 @@ import {
 } from './expression-validator';
 import { writeArtifact, captureFullPageTiles, parseTileWindowArg } from './full-page-tiles';
 import { captureFullPageOverview } from './full-page-overview';
+import { captureStableViewport, VIEWPORT_CAPTURE_ATTEMPTS } from './stable-viewport-capture';
 import { inspectPageState } from './page-state-probe';
 import type { PageStateInspection } from '../types/page-state-inspection';
 import { BrowserFallbackReason } from '../types/browser-fallback-reason';
@@ -581,31 +579,24 @@ export function createBrowserToolHandlers(config: BrowserToolConfig): BrowserToo
          */
         async screenshot(args: Record<string, unknown>) {
             const page = session.getPage();
-            let viewportBuffer: Buffer | undefined;
-            let viewportPosition: ViewportPosition | undefined;
-            for (let attempt = 0; attempt < 3; attempt++) {
-                const before = await readStableViewportPosition(page);
-                if (!before) {
-                    continue;
-                }
-                const candidateBuffer = await page.screenshot({ fullPage: false, type: 'png' });
-                const after = await readStableViewportPosition(page);
-                if (after && viewportPositionMatches(before, after)) {
-                    viewportBuffer = candidateBuffer;
-                    viewportPosition = after;
-                    break;
-                }
-            }
-            if (!viewportBuffer || !viewportPosition) {
+            const viewportCapture = await captureStableViewport(page);
+            if (!viewportCapture) {
                 return {
                     error: 'viewport position changed during capture',
                     viewportPositionError:
-                        'could not prove a stable viewport position across three capture attempts',
+                        'could not prove a stable viewport position across ' +
+                        `${VIEWPORT_CAPTURE_ATTEMPTS} capture attempts`,
                     format: 'png',
                     viewport: page.viewportSize(),
                 };
             }
-            const id = writeArtifact(artifactsDir, 'png', viewportBuffer, 'screenshot', recorder);
+            const id = writeArtifact(
+                artifactsDir,
+                'png',
+                viewportCapture.buffer,
+                'screenshot',
+                recorder,
+            );
             const overview = await captureFullPageOverview(page, artifactsDir, recorder, logger);
             const tileCoverage =
                 args.captureTiles === true
@@ -627,7 +618,7 @@ export function createBrowserToolHandlers(config: BrowserToolConfig): BrowserToo
                 tileCoverage,
                 format: 'png',
                 viewport,
-                viewportPosition,
+                viewportPosition: viewportCapture.position,
             };
         },
 

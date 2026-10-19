@@ -228,6 +228,9 @@ The format is based on [Keep a Changelog], and this project adheres to
 - Fixed a repeated `apply_rule` after a filtering environment failure reading
   like a new failure: the answer now says it repeats the earlier failure and
   ran no experiment.
+- Fixed phases on pages that scroll smoothly (`scroll-behavior: smooth`, as in
+  Bootstrap 5) losing their viewport screenshot, which left `apply_rule`
+  inconclusive; the trace now records why a phase captured no viewport.
 
 ## [1.0.1] - 2026-10-15
 

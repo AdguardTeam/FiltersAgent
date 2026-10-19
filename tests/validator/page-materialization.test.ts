@@ -3,6 +3,15 @@ import { describe, expect, it } from 'vitest';
 import type { TrustedPageEvaluator } from '../../src/browser/trusted-page-evaluator';
 import { materializePage } from '../../src/validator/page-materialization';
 
+/**
+ * Options object the probe passes to `window.scrollTo`.
+ */
+interface ScrollCall {
+    left?: number;
+    top?: number;
+    behavior?: string;
+}
+
 describe('materializePage', () => {
     it('names the evaluation error instead of a height that did not settle', async () => {
         await expect(
@@ -44,7 +53,7 @@ describe('materializePage', () => {
                         innerHeight: 1080,
                         scrollX: 0,
                         scrollY: 0,
-                        scrollTo: (_x: number, y: number) => scrollPositions.push(y),
+                        scrollTo: (options: ScrollCall) => scrollPositions.push(options.top ?? 0),
                     },
                 }),
         };
@@ -72,7 +81,7 @@ describe('materializePage', () => {
                         innerHeight: viewportHeight,
                         scrollX: 0,
                         scrollY: 0,
-                        scrollTo: (_x: number, y: number) => scrollPositions.push(y),
+                        scrollTo: (options: ScrollCall) => scrollPositions.push(options.top ?? 0),
                     },
                 }),
         };
@@ -84,5 +93,35 @@ describe('materializePage', () => {
         for (let index = 1; index < scanPositions.length; index += 1) {
             expect(scanPositions[index] - scanPositions[index - 1]).toBeLessThan(viewportHeight);
         }
+    });
+
+    it('scrolls and restores the original position instantly, not through smooth scrolling', async () => {
+        // A page styled with `scroll-behavior: smooth` turns a plain scrollTo into an animation that
+        // is still running when the phase captures start. Only `behavior: 'instant'` overrides it.
+        const scrollCalls: ScrollCall[] = [];
+        const originalPosition = { left: 0, top: 640 };
+        const evaluator: TrustedPageEvaluator = {
+            evaluate: async (expression: string): Promise<unknown> =>
+                runInNewContext(expression, {
+                    document: {
+                        body: { scrollHeight: 8_000 },
+                        documentElement: { scrollHeight: 8_000 },
+                    },
+                    setTimeout: (callback: () => void) => callback(),
+                    window: {
+                        innerHeight: 1080,
+                        scrollX: originalPosition.left,
+                        scrollY: originalPosition.top,
+                        scrollTo: (options: ScrollCall) => scrollCalls.push(options),
+                    },
+                }),
+        };
+
+        await expect(materializePage(evaluator)).resolves.toEqual({ settled: true });
+        expect(scrollCalls.length).toBeGreaterThan(1);
+        for (const call of scrollCalls) {
+            expect(call.behavior).toBe('instant');
+        }
+        expect(scrollCalls.at(-1)).toMatchObject(originalPosition);
     });
 });

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { runPhase } from '../../src/validator/phase-capture';
 import { BrowserFallbackReason } from '../../src/types/browser-fallback-reason';
 import { TraceEventType } from '../../src/types/trace';
+import { PhaseLabel } from '../../src/types/validation';
 import { mockPage } from './phase-fixtures';
 import type { BrowserToolHandlers } from '../../src/browser/browser-tools';
 import type { PageStateInspection } from '../../src/types/page-state-inspection';
@@ -291,6 +292,37 @@ describe('runPhase', () => {
         expect(result.domArtifactId).toBeDefined();
         expect(result.url).toBe('https://example.com');
         expect(result.error).toBeUndefined();
+    });
+
+    it('traces why the phase captured no viewport screenshot', async () => {
+        const handlers = mockHandlers({
+            screenshotResult: {
+                error: 'viewport position changed during capture',
+                viewportPositionError: 'could not prove a stable viewport position',
+                format: 'png',
+            },
+        });
+        const recorder = mockRecorder();
+
+        const result = await runPhase({
+            handlers,
+            page: mockPage(),
+            artifactsDir: '/tmp/test-artifacts',
+            phase: PhaseLabel.B,
+            url: 'https://example.com',
+            trustedPageEvaluator: trustedEvaluatorFromHandlers(handlers),
+            recorder,
+        });
+
+        // The phase is judged without a viewport later; the trace has to say what the capture hit.
+        expect(result.screenshotArtifactId).toBe('');
+        expect(vi.mocked(recorder.record)).toHaveBeenCalledWith(
+            TraceEventType.Error,
+            expect.objectContaining({
+                validationPhase: PhaseLabel.B,
+                error: expect.stringContaining('viewport position changed during capture'),
+            }),
+        );
     });
 
     it('resets the network log before navigation', async () => {
