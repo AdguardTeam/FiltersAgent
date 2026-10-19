@@ -89,8 +89,8 @@ The format is based on [Keep a Changelog], and this project adheres to
   or intake call waits the same way after its quick transport retries, all
   within `LLM_REQUEST_MAX_ATTEMPTS`.
 - Fixed visual reviews ending without a verdict when the vision model added
-  a key of its own, such as `coverageObserved_note`, to an inventory reply or
-  to one of its instances; such a key is now ignored.
+  a key of its own, such as `coverageObserved_note`, to a reply or to an
+  object inside it; such a key is now ignored.
 - Fixed two benchmark cases started at once on a fresh `--output-root`
   failing with `EEXIST` while creating the shared output directory.
 - Fixed `###id` element-hiding rules being validated against the selector

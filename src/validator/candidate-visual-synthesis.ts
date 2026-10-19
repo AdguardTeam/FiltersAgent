@@ -49,8 +49,12 @@ const MAX_FINAL_VALIDATION_DETAIL_CHARS = 1_000;
 
 /**
  * Final-model disposition for one numbered before-state tile observation.
+ *
+ * This and the two schemas below check every field and drop a key beside them rather than refuse
+ * it, like the inventories they reconcile: a model that annotates its reply does so on every
+ * attempt.
  */
-const CandidateVisualBeforeDispositionOutputSchema = v.strictObject({
+const CandidateVisualBeforeDispositionOutputSchema = v.object({
     observationIndex: v.pipe(v.number(), v.integer(), v.minValue(1)),
     disposition: v.picklist([
         CandidateInstanceDisposition.SameSymptom,
@@ -62,7 +66,7 @@ const CandidateVisualBeforeDispositionOutputSchema = v.strictObject({
 /**
  * Final-model disposition for one numbered after-state tile observation.
  */
-const CandidateVisualAfterDispositionOutputSchema = v.strictObject({
+const CandidateVisualAfterDispositionOutputSchema = v.object({
     observationIndex: v.pipe(v.number(), v.integer(), v.minValue(1)),
     disposition: v.picklist([
         CandidateInstanceDisposition.Remaining,
@@ -72,9 +76,9 @@ const CandidateVisualAfterDispositionOutputSchema = v.strictObject({
 });
 
 /**
- * Strict semantic output used only by the final inventory-reconciliation vision call.
+ * Semantic output used only by the final inventory-reconciliation vision call.
  */
-const CandidateVisualFinalModelOutputSchema = v.strictObject({
+const CandidateVisualFinalModelOutputSchema = v.object({
     symptom: v.picklist(CANDIDATE_VISUAL_SYMPTOM_VALUES),
     symptomScope: v.pipe(v.string(), v.minLength(1), v.maxLength(2_000)),
     adLayoutResidue: v.picklist(CANDIDATE_VISUAL_AD_LAYOUT_RESIDUE_VALUES),
@@ -104,7 +108,7 @@ const CandidateVisualFinalModelOutputSchema = v.strictObject({
 });
 
 /**
- * Strict output returned by the final inventory-reconciliation vision call.
+ * Output returned by the final inventory-reconciliation vision call.
  */
 type CandidateVisualFinalModelOutput = v.InferOutput<typeof CandidateVisualFinalModelOutputSchema>;
 

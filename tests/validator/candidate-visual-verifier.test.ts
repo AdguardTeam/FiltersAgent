@@ -2308,6 +2308,26 @@ function hermeticFinalJson(): string {
     });
 }
 
+/**
+ * Add a model's own note key to every object of a parsed reply, the way a model annotates each
+ * field group it answers.
+ *
+ * @param value - Parsed reply or a part of it.
+ * @returns The same value with a note beside the fields of every object.
+ */
+function withNotes(value: unknown): unknown {
+    if (Array.isArray(value)) {
+        return value.map(withNotes);
+    }
+    if (typeof value !== 'object' || value === null) {
+        return value;
+    }
+    return {
+        ...Object.fromEntries(Object.entries(value).map(([key, item]) => [key, withNotes(item)])),
+        model_note: 'Checked against the labelled images.',
+    };
+}
+
 describe('reviewCandidateVisually on the single-shot client', () => {
     function validScript(): ScriptedReply[] {
         return [
@@ -2419,24 +2439,13 @@ describe('reviewCandidateVisually on the single-shot client', () => {
         }
     });
 
-    it('accepts inventory replies that add a note beside the requested fields', async () => {
-        // A model answered every inventory with an extra key such as `coverageObserved_note`, on
-        // the reply and on its instances; the review reads nothing from them, and refusing them
-        // left a live review without a verdict.
-        const withNotes = (text: string): string => {
-            const batch = JSON.parse(text) as { instances: Record<string, unknown>[] };
-            return JSON.stringify({
-                ...batch,
-                coverageObserved_note: 'Every tile was readable.',
-                instances: batch.instances.map((instance) => ({
-                    ...instance,
-                    landmark_note: 'Measured from the header.',
-                })),
-            });
-        };
-        const script = validScript().map((reply, index, all) =>
-            index < all.length - 1 && reply.kind === ScriptedReplyKind.Text
-                ? { ...reply, text: withNotes(reply.text) }
+    it('accepts replies that add a note beside the requested fields', async () => {
+        // A model answered with an extra key such as `coverageObserved_note` on every object of
+        // its replies; the review reads nothing from them, and refusing them left a live review
+        // without a verdict.
+        const script = validScript().map((reply) =>
+            reply.kind === ScriptedReplyKind.Text
+                ? { ...reply, text: JSON.stringify(withNotes(JSON.parse(reply.text))) }
                 : reply,
         );
         provider = await startHermeticProvider({ scenario: HermeticScenario.Scripted, script });
