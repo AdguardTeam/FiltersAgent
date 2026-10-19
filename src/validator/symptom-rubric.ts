@@ -222,9 +222,14 @@ export const PRE_EXISTING_BLANK_SPACE_GROUND = [
 
 /**
  * Dismissal ground, in an ads review, for blank space an agent DOM check proves is layout.
+ *
+ * It carries the qualifiers of {@link DOM_CHECK_RESIDUE_RUBRIC}: the check names what holds the
+ * space, and geometry that is merely unchanged never proves layout.
  */
 const DOM_CHECK_LAYOUT_GROUND = [
-    'blank space an agent DOM check proves is page layout under the residue rubric',
+    'blank space an agent DOM check proves is page layout under the residue rubric, by naming the',
+    'element that holds the space and showing it is not reserved for the advertising, never by',
+    'geometry that only measures the same before and after',
 ];
 
 /**
@@ -260,16 +265,30 @@ export function afterDismissalGrounds(kind: SymptomKind): string[] {
  * paints a grey background is residue. The runner measures what the agent asks on the very page
  * loads the images come from; these lines say how much the answers count, and never more than the
  * images for visible advertising.
+ *
+ * What a check must show is what holds the space. On a news page a band under an ad label measured
+ * the same before and after a hiding rule, and the ad slot in it was absolutely positioned; the
+ * check claimed the band had never been the ad's and the review dismissed it. The band was a bottom
+ * margin the page's stylesheet set only while the ad slot was in the section, and `display: none`
+ * keeps the slot there. Hiding an ad that sits out of flow, or whose slot was already empty,
+ * changes no geometry at all, so unchanged geometry is exactly what residue looks like there.
  */
 const DOM_CHECK_RESIDUE_RUBRIC = [
     'When agent DOM checks are supplied, weigh them for blank space at a removed advertising',
-    'region. Blank space a check proves is an empty track of a transparent grid or flex',
-    "container, or the page's own margins or background, is page layout, not residue: reconcile",
-    'it as not_same_symptom and leave it out of adLayoutResidue. Blank space a check shows is an',
-    'emptied container that still paints its own background, border or shadow, or a slot that',
-    'keeps a reserved height, is residue. A check never dismisses visible advertising. A check',
-    'that does not measure the region of the observation, or whose result does not support its',
-    'claim, weighs nothing, and the images decide.',
+    'region. A check proves page layout only when it names the element whose box holds the',
+    'space — its margin, padding, height or grid track — and shows that element is not an ad',
+    'container and the space is not reserved for the advertising, such as a margin or height',
+    'the page applies only while an ad slot is present or that matches the slot. Blank space a',
+    'check proves that way to be an empty track of a transparent grid or flex container, or the',
+    "page's own margins or background, is page layout, not residue: reconcile it as",
+    'not_same_symptom and leave it out of adLayoutResidue. Geometry that measures the same',
+    'before and after proves nothing by itself: hiding an ad that sits out of flow, or whose slot',
+    'was already empty, leaves the geometry unchanged, so where a BEFORE observation you retain',
+    'as same_symptom sat, a check that shows only unchanged geometry weighs nothing. Blank space',
+    'a check shows is an emptied container that still paints its own background, border or',
+    'shadow, or a slot that keeps a reserved height, is residue. A check never dismisses visible',
+    'advertising. A check that does not measure the region of the observation, or whose result',
+    'does not support its claim, weighs nothing, and the images decide.',
 ];
 
 /**

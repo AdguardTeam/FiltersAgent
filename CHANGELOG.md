@@ -27,8 +27,9 @@ The format is based on [Keep a Changelog], and this project adheres to
 - Added `domChecks` to `apply_rule`: after a review rejects a candidate only
   for ad layout residue, the agent can send it again with read-only DOM
   checks, which run on the baseline and candidate pages the screenshots come
-  from and let the review count blank space the page's own layout leaves as
-  layout instead of residue.
+  from and let the review count blank space as layout instead of residue when
+  a check names the element that holds it and shows it is not kept for the
+  ad; geometry that is only the same before and after proves nothing.
 
 ### Changed
 
@@ -88,6 +89,12 @@ The format is based on [Keep a Changelog], and this project adheres to
   whole run as `request_deadline_exceeded`: the request is now retried within
   `LLM_REQUEST_MAX_ATTEMPTS`, and a run whose retries are spent ends as
   `llm_error`.
+- Fixed incorrect-blocking experiments ending as `baseline_symptom_absent`
+  when the named element still renders with the breakage inside it, such as
+  an anti-adblock wall in a player iframe: a baseline or candidate phase that
+  vision finds broken while the unfiltered page is not now counts as showing
+  the symptom, so such a candidate also stays unverified even when the
+  element renders again.
 - Fixed benchmark failures before the filters checkout being reported as a
   filters-base mismatch instead of the original error.
 - Fixed benchmark cases ending as infrastructure failures, and

@@ -258,9 +258,11 @@ export interface BaselineSymptomAbsentFacts {
 /**
  * Explain a baseline that showed no symptom, by what decided it.
  *
- * When a selector's geometry overruled what vision saw, the description was right, and asking for a
- * new one would send the model after the wrong input: it must change the selector instead — drop
- * the `adElementSelector` it passed, or target another element with the rule's own selector.
+ * When a selector's geometry overruled what vision saw, vision did not find the unfiltered page
+ * clean either — it called it broken or could not tell — and asking for a new description would
+ * send the model after the wrong input: either that page really shows the breakage, or the selector
+ * names an element that stays visible while the breakage sits elsewhere — drop the
+ * `adElementSelector` it passed, or target another element with the rule's own selector.
  *
  * @param overruled - The overruling selector, or null when the baseline verdict followed vision.
  * @returns The lines saying what failed and what to change.
@@ -278,12 +280,14 @@ function baselineAbsenceCause(overruled: OverruledSelector | null): string[] {
         ];
     }
     const seen = [
-        'The review saw the described breakage in the filtered baseline, but',
+        'The review saw the described breakage in the filtered baseline but did not find the',
+        'unfiltered page clean, so it could not tell the two apart, and',
         overruled.source === SelectorSource.Rule
             ? `the candidate's own selector (${overruled.selector})`
             : `the element adElementSelector names (${overruled.selector})`,
-        'stayed as visible as on the unfiltered page, and on a breakage report its visibility',
-        'decides, so the candidate was never judged.',
+        'stayed as visible as on the unfiltered page; on a breakage report its visibility then',
+        'decides, so the candidate was never judged. If the unfiltered page really shows the',
+        'breakage too, no candidate can be judged against it.',
     ];
     return overruled.source === SelectorSource.Rule
         ? [

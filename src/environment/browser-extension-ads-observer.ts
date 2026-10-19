@@ -49,6 +49,7 @@ import { ReporterSymptomPresence } from '../types/reporter-symptom-presence';
 import { InteractionReplay, type InteractionReplayProjection } from './interaction-replay';
 import { measureDomChecks, pairDomCheckMeasurements } from './dom-check-runner';
 import type { BrowserExtensionAdsObserverOptions } from './browser-extension-ads-observer-options';
+import { probedBreakageSymptomPresent } from './breakage-symptom-reading';
 import {
     candidateScreenshotArtifacts,
     environmentArtifact,
@@ -415,10 +416,12 @@ export class BrowserExtensionAdsObserver {
     /**
      * Name the selector whose geometry overruled vision in the filtered baseline.
      *
-     * On a breakage report a bound selector decides the phase by whether its element is visible. A
-     * broken state drawn inside an element that stays visible — a wall inside an embedded player —
-     * then reads as a healthy baseline although vision saw the breakage, and the model needs to
-     * know the selector, not the description, is what failed.
+     * On a breakage report a bound selector decides the phase by whether its element is visible,
+     * unless vision called the unfiltered control clean and the baseline broken. When vision did
+     * not find the control clean — it saw the breakage there too or could not tell — the geometry
+     * decides alone, and a broken state drawn inside an element that stays visible — a wall inside
+     * an embedded player — reads as a healthy baseline: the model needs to know the selector, not
+     * the description, decided.
      *
      * @returns The overruling selector and its source, or null when the baseline verdict followed
      *   vision.
@@ -473,10 +476,10 @@ export class BrowserExtensionAdsObserver {
     /**
      * Decide whether the reporter symptom is present in one observed phase.
      *
-     * A breakage symptom is the ABSENCE of content, which single-state vision judges badly: it
-     * recognises the element the reporter named and reports the symptom present even when that
-     * element is intact. When the structural probe measured the named element, its geometry is the
-     * objective answer — hidden means broken, visible means restored.
+     * A breakage symptom whose named element the probe measured is read from that element's
+     * geometry against the unfiltered control, unless vision separates the two ({@link
+     * probedBreakageSymptomPresent}); every other symptom is vision's, or the requests' for a host
+     * block.
      *
      * @param observed - Browser and vision material collected for the phase.
      * @returns Whether the phase still shows the reporter-defined symptom.
@@ -495,20 +498,7 @@ export class BrowserExtensionAdsObserver {
                 phaseHostRequests(observed.network, this.blockedHost).allowed > 0;
             return requestsAllowed || observed.symptomPresence !== ReporterSymptomPresence.Absent;
         }
-        // The unfiltered control defines how much of the named content a healthy page renders.
-        // Judging visibility absolutely would call a page broken whenever the site itself hides
-        // some matches — a state no exception can repair, so no candidate could ever verify.
-        const control = this.phases.get('A');
-        const referenceIsComparable =
-            control !== undefined &&
-            control.structureBoundToSelector &&
-            control.structure.probeSucceeded &&
-            control.structure.targetCount === observed.structure.targetCount;
-        if (referenceIsComparable) {
-            return observed.structure.targetVisibleCount < control.structure.targetVisibleCount;
-        }
-        // Without a comparable control, any match the page does not render is missing content.
-        return observed.structure.targetVisibleCount < observed.structure.targetCount;
+        return probedBreakageSymptomPresent(observed, this.phases.get(PhaseLabel.A));
     }
 
     /**

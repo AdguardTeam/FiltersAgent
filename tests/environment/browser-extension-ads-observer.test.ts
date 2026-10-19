@@ -29,12 +29,16 @@ const visionStub = {
 } as unknown as SingleShotClient;
 import type { ReproProfile } from '../../src/types/repro-profile';
 import type { FullPageVisualCaptureResult } from '../../src/analyzer/full-page-capture-inspection';
-import type { StructuralSnapshot } from '../../src/types/validation';
+import { PhaseLabel, type StructuralSnapshot } from '../../src/types/validation';
+import { ReporterSymptomPresence } from '../../src/types/reporter-symptom-presence';
 import { BrowserExtensionAdsObserver } from '../../src/environment/browser-extension-ads-observer';
+import { SymptomKind } from '../../src/validator/symptom-rubric';
 import { runAdsEnvironmentExperiment } from '../../src/validator/phase-orchestrator';
+import { AdsEnvironmentExperimentVerdict } from '../../src/validator/ads-environment-experiment-result';
 import { deriveCandidateNetworkScope } from '../../src/validator/candidate-network-scope';
 import {
     CandidateVisualReviewSchema,
+    CandidateVisualVerdict,
     deriveCandidateVisualIntegrityBasis,
     deriveCandidateVisualSymptomBasis,
     deriveCandidateVisualVerdict,
@@ -511,16 +515,23 @@ describe('BrowserExtensionAdsObserver', () => {
 
     /**
      * Build an observer for an incorrect-blocking candidate whose bound element renders the given
-     * number of its five matches per phase, while vision calls the defect present in every phase.
+     * number of its five matches per phase.
      *
      * @param visibleByPhase - Visible matches the structural probe reports in each phase.
      * @param candidate - Candidate rule and, for a network rule, the element it is about.
+     * @param visionByPhase - What vision reads of the defect in each phase. By default it calls the
+     *   defect present in every phase: vision inverts absence symptoms, recognising the element the
+     *   reporter named.
      * @returns The observer and a function observing one of its phases.
      */
     function breakageObserver(
         visibleByPhase: Record<string, number>,
         candidate: { candidateRule: string; adElementSelector?: string } = {
             candidateRule: 'example.test#@#.ad-sidebar',
+        },
+        visionByPhase: Record<string, ReporterSymptomPresence> = {
+            [PhaseLabel.A]: ReporterSymptomPresence.Present,
+            [PhaseLabel.B]: ReporterSymptomPresence.Present,
         },
     ) {
         const artifactsDir = mkdtempSync(join(tmpdir(), 'ads-observer-breakage-'));
@@ -611,10 +622,8 @@ describe('BrowserExtensionAdsObserver', () => {
                         bytes: 2,
                     });
                     return {
-                        // Vision inverts absence symptoms: it recognises the element the reporter
-                        // named and calls the defect present in every state.
                         inventory: {
-                            reporterSymptomPresence: 'present',
+                            reporterSymptomPresence: visionByPhase[input.phase]!,
                         } as FullPageVisualCaptureResult['inventory'],
                         artifactId,
                         artifactPath: join(artifactsDir, `${artifactId}.json`),
@@ -700,6 +709,26 @@ describe('BrowserExtensionAdsObserver', () => {
             expect(observer.baselineVisionOverruledSelector()).toEqual(expected);
         },
     );
+
+    it('reads a breakage symptom vision separates from the control even when the element renders', async () => {
+        // An anti-adblock wall drawn inside a player iframe: the iframe renders in both phases,
+        // and only vision sees the wall that filtering brought.
+        const { observer, observe } = breakageObserver(
+            { [PhaseLabel.A]: 3, [PhaseLabel.B]: 3, [PhaseLabel.C]: 3 },
+            { candidateRule: 'example.test#@#.ad-sidebar' },
+            {
+                [PhaseLabel.A]: ReporterSymptomPresence.Absent,
+                [PhaseLabel.B]: ReporterSymptomPresence.Present,
+            },
+        );
+
+        const control = await observe(PhaseLabel.A);
+        const baseline = await observe(PhaseLabel.B);
+
+        expect(control).toMatchObject({ targetObservation: { symptomPresent: false } });
+        expect(baseline).toMatchObject({ targetObservation: { symptomPresent: true } });
+        expect(observer.baselineVisionOverruledSelector()).toBeNull();
+    });
 
     it('bounds phase C tile capture to the window measured while the symptom was visible', async () => {
         const artifactsDir = mkdtempSync(join(tmpdir(), 'ads-observer-window-'));
@@ -928,6 +957,17 @@ interface ExtensionExperimentOptions {
     probeSucceeded?: boolean;
 
     /**
+     * Matches of the candidate's selector the probe finds rendered in each phase, out of one; the
+     * one match renders in every phase when omitted.
+     */
+    visibleMatches?: (phase: PhaseLabel) => number;
+
+    /**
+     * Problem class the review judges; ads when omitted.
+     */
+    symptomKind?: SymptomKind;
+
+    /**
      * Reveal steps apply_rule received, with how each phase's page answers them; none when omitted.
      */
     reveal?: {
@@ -1029,6 +1069,7 @@ async function runExtensionExperiment(
         logger: pino({ level: 'silent' }),
         vision: visionStub,
         reporterSymptom: 'injected advertising banners above the lyrics',
+        ...(options.symptomKind ? { symptomKind: options.symptomKind } : {}),
         attemptNumber: 1,
         noSandbox: false,
         ...(options.reveal ? { interactionPlan: options.reveal.plan } : {}),
@@ -1077,12 +1118,12 @@ async function runExtensionExperiment(
                     antiAdblockDetected: false,
                 };
             },
-            probeStructuralSnapshot: async (_input, _evaluator, selector) => {
+            probeStructuralSnapshot: async (input, _evaluator, selector) => {
                 options.seen?.probedSelectors.push(selector);
                 return {
                     probeSucceeded: options.probeSucceeded ?? true,
                     targetCount: 1,
-                    targetVisibleCount: 1,
+                    targetVisibleCount: options.visibleMatches?.(input.phase) ?? 1,
                 } as StructuralSnapshot;
             },
             inspectFullPageVisualCapture: async (input, inventoryOptions) => {
@@ -1336,6 +1377,47 @@ function scriptRequest(url: string, statusCode = 200): NetworkRequestEntry {
         responseHeaders: {},
     };
 }
+
+describe('an extension experiment over a breakage the named element renders through', () => {
+    it.each([
+        {
+            candidateVision: ReporterSymptomPresence.Absent,
+            verdict: AdsEnvironmentExperimentVerdict.Verified,
+        },
+        {
+            candidateVision: ReporterSymptomPresence.Present,
+            verdict: AdsEnvironmentExperimentVerdict.Inconclusive,
+        },
+    ])(
+        'holds the candidate to vision that separates it from the unfiltered page: $candidateVision',
+        async ({ candidateVision, verdict }) => {
+            // A wall inside a player the selector names: the player renders in every phase but
+            // the filtered baseline, so its geometry calls the candidate restored, and the review
+            // compares B and C only. Vision calling the unfiltered page clean and the candidate
+            // broken still keeps the candidate unverified.
+            const seen: ExperimentSeams = { probedSelectors: [] };
+            const experiment = await runExtensionExperiment('sarkisozleri.bbs.tr#@#.player', {
+                symptomKind: SymptomKind.Breakage,
+                symptomPresence: (phase) => {
+                    if (phase === PhaseLabel.A) {
+                        return ReporterSymptomPresence.Absent;
+                    }
+                    return phase === PhaseLabel.B
+                        ? ReporterSymptomPresence.Present
+                        : candidateVision;
+                },
+                visibleMatches: (phase) => (phase === PhaseLabel.B ? 0 : 1),
+                modelOutput: { ...CLEAN_UNCLEAR_OUTPUT, pageIntegrity: 'intact' },
+                seen,
+            });
+
+            expect(seen.applyRuleResult).toMatchObject({
+                visualReview: { verdict: CandidateVisualVerdict.Verified },
+            });
+            expect(experiment.verdict).toBe(verdict);
+        },
+    );
+});
 
 describe('an extension experiment over a tracker nothing shows', () => {
     const TRACKER_RULE = '||alaphoid.com^$domain=sarkisozleri.bbs.tr';

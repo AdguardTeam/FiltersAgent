@@ -192,7 +192,10 @@ applied, does not count.
   it measured the missing content: by the candidate's own selector, or, for a
   network rule, by the `adElementSelector` passed to `apply_rule`. The phase
   counts when fewer matches render than without the blocker, or, when the
-  phase without the blocker cannot be compared, fewer than the page holds.
+  phase without the blocker cannot be compared, fewer than the page holds. It
+  also counts when vision finds the problem absent without the blocker and
+  present with it, since the element can render while the breakage sits inside
+  it, as a wall inside a player iframe does.
   Otherwise the phase counts when the page let a request through to the host
   a blocking candidate names, or when vision did not find the problem absent,
   so an indeterminate classification counts as reproduced. A run refused after

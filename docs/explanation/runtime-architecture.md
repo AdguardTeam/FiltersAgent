@@ -68,10 +68,15 @@ can send the same candidate again with DOM checks: read-only expressions held
 to the `evaluate_js` rules, each with the claim it should prove. The runner
 evaluates them in phases B and C on the page loads the screenshots come from,
 records the bounded answers in the factual validation and the `apply_rule`
-answer, and hands them to the review as untrusted page data. Blank space a
-check proves to be an empty transparent grid track or the page's own margins
-counts as layout; an emptied container that still paints a background or keeps
-a reserved height counts as residue; no check outweighs visible advertising.
+answer, and hands them to the review as untrusted page data. A check proves
+layout only when it names the element that holds the space and shows the space
+is not kept for the ad; blank space proved that way to be an empty transparent
+grid track or the page's own margins counts as layout. Geometry that is merely
+the same before and after proves nothing: hiding an ad that sits out of flow,
+or whose slot was already empty, leaves exactly that, so where the baseline
+showed the symptom such a check weighs nothing. An emptied container that still
+paints a background or keeps a reserved height counts as residue; no check
+outweighs visible advertising.
 Code never reads what a check means. New checks make a new experiment of the
 same candidate, which spends no candidate attempt but counts toward the three
 runs one candidate gets in all, shared with retries after an inconclusive
