@@ -195,7 +195,7 @@ const STALL_DEADLINE_MS = 300;
 
 /**
  * Gap between the paced deltas of the live-stream suite: comfortably inside `STALL_DEADLINE_MS`, so
- * no single gap can trip the guard.
+ * no single gap can trip the silence bound.
  */
 const SLOW_STREAM_INTERVAL_MS = 100;
 
@@ -860,32 +860,66 @@ describe('runAgentSession', () => {
         expect(requests).toHaveLength(2);
     });
 
-    it('seals budget-exceeded when a streamed response stalls past the request deadline', async () => {
-        // The half of requestTimeoutMs pi does not enforce: the OpenAI SDK clears its own timer
-        // the moment the response headers arrive, so before this guard a provider that answered
-        // and then went silent left the turn — and the run — unbounded.
+    it('retries a response that stalls after its stream opened', async () => {
+        // The stream opens, then only keep-alive comments arrive: the connection stays busy while
+        // the model produces nothing. Only that request is cut and sent again; the run goes on.
         const started = Date.now();
-        const { outcome, requests } = await runScripted([], {
-            scenario: HermeticScenario.StallAfterHeaders,
-            budgets: { requestTimeoutMs: STALL_DEADLINE_MS },
-        });
+        const { outcome, requests } = await runScripted(
+            [{ kind: ScriptedReplyKind.Stall }, verdictCall(VALID_PAYLOAD)],
+            {
+                budgets: { requestTimeoutMs: STALL_DEADLINE_MS },
+                retries: { maxRetries: 1, baseDelayMs: 1 },
+            },
+        );
 
-        expect(outcome.kind).toBe(SealKind.BudgetExceeded);
-        if (outcome.kind !== SealKind.BudgetExceeded) {
-            return;
-        }
-        expect(outcome.budget).toBe(GuardCause.RequestDeadline);
-        expect(outcome.detail).toContain(`${STALL_DEADLINE_MS}ms`);
-        expect(requests).toHaveLength(1);
+        expect(outcome.kind).toBe(SealKind.Terminal);
+        expect(requests).toHaveLength(2);
         // Bounded by the deadline, not by the suite's own timeout.
         expect(Date.now() - started).toBeLessThan(10_000);
     });
 
+    it('seals a transient provider-failure when every attempt stalls', async () => {
+        const { outcome, requests } = await runScripted([], {
+            scriptExhausted: { kind: ScriptedReplyKind.Stall },
+            budgets: { requestTimeoutMs: STALL_DEADLINE_MS },
+            retries: { maxRetries: 1, baseDelayMs: 1 },
+        });
+
+        expect(outcome.kind).toBe(SealKind.ProviderFailure);
+        if (outcome.kind !== SealKind.ProviderFailure) {
+            return;
+        }
+        expect(outcome.deterministic).not.toBe(true);
+        expect(outcome.message).toContain(`${STALL_DEADLINE_MS}ms`);
+        expect(requests).toHaveLength(2);
+    });
+
+    it('seals aborted without a retry when the caller aborts a stalled response', async () => {
+        const controller = new AbortController();
+        const abortTimer = setTimeout(() => controller.abort(), STALL_DEADLINE_MS / 3);
+
+        try {
+            const { outcome, requests } = await runScripted(
+                [{ kind: ScriptedReplyKind.Stall }, verdictCall(VALID_PAYLOAD)],
+                {
+                    budgets: { requestTimeoutMs: STALL_DEADLINE_MS },
+                    retries: { maxRetries: 1, baseDelayMs: 1 },
+                    signal: controller.signal,
+                },
+            );
+
+            expect(outcome.kind).toBe(SealKind.Aborted);
+            expect(requests).toHaveLength(1);
+        } finally {
+            clearTimeout(abortTimer);
+        }
+    });
+
     it('lets a live response keep streaming past the request deadline', async () => {
-        // The deadline bounds SILENCE, not a response's total length. Two live runs sealed
-        // request-deadline with tokens still arriving — the model had simply reasoned for more
-        // than five minutes — so a stream that keeps producing must reach its own ending however
-        // long that takes, with the wall-clock budget bounding the run instead.
+        // The deadline bounds SILENCE, not a response's total length. Two live runs were cut with
+        // tokens still arriving — the model had simply reasoned for more than five minutes — so a
+        // stream that keeps producing must reach its own ending however long that takes, with the
+        // wall-clock budget bounding the run instead.
         const started = Date.now();
         const { outcome, requests } = await runScripted(
             [
@@ -959,9 +993,7 @@ describe('runAgentSession', () => {
         >();
         expectTypeOf<ProviderFailureSealed['message']>().toEqualTypeOf<string>();
         expectTypeOf<BudgetExceededSealed['budget']>().toEqualTypeOf<
-            | typeof GuardCause.WallClock
-            | typeof GuardCause.Turns
-            | typeof GuardCause.RequestDeadline
+            typeof GuardCause.WallClock | typeof GuardCause.Turns
         >();
         expectTypeOf<AbortedSealed['message']>().toEqualTypeOf<string>();
     });

@@ -43,11 +43,13 @@ import type { UsageReport } from './usage-reporting';
  *
  * Sealing paths: terminal acceptance, the rejection cap, the nudge-exhausted no-terminal diagnosis,
  * provider-failure after the configured retry bounds (or immediately for a non-transient message),
- * budget-exceeded from the wall-clock, iteration or per-request guards, and caller abort (mid-run
- * or before the run started). The two-phase nudge flow and the sealed-outcome vocabulary live in
- * `run-sealing.ts`, the turn-end and compaction observation and the run's usage report in
- * `session-telemetry.ts`, and the guards that stop a run in `run-guards.ts`. `mode-session.ts`
- * supplies the production prompt texts, budgets and retry values per mode.
+ * budget-exceeded from the wall-clock or iteration guards, and caller abort (mid-run or before the
+ * run started). A provider response that goes silent is one of the transient failures: the provider
+ * registration bounds it (`stream-silence.ts`) and pi retries it like any other. The two-phase
+ * nudge flow and the sealed-outcome vocabulary live in `run-sealing.ts`, the turn-end and
+ * compaction observation and the run's usage report in `session-telemetry.ts`, and the guards that
+ * stop a run in `run-guards.ts`. `mode-session.ts` supplies the production prompt texts, budgets
+ * and retry values per mode.
  */
 
 /**
@@ -282,12 +284,12 @@ function toPiTool(
  * installed dists).
  *
  * The run enforces exactly one nudge re-prompt when a turn ends in prose, the configured bounds for
- * retrying transient provider failures, and the run budgets (wall-clock, iteration backstop,
- * per-request provider deadline); the two-phase flow and the sealed-outcome vocabulary themselves
- * live in `run-sealing.ts`, while this stays the only way to run a session. The terminal-rejection
- * observation is established once per run and spans both prompt phases. Caller aborts seal as
- * `aborted`, including a signal already aborted when this function is entered — that seals
- * immediately, without building or dispatching anything.
+ * retrying transient provider failures, and the run budgets (wall-clock, iteration backstop, and
+ * the per-request provider deadline pi passes to every request); the two-phase flow and the
+ * sealed-outcome vocabulary themselves live in `run-sealing.ts`, while this stays the only way to
+ * run a session. The terminal-rejection observation is established once per run and spans both
+ * prompt phases. Caller aborts seal as `aborted`, including a signal already aborted when this
+ * function is entered — that seals immediately, without building or dispatching anything.
  *
  * @param options - Runtime, prompt texts, tool set, budgets, retry bounds, cancellation, work
  *   directory, and optional logger.

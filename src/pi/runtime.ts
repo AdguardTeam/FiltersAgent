@@ -1,9 +1,12 @@
 import { InMemoryCredentialStore, type Api, type Model } from '@earendil-works/pi-ai';
+import { streamSimple as streamAnthropicMessages } from '@earendil-works/pi-ai/api/anthropic-messages';
+import { streamSimple as streamOpenAiCompletions } from '@earendil-works/pi-ai/api/openai-completions';
 import { ModelRuntime } from '@earendil-works/pi-coding-agent';
 import type { LlmConfig } from '../config/config';
 import { LlmApi } from '../config/llm-api';
 import { ReasoningEffort } from '../config/reasoning-effort';
 import { installHttpTransport } from './http-transport';
+import { boundStreamSilence, type SimpleStreamFunction } from './stream-silence';
 
 /**
  * Pi runtime setup: turn application provider configuration into a ready pi model runtime — the
@@ -90,6 +93,28 @@ const API_COMPAT_PROFILE = {
         forceAdaptiveThinking: true,
     },
 } as const satisfies { [K in LlmApi]: NonNullable<Model<K>['compat']> };
+
+/**
+ * Pi's built-in stream implementation for the configured API: what a provider registered without
+ * its own `streamSimple` would use, and what the registered one wraps.
+ *
+ * Pi calls a registration's `streamSimple` only for models of that registration's own API
+ * (`provider-composer.js` of the pinned 0.84.1), so the narrowing of each model is the one pi
+ * guarantees; the registration type itself is not generic over the API.
+ *
+ * @param api - The configured API.
+ * @returns The built-in implementation, typed for a provider registration.
+ */
+function builtInStream(api: LlmApi): SimpleStreamFunction {
+    switch (api) {
+        case LlmApi.OpenAiCompletions:
+            return (model, context, options) =>
+                streamOpenAiCompletions(model as Model<typeof api>, context, options);
+        case LlmApi.AnthropicMessages:
+            return (model, context, options) =>
+                streamAnthropicMessages(model as Model<typeof api>, context, options);
+    }
+}
 
 /**
  * The provider registration shape accepted by `ModelRuntime.registerProvider`.
@@ -350,7 +375,13 @@ export async function createPiRuntime(config: PiRuntimeConfig): Promise<PiRuntim
         modelsPath: null,
         credentials: new InMemoryCredentialStore(),
     });
-    const provider = { baseUrl: config.baseUrl, api: config.api };
+    // Every request of the runtime — agent turns, compaction summaries, single-shot calls — streams
+    // through this one implementation, so the silence bound applies to all of them alike.
+    const provider = {
+        baseUrl: config.baseUrl,
+        api: config.api,
+        streamSimple: boundStreamSilence(builtInStream(config.api)),
+    };
     modelRuntime.registerProvider(REASONING_PROVIDER_ID, {
         ...provider,
         name: 'LLM',

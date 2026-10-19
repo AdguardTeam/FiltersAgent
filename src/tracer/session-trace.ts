@@ -53,16 +53,13 @@ export const COMPACTION_DECISION_PHASE = 'context_compacted';
  * Which typed reason each run budget ends a run for, total over the budget union so a new bound
  * cannot silently inherit another's reason.
  *
- * The three endings are not the same failure, and a maintainer reading the issue comment has only
- * this to tell them apart: a provider response that went silent says nothing about the
- * investigation (the model was mid-thought), an expired wall clock says the work did not fit the
- * time it was given, and the iteration backstop says the loop was going in circles. Collapsing all
- * three onto `max_iterations_exceeded` would report every one of them as "The agent loop reached
- * its budget".
+ * The two endings are not the same failure, and a maintainer reading the issue comment has only
+ * this to tell them apart: an expired wall clock says the work did not fit the time it was given,
+ * and the iteration backstop says the loop was going in circles. Collapsing both onto
+ * `max_iterations_exceeded` would report the wall clock as "The agent loop reached its budget".
  */
 const BUDGET_TERMINATION_REASONS: Record<BudgetExceededSealed['budget'], AgentTerminationReason> = {
     [GuardCause.Turns]: AgentTerminationReason.MaxIterationsExceeded,
-    [GuardCause.RequestDeadline]: AgentTerminationReason.RequestDeadlineExceeded,
     [GuardCause.WallClock]: AgentTerminationReason.WallClockExceeded,
 };
 

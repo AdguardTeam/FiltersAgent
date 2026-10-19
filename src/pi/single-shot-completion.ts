@@ -15,19 +15,17 @@ import { isTransientGatewayFailure } from './transient-gateway-retry';
 
 /**
  * One bounded provider completion for the single-shot mechanism: the pi request mapping (sampling,
- * reasoning effort, caps, retries, cache affinity) and the INACTIVITY bound over the streamed
- * response. `single-shot.ts` owns the structured repair loop and the consumer-facing client and
- * calls exactly this for every attempt it makes.
+ * reasoning effort, caps, retries, cache affinity), the total-duration ceiling over the streamed
+ * response, and the retry of transient failures. `single-shot.ts` owns the structured repair loop
+ * and the consumer-facing client and calls exactly this for every attempt it makes.
  *
- * Split out of `single-shot.ts` because the stall bound is a second responsibility with its own
- * vocabulary — the stream, its events and the abort composed from two sources — and because both
- * modules stay inside the repo's ~500-line rule that way.
+ * Split out of `single-shot.ts` because the ceiling and the retry are a second responsibility with
+ * their own vocabulary — the stream, its events and the abort composed from two sources — and
+ * because both modules stay inside the repo's ~500-line rule that way.
  *
- * Provider SDK request timeouts bound request setup for both APIs; they do not guarantee an
- * inactivity bound over the streamed body. A provider that sends headers and then goes silent needs
- * a separate timer. The OpenAI SDK clears its request timer at the headers, and an Anthropic SSE
- * stream can likewise stop producing before its terminal event. The agent loop bounds that silence
- * in run-guards.ts; single-shot calls use the same re-armed inactivity rule.
+ * Silence inside a streamed response is not bounded here: `timeoutMs` reaches the provider
+ * registration every request streams through (`stream-silence.ts`), which ends a stalled response
+ * as a transient error, and `completeOnce` retries it like any other.
  */
 
 /**
@@ -115,29 +113,6 @@ function ceilingMessage(
 }
 
 /**
- * Describe the stall that ended one streamed completion, for the typed failure and its log line.
- *
- * The provider's own text is kept beside it: the abort is ours, so pi reports only "Request was
- * aborted", and a failure whose whole diagnosis is a bare code is what this codebase forbids.
- *
- * @param stallBoundMs - The inactivity bound the stream exceeded.
- * @param streamedEvents - Progress events the stream produced before it went silent, so a
- *   post-mortem can tell a stream that stalled on its first token from one that stalled mid-reply.
- * @param providerMessage - Pi's own error text for the aborted request, when it carried one.
- * @returns The single-line failure message naming the stall.
- */
-function stallMessage(
-    stallBoundMs: number,
-    streamedEvents: number,
-    providerMessage: string | undefined,
-): string {
-    const stall =
-        `single-shot stream made no streamed progress for ${stallBoundMs}ms ` +
-        `(${streamedEvents} streamed events before the stall)`;
-    return providerMessage === undefined ? stall : `${stall}: ${providerMessage}`;
-}
-
-/**
  * Options one bounded completion takes beyond the messages it sends.
  */
 export type SingleShotCompletionOptions = Omit<SingleShotCallOptions, 'messages'> & {
@@ -166,11 +141,9 @@ export interface SingleShotCompletion {
  * Run a bounded completion, preserving the final message and every observed attempt's usage.
  *
  * The response is bounded in two halves, both from `options.timeoutMs`: up to the headers by the
- * SDK's own `timeout`, and from there to the end of the assistant message by the inactivity
- * deadline armed here. The deadline aborts the request, which pi resolves into an `aborted`
- * assistant message; the returned message then names the stall so the caller's existing
- * provider-failure path reports and logs it without a second failure shape. A caller abort still
- * wins: its message is returned exactly as pi produced it.
+ * SDK's own `timeout`, and from there to the end of the assistant message by the silence bound of
+ * the provider registration. Either one ends a silent request as a transient error, which is
+ * retried below. A caller abort still wins: its message is returned exactly as pi produced it.
  *
  * @param runtime - The pi runtime the model handle belongs to.
  * @param model - Model handle to call.
@@ -280,7 +253,8 @@ async function sleepUnlessAborted(
 }
 
 /**
- * One streamed completion with the inactivity bound, no retry: what {@link completeOnce} repeats.
+ * One streamed completion with the total-duration ceiling, no retry: what {@link completeOnce}
+ * repeats.
  *
  * @param runtime - The pi runtime the call goes through.
  * @param model - Bound model handle.
@@ -296,15 +270,12 @@ async function completeUnretried(
     messages: Message[],
     options: SingleShotCompletionOptions,
 ): Promise<AssistantMessage> {
-    const stallBoundMs = options.timeoutMs;
     const ceilingMs = options.ceilingMs;
     // Composed before the request: the signals have to be in the options pi builds the request
     // from.
-    const stallController = new AbortController();
     const ceilingController = new AbortController();
     const sources = [
         ...(options.signal === undefined ? [] : [options.signal]),
-        ...(stallBoundMs === undefined ? [] : [stallController.signal]),
         ...(ceilingMs === undefined ? [] : [ceilingController.signal]),
     ];
     const signal = sources.length === 0 ? undefined : AbortSignal.any(sources);
@@ -315,31 +286,16 @@ async function completeUnretried(
             temperature: options.temperature ?? DEFAULT_TEMPERATURE,
             ...reasoningRequestFields(options.reasoningEffort),
             ...(options.maxTokens !== undefined ? { maxTokens: options.maxTokens } : {}),
-            ...(stallBoundMs !== undefined ? { timeoutMs: stallBoundMs } : {}),
+            ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
             ...(options.maxRetries !== undefined ? { maxRetries: options.maxRetries } : {}),
             ...(options.sessionId !== undefined ? { sessionId: options.sessionId } : {}),
             ...(signal !== undefined ? { signal } : {}),
         },
     );
-    let stalled = false;
     let exceededCeiling = false;
     let streamedEvents = 0;
-    let stallTimer: NodeJS.Timeout | undefined;
-    const armStallTimer = (): void => {
-        if (stallBoundMs === undefined) {
-            return;
-        }
-        if (stallTimer !== undefined) {
-            clearTimeout(stallTimer);
-        }
-        stallTimer = setTimeout(() => {
-            stalled = true;
-            stallController.abort();
-        }, stallBoundMs);
-        stallTimer.unref();
-    };
     // The ceiling is armed once, with the request, and never re-armed: it bounds the whole call,
-    // which is exactly what the re-armed inactivity bound below cannot do.
+    // which is exactly what the re-armed silence bound of the provider registration cannot do.
     const ceilingTimer =
         ceilingMs === undefined
             ? undefined
@@ -349,22 +305,14 @@ async function completeUnretried(
               }, ceilingMs);
     ceilingTimer?.unref();
     try {
-        armStallTimer();
-        // Every event is a sign of life — a text or thinking delta, a tool-call delta, the stream's
-        // own start — so the deadline measures the gap since the last one and never the response's
-        // total length: a model that streams its reasoning for many minutes is alive. The terminal
-        // `done`/`error` event is the ending rather than progress, so only the events ahead of it
-        // are counted for the diagnostics.
+        // The terminal `done`/`error` event is the ending rather than progress, so only the events
+        // ahead of it are counted for the diagnostics.
         for await (const event of stream) {
             if (event.type !== 'done' && event.type !== 'error') {
                 streamedEvents += 1;
             }
-            armStallTimer();
         }
     } finally {
-        if (stallTimer !== undefined) {
-            clearTimeout(stallTimer);
-        }
         if (ceilingTimer !== undefined) {
             clearTimeout(ceilingTimer);
         }
@@ -377,12 +325,6 @@ async function completeUnretried(
         return {
             ...message,
             errorMessage: ceilingMessage(ceilingMs, streamedEvents, message.errorMessage),
-        };
-    }
-    if (stalled && stallBoundMs !== undefined) {
-        return {
-            ...message,
-            errorMessage: stallMessage(stallBoundMs, streamedEvents, message.errorMessage),
         };
     }
     return message;

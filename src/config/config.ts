@@ -102,10 +102,11 @@ const DEFAULT_REQUEST_MAX_ATTEMPTS = 2;
  * Default deadline for one provider request, the schema ceiling.
  *
  * The deadline bounds SILENCE, not a response's total length: up to the response headers it is the
- * SDK's own request timeout, and from there it is the run guard's inactivity window, restarted on
- * every streamed delta (`RunBudgets.requestTimeoutMs`). So a model that reasons for longer than
- * this while tokens keep arriving is left alone; a stream that stops producing for this long is
- * not, and the run's total duration is bounded by the wall-clock budget instead.
+ * SDK's own request timeout, and from there it is the provider registration's silence bound,
+ * restarted on every streamed event (`RunBudgets.requestTimeoutMs`). So a model that reasons for
+ * longer than this while tokens keep arriving is left alone; a stream that stops producing for this
+ * long fails that request, which is retried, and the run's total duration is bounded by the
+ * wall-clock budget instead.
  *
  * Why the ceiling: with `LLM_REASONING_EFFORT` at `high` the reasoning model's thinking regularly
  * outlives two minutes, and a two-minute deadline leaves most runs carrying "Request timed out."

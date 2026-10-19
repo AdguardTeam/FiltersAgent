@@ -4,6 +4,7 @@ import * as v from 'valibot';
 import { ReasoningEffort } from '../../src/config/reasoning-effort';
 import { createSingleShotClient } from '../../src/pi/single-shot';
 import { SingleShotResultKind } from '../../src/pi/single-shot-types';
+import { TurnStopReason } from '../../src/pi/stop-reason';
 import {
     MAX_VISION_IMAGE_BYTES,
     VISION_IMAGE_LIMITS,
@@ -356,7 +357,7 @@ describe('runStructuredSingleShot', () => {
             if (result.kind !== SingleShotResultKind.ProviderFailure) {
                 return;
             }
-            expect(result.stopReason).toBe('aborted');
+            expect(result.stopReason).toBe(TurnStopReason.Aborted);
         } finally {
             clearTimeout(abortTimer);
         }
@@ -367,7 +368,10 @@ describe('runStructuredSingleShot', () => {
         // moment the headers arrive, so a gateway that answered and then went silent left the call
         // unbounded. One live run sat in such a call for 44 minutes and ran 30 minutes
         // past its wall-clock budget, because the run guard cannot end a call that never returns.
-        provider = await startHermeticProvider({ scenario: HermeticScenario.StallAfterHeaders });
+        provider = await startHermeticProvider({
+            scenario: HermeticScenario.Scripted,
+            scriptExhausted: { kind: ScriptedReplyKind.Stall },
+        });
         const runtime = await createTestPiRuntime({ baseUrl: provider.baseUrl });
         const client = createSingleShotClient(runtime, runtime.visionModel, {
             timeoutMs: STALL_DEADLINE_MS,
@@ -383,11 +387,34 @@ describe('runStructuredSingleShot', () => {
         if (result.kind !== SingleShotResultKind.ProviderFailure) {
             return;
         }
-        expect(result.stopReason).toBe('aborted');
+        expect(result.stopReason).toBe(TurnStopReason.Error);
         // The failure names the stall, so a post-mortem sees why the call ended.
         expect(result.message).toContain(`${STALL_DEADLINE_MS}ms`);
         // Bounded by the deadline, not by the suite's own timeout.
         expect(Date.now() - started).toBeLessThan(BOUNDED_BY_DEADLINE_MS);
+    });
+
+    it('retries a stalled stream and parses the next reply', async () => {
+        provider = await startHermeticProvider({
+            scenario: HermeticScenario.Scripted,
+            script: [
+                { kind: ScriptedReplyKind.Stall },
+                { kind: ScriptedReplyKind.Text, text: '{"verdict":"present","count":3}' },
+            ],
+        });
+        const runtime = await createTestPiRuntime({ baseUrl: provider.baseUrl });
+        const client = createSingleShotClient(runtime, runtime.visionModel, {
+            timeoutMs: STALL_DEADLINE_MS,
+            maxRetries: 1,
+        });
+
+        const result = await client.structured({
+            messages: [{ role: 'user', text: 'inspect' }],
+            schema: VerdictSchema,
+        });
+
+        expect(result.kind).toBe(SingleShotResultKind.Parsed);
+        expect(provider.requests).toHaveLength(2);
     });
 
     it('parses a live but slow stream whose total length outlives the deadline', async () => {
@@ -456,7 +483,7 @@ describe('runStructuredSingleShot', () => {
         if (result.kind !== SingleShotResultKind.ProviderFailure) {
             return;
         }
-        expect(result.stopReason).toBe('aborted');
+        expect(result.stopReason).toBe(TurnStopReason.Aborted);
         expect(result.message).toContain(`${STALL_DEADLINE_MS}ms ceiling`);
         expect(Date.now() - started).toBeLessThan(BOUNDED_BY_DEADLINE_MS);
     });

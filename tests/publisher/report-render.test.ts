@@ -743,11 +743,11 @@ describe('summarizeReportOutcome', () => {
         expect(rendered).not.toContain('openrouter.ai');
     });
 
-    it('tells the three run budgets apart in the rendered outcome reason', () => {
+    it('tells the run budgets apart in the rendered outcome reason', () => {
         // Every budget seal used to report `max_iterations_exceeded`, so the comment read "The
-        // agent loop reached its budget" whether one provider response had stalled, the wall clock
-        // had expired, or the loop had genuinely gone in circles. A maintainer reading the issue
-        // has only this line, and it has to say which.
+        // agent loop reached its budget" whether the wall clock had expired or the loop had
+        // genuinely gone in circles. A maintainer reading the issue has only this line, and it has
+        // to say which.
         const reasonFor = (agentTerminationReason: AgentTerminationReason): string =>
             summarizeReportOutcome(
                 {
@@ -761,12 +761,10 @@ describe('summarizeReportOutcome', () => {
                 ARTIFACTS_LINK,
             ).outcomeReason;
 
-        const deadline = reasonFor(AgentTerminationReason.RequestDeadlineExceeded);
         const wallClock = reasonFor(AgentTerminationReason.WallClockExceeded);
         const iterations = reasonFor(AgentTerminationReason.MaxIterationsExceeded);
 
-        expect(new Set([deadline, wallClock, iterations]).size).toBe(3);
-        expect(deadline).toMatch(/deadline/i);
+        expect(wallClock).not.toBe(iterations);
         expect(wallClock).toMatch(/wall-clock/i);
         expect(iterations).toMatch(/iteration/i);
     });

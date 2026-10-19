@@ -181,9 +181,10 @@ export interface SingleShotCallOptions {
      *   This does not guarantee an inactivity bound over its streamed response.
      * - From there to the end of the assistant message as an INACTIVITY deadline over the streamed
      *   response, armed on the stream's first event and re-armed on every event after it
-     *   (`single-shot-completion.ts`). It bounds the GAP between events, never the response's total
-     *   length, so a model that streams its reasoning for many minutes is alive; a stream that
-     *   opened and stopped producing is aborted and returns a provider-failure naming the stall.
+     *   (`stream-silence.ts`, applied by the provider registration). It bounds the GAP between
+     *   events, never the response's total length, so a model that streams its reasoning for many
+     *   minutes is alive; a stream that opened and stopped producing ends as a transient error
+     *   naming the timeout, which is retried within `maxRetries`.
      */
     timeoutMs?: number;
 

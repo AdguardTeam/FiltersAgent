@@ -36,13 +36,6 @@ export const HermeticScenario = {
     Hang: 'hang',
 
     /**
-     * SSE headers and one assistant text delta are sent, then the stream stalls forever: the half
-     * of a request the OpenAI SDK's `timeout` does not cover, because it is cleared as soon as the
-     * headers arrive.
-     */
-    StallAfterHeaders: 'stall-after-headers',
-
-    /**
      * The Nth completion request receives the Nth scripted reply of the `script` queue.
      */
     Scripted: 'scripted',
@@ -127,6 +120,13 @@ export const ScriptedReplyKind = {
      * turn whose message is exactly `Provider finish_reason: <reason>`.
      */
     FinishReason: 'finish-reason',
+
+    /**
+     * A 200 SSE response that streams one text delta and then goes silent, sending only SSE
+     * keep-alive comments until the client gives up: a stream that opened and stalled while its
+     * connection stays busy, so no byte-level timeout can see the stall.
+     */
+    Stall: 'stall',
 } as const;
 
 /**
@@ -277,6 +277,12 @@ export type ScriptedReply =
            * The `finish_reason` value of the final chunk, for example `error` or `content_filter`.
            */
           reason: string;
+      }
+    | {
+          /**
+           * Discriminator: a 200 SSE response that stalls after its first delta.
+           */
+          kind: typeof ScriptedReplyKind.Stall;
       };
 
 /**
@@ -289,6 +295,12 @@ const DEFAULT_REPLY_TEXT = 'pong';
  * the stream produced something, so the text is a fixed marker rather than a knob.
  */
 const PACED_DELTA_TEXT = 'thinking ';
+
+/**
+ * Gap between the SSE keep-alive comments of a stalled reply: far inside any stall deadline a suite
+ * sets, so the connection never goes quiet while the model does.
+ */
+export const STALL_KEEP_ALIVE_INTERVAL_MS = 50;
 
 /**
  * Default tool identity served by the ToolCall scenario.
@@ -724,26 +736,6 @@ export async function startHermeticProvider(
                 response.on('close', () => hanging.delete(response));
                 return;
             }
-            if (options.scenario === HermeticScenario.StallAfterHeaders) {
-                response.writeHead(200, {
-                    'content-type': 'text/event-stream',
-                    'cache-control': 'no-cache',
-                    connection: 'keep-alive',
-                });
-                sendEvent(response, {
-                    ...chunkBase(model),
-                    choices: [
-                        {
-                            index: 0,
-                            delta: { role: 'assistant', content: 'thinking' },
-                            finish_reason: null,
-                        },
-                    ],
-                });
-                hanging.add(response);
-                response.on('close', () => hanging.delete(response));
-                return;
-            }
             const scriptedReply =
                 options.scenario === HermeticScenario.Scripted
                     ? (options.script?.[requests.length - 1] ??
@@ -787,6 +779,31 @@ export async function startHermeticProvider(
                     error: { message: scriptedReply.message, code: scriptedReply.code },
                 });
                 response.end();
+                return;
+            }
+            if (scriptedReply?.kind === ScriptedReplyKind.Stall) {
+                // One delta opens the assistant message; from then on only comments arrive, which
+                // keep the socket busy and carry nothing the model produced.
+                sendEvent(response, {
+                    ...chunkBase(model),
+                    choices: [
+                        {
+                            index: 0,
+                            delta: { role: 'assistant', content: 'thinking' },
+                            finish_reason: null,
+                        },
+                    ],
+                });
+                const keepAlive = setInterval(() => {
+                    if (!response.writableEnded && !response.destroyed) {
+                        response.write(': keep-alive\n\n');
+                    }
+                }, STALL_KEEP_ALIVE_INTERVAL_MS);
+                hanging.add(response);
+                response.on('close', () => {
+                    clearInterval(keepAlive);
+                    hanging.delete(response);
+                });
                 return;
             }
             if (scriptedReply?.kind === ScriptedReplyKind.FinishReason) {

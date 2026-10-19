@@ -192,6 +192,11 @@ export interface ScriptedSessionOptions {
      * Retry bounds under test.
      */
     retries: RunRetryBounds;
+
+    /**
+     * Run bounds under test; absent keeps `TEST_RUN_BUDGETS`.
+     */
+    budgets?: RunBudgets;
 }
 
 /**
@@ -213,7 +218,7 @@ export async function runScriptedSession(options: ScriptedSessionOptions) {
         userTask: 'Work the tools, then submit the verdict.',
         nudge: 'Call submit_verdict now.',
         terminal,
-        budgets: TEST_RUN_BUDGETS,
+        budgets: options.budgets ?? TEST_RUN_BUDGETS,
         retries: options.retries,
         reasoningEffort: TEST_REASONING_EFFORT,
         workDir: options.workDir,

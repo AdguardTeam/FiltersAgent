@@ -39,8 +39,9 @@ export const PROVIDER_REJECTION_PREFIX = 'provider rejected the request:';
  *
  * The contract types live in `single-shot-types.ts` and are imported FROM there by every consumer;
  * this module re-exports none of them, so every symbol has one reachable origin. One bounded
- * provider completion — the pi request mapping and the inactivity deadline over the streamed
- * response — is `single-shot-completion.ts`, which every attempt made here goes through.
+ * provider completion — the pi request mapping, the ceiling over the streamed response and the
+ * transient-failure retry — is `single-shot-completion.ts`, which every attempt made here goes
+ * through.
  */
 
 /**

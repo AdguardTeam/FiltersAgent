@@ -13,6 +13,7 @@ import { TEST_PROVIDER_ENV } from '../config/test-core-config';
 import { LlmApi } from '../../src/config/llm-api';
 import { ReasoningEffort } from '../../src/config/reasoning-effort';
 import { registerAdditionalTextModel } from '../../src/pi/runtime';
+import type { RunBudgets } from '../../src/pi/guard-types';
 import { SealKind } from '../../src/pi/seal-types';
 import { createSingleShotClient } from '../../src/pi/single-shot';
 import { SingleShotResultKind } from '../../src/pi/single-shot-types';
@@ -53,6 +54,12 @@ afterEach(async () => {
     provider = undefined;
 });
 
+/**
+ * Silence bound of the stall suite: long enough for a hermetic turn, short enough to keep the suite
+ * fast.
+ */
+const STALL_DEADLINE_MS = 300;
+
 async function runScripted(
     script: ScriptedReply[] = [
         {
@@ -61,6 +68,7 @@ async function runScripted(
             toolArguments: JSON.stringify({ verdict: 'ok', summary: 'done' }),
         },
     ],
+    budgets?: RunBudgets,
 ) {
     provider = await startHermeticAnthropicProvider({
         script,
@@ -74,6 +82,7 @@ async function runScripted(
         baseUrl: provider.baseUrl,
         api: LlmApi.AnthropicMessages,
         retries: { maxRetries: 2, baseDelayMs: 0 },
+        ...(budgets === undefined ? {} : { budgets }),
         workDir,
     });
     return { outcome, requests: provider.requests };
@@ -117,6 +126,23 @@ describe('Anthropic Messages API', () => {
                 toolArguments: JSON.stringify({ verdict: 'ok', summary: 'after the overload' }),
             },
         ]);
+
+        expect(outcome.kind).toBe(SealKind.Terminal);
+        expect(requests).toHaveLength(2);
+    });
+
+    it('retries a turn whose stream opened and then sent only pings', async () => {
+        const { outcome, requests } = await runScripted(
+            [
+                { kind: ScriptedReplyKind.Stall },
+                {
+                    kind: ScriptedReplyKind.ToolCall,
+                    toolName: TERMINAL_TOOL_NAME,
+                    toolArguments: JSON.stringify({ verdict: 'ok', summary: 'after the stall' }),
+                },
+            ],
+            { requestTimeoutMs: STALL_DEADLINE_MS },
+        );
 
         expect(outcome.kind).toBe(SealKind.Terminal);
         expect(requests).toHaveLength(2);

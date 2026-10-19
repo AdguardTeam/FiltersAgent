@@ -7,10 +7,14 @@
  * `inspect_full_page_capture` can hold a 60-minute run for 90 minutes.
  *
  * Why ten minutes: `inspect_full_page_capture` is a BATCH — one overview call plus one per three
- * original-resolution tiles, so a tall page legitimately spends several completions in one call —
- * and each of those completions is itself bounded by the configured per-request inactivity
- * deadline, at most 300 s (`llm.requestTimeoutMs`). Ten minutes therefore leaves a healthy batch
- * ample room while capping the call at roughly two stalled completions, and the batch stops at the
- * first aborted one rather than paying for the rest.
+ * original-resolution tiles, so a tall page legitimately spends several completions in one call.
+ * Verified batches finish within a few minutes, so ten leaves a healthy call ample room.
+ *
+ * This deadline does not wait for a failing completion to give up on its own. A completion that
+ * stalls is attempted up to `llm.requestMaxAttempts` times, and each attempt is bounded only by the
+ * single-shot ceiling, silence included, so its own failure can take far longer than any share of a
+ * 60-minute run one tool call should hold. When it does, the deadline ends the whole call, the
+ * batches that already finished are lost with it, and the agent gets a retryable error. A single
+ * stall costs only its retry, which usually succeeds.
  */
 export const VISION_TOOL_DEADLINE_MS = 10 * 60_000;

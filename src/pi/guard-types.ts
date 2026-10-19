@@ -21,13 +21,6 @@ export const GuardCause = {
     Turns: 'turns',
 
     /**
-     * One provider response made no streamed progress for `RunBudgets.requestTimeoutMs`: its stream
-     * opened and then went silent, with neither a further delta nor the end of the assistant
-     * message. A response that keeps streaming for longer than that is alive and does not trip it.
-     */
-    RequestDeadline: 'request-deadline',
-
-    /**
      * The caller aborted the run through its abort signal.
      */
     Caller: 'caller',
@@ -60,21 +53,16 @@ export interface RunBudgets {
      * time. It is enforced in two halves, because neither half covers a whole request on its own:
      *
      * - Up to the response headers by pi's `retry.provider.timeoutMs` setting, which becomes the
-     *   selected provider SDK's request timeout on OpenAI or Anthropic. This bounds waiting for
-     *   response headers, so a provider that never answers fails here, as a timeout error pi's
-     *   auto-retry treats as transient.
-     * - From there to the end of the assistant message by the runner's own per-request guard, which
-     *   restarts on every streamed delta on either API. It supplies the same inactivity bound
-     *   regardless of the provider SDK's streaming behavior. Without it a provider that stopped
-     *   producing left one turn — and therefore the run — unbounded. The guard aborts the session
-     *   and the run seals `budget-exceeded` with `GuardCause.RequestDeadline`.
+     *   selected provider SDK's request timeout on OpenAI or Anthropic. A provider that never
+     *   answers fails here, as a timeout error pi's auto-retry treats as transient.
+     * - From there to the end of the assistant message by the silence bound every provider
+     *   registration streams through (`stream-silence.ts`), which restarts on every streamed event
+     *   and reads the same value from the request. A provider that stopped producing fails that one
+     *   request with a timeout error, which pi retries the same way.
      *
-     * This bounds a gap between deltas, never a response's total length: a reasoning model that
+     * This bounds a gap between events, never a response's total length: a reasoning model that
      * streams its thinking for many minutes is alive, and the run's total duration is bounded by
-     * `wallClockMs` instead.
-     *
-     * Pi's compaction summarization request is issued outside the agent loop and so is covered by
-     * the header half only.
+     * `wallClockMs` instead. Once the retries are spent the run seals `provider-failure`.
      *
      * Required: the deadline is a configuration field (`llm.requestTimeoutMs`, defaulted once at
      * the env boundary), so every run is bounded and no caller can leave a stalled response

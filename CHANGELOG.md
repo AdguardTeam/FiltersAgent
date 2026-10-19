@@ -69,6 +69,10 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Fixed
 
+- Fixed a model response that stops streaming after it opened ending the
+  whole run as `request_deadline_exceeded`: the request is now retried within
+  `LLM_REQUEST_MAX_ATTEMPTS`, and a run whose retries are spent ends as
+  `llm_error`.
 - Fixed benchmark failures before the filters checkout being reported as a
   filters-base mismatch instead of the original error.
 - Fixed benchmark cases ending as infrastructure failures, and

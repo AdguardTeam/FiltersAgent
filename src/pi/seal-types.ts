@@ -180,13 +180,9 @@ export interface BudgetExceededSealed {
     kind: typeof SealKind.BudgetExceeded;
 
     /**
-     * Which bound tripped: the wall-clock budget, the iteration backstop, or the per-request
-     * provider deadline.
+     * Which bound tripped: the wall-clock budget or the iteration backstop.
      */
-    budget:
-        | typeof GuardCause.WallClock
-        | typeof GuardCause.Turns
-        | typeof GuardCause.RequestDeadline;
+    budget: typeof GuardCause.WallClock | typeof GuardCause.Turns;
 
     /**
      * Human-readable detail naming the tripped limit.

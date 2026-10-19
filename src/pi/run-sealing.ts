@@ -331,10 +331,10 @@ async function runPromptPhase<T>(
  *
  * Guard causes outrank transcript state: an aborted in-flight request can end `error`/`aborted`,
  * but the run sealed because the bound tripped. Every cause is named here — the wall-clock budget,
- * the iteration backstop, the per-request provider deadline and caller cancellation — so no caller
- * has to re-seal an outcome this function already produced. A clean prose ending is the only
- * classification that earns the nudge, and it is reported as the ABSENCE of a sealed outcome rather
- * than as a sentinel string beside the typed union.
+ * the iteration backstop and caller cancellation — so no caller has to re-seal an outcome this
+ * function already produced. A clean prose ending is the only classification that earns the nudge,
+ * and it is reported as the ABSENCE of a sealed outcome rather than as a sentinel string beside the
+ * typed union.
  *
  * @param session - The built pi session.
  * @param guards - The run guards and their recorded cause.
@@ -347,17 +347,6 @@ function classifyEnd<T>(
     budgets: RunBudgets,
 ): TerminalOutcome<T> | undefined {
     const cause = guards.cause();
-    if (cause === GuardCause.RequestDeadline) {
-        // The runner's own per-request INACTIVITY timer, armed on the assistant `message_start`,
-        // re-armed on every streamed delta and disarmed on `message_end` — so it is never live
-        // while the terminal tool runs, and an accepted or capped settlement always wins the race
-        // in `settleRun` before this is consulted.
-        return {
-            kind: SealKind.BudgetExceeded,
-            budget: GuardCause.RequestDeadline,
-            detail: `no streamed progress for ${budgets.requestTimeoutMs}ms in one provider response`,
-        };
-    }
     if (cause === GuardCause.WallClock) {
         return {
             kind: SealKind.BudgetExceeded,

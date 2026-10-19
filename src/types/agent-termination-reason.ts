@@ -34,12 +34,6 @@ export const AgentTerminationReason = {
     MaxIterationsExceeded: 'max_iterations_exceeded',
 
     /**
-     * One provider response made no streamed progress within the per-request deadline, so the run
-     * was stopped inside that turn.
-     */
-    RequestDeadlineExceeded: 'request_deadline_exceeded',
-
-    /**
      * The investigation's wall-clock budget expired before a terminal decision.
      */
     WallClockExceeded: 'wall_clock_exceeded',

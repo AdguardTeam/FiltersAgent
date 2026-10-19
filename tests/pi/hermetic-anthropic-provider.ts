@@ -4,6 +4,7 @@ import {
     readBody,
     type ScriptedReply,
     ScriptedReplyKind,
+    STALL_KEEP_ALIVE_INTERVAL_MS,
     type StreamPacing,
 } from './hermetic-provider';
 
@@ -212,6 +213,7 @@ async function serveReply(
         case ScriptedReplyKind.ToolCall:
         case ScriptedReplyKind.StreamFault:
         case ScriptedReplyKind.FinishReason:
+        case ScriptedReplyKind.Stall:
             break;
         default: {
             const exhaustive: never = reply;
@@ -284,6 +286,22 @@ async function serveReply(
             textBlock(response, 0, 'partial');
             stopReason = reply.reason;
             break;
+        case ScriptedReplyKind.Stall: {
+            // The shape of a stalled Anthropic stream: an empty text block opens, then only pings
+            // arrive, which keep the connection busy and carry nothing the model produced.
+            sendEvent(response, {
+                type: 'content_block_start',
+                index: 0,
+                content_block: { type: 'text', text: '' },
+            });
+            const ping = setInterval(() => {
+                if (!response.destroyed) {
+                    sendEvent(response, { type: 'ping' });
+                }
+            }, STALL_KEEP_ALIVE_INTERVAL_MS);
+            response.on('close', () => clearInterval(ping));
+            return;
+        }
         default: {
             const exhaustive: never = reply;
             throw new Error(`Unknown streaming reply: ${JSON.stringify(exhaustive)}`);
