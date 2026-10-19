@@ -69,6 +69,21 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Fixed
 
+- Fixed two benchmark cases started at once on a fresh `--output-root`
+  failing with `EEXIST` while creating the shared output directory.
+- Fixed `###id` element-hiding rules being validated against the selector
+  without its `#`, so the experiment never found the element the rule hides.
+- Fixed `apply_rule` answering only `inconclusive` when a phase browser could
+  not load the reported page; the answer now names the phase and the error,
+  such as HTTP 403, and a candidate gets no third such experiment.
+- Fixed `apply_rule` on a breakage report blaming the symptom description when
+  the `adElementSelector` element stayed visible while the review saw the
+  breakage; the answer now names the selector.
+- Fixed the baseline and candidate phases being captured at different points
+  of a page's lazy loading, which made a correct rule look like it emptied
+  parts of a news feed.
+- Fixed refused and failed `open_page` navigations and full-page screenshot
+  failures missing from the run log.
 - Fixed a model response that stops streaming after it opened ending the
   whole run as `request_deadline_exceeded`: the request is now retried within
   `LLM_REQUEST_MAX_ATTEMPTS`, and a run whose retries are spent ends as

@@ -1,3 +1,4 @@
+import { pino } from 'pino';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -112,6 +113,7 @@ async function sessionRegistry(log: AppliedRulesLog, pageUrl = PAGE_URL) {
             session,
             analyzer: {} as SiteAnalyzer,
             artifactsDir: root,
+            logger: pino({ level: 'silent' }),
             recorder,
             allowedOrigin: PAGE_URL,
             appliedRules: log,

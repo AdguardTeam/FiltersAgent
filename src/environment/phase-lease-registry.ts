@@ -9,12 +9,12 @@
 import type { IBrowserSession } from '../browser/browser-interfaces';
 import {
     EnvironmentAdapterLimitationCode,
-    EnvironmentLifecycle,
     EnvironmentLimitationStage,
     type EnvironmentAdapterLimitation,
     type EnvironmentCleanupReceipt,
     type EnvironmentHandleDrainReceipt,
 } from './filtering-environment';
+import { EnvironmentLifecycle } from './environment-lifecycle';
 
 /**
  * Maximum characters one public limitation detail carries, matching `PublicDetailSchema`.

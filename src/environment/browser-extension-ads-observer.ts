@@ -12,21 +12,21 @@ import {
     type CandidateNetworkVerification,
 } from '../validator/candidate-network-verification';
 import type { NetworkRequestEntry } from '../browser/browser-interfaces';
-import { normalizeRule } from '../repo/rule-normalizer';
+import { RuleKind, normalizeRule } from '../repo/rule-normalizer';
+import { SelectorSource, type OverruledSelector } from '../types/overruled-selector';
+import { materializePage } from '../validator/page-materialization';
+import { describePhaseNavigationFailure } from '../validator/experiment-navigation-failure';
 import { runPhase } from '../validator/phase-capture';
 import type { AdsEnvironmentPhaseObservationInput } from '../validator/phase-orchestrator';
 import {
     presenceFromStructuralSnapshot,
     probeStructuralSnapshot,
 } from '../validator/structural-snapshot';
-import type { SingleShotClient } from '../pi/single-shot-types';
-import type { TraceRecorder } from '../tracer/trace-recorder';
 import {
     CandidateVisualVerdict,
     isCandidateVisualPageUsable,
     type CandidateVisualReview,
 } from '../types/candidate-visual-review';
-import type { ReproProfile } from '../types/repro-profile';
 import {
     AdElementPresence,
     PhaseLabel,
@@ -36,7 +36,6 @@ import {
     type StructuralSnapshot,
 } from '../types/validation';
 import { resolveValidatedSelector } from '../validator/candidate-selector';
-import type { TrustedValidationContext } from '../validator/trusted-validation-context';
 import { deriveCandidateArtifactExecutionSuffix } from '../types/candidate-artifact-identity';
 import {
     EnvironmentAdapterLimitationCode,
@@ -48,8 +47,8 @@ import {
 } from './filtering-environment';
 import { ReporterSymptomPresence } from '../types/reporter-symptom-presence';
 import { InteractionReplay, type InteractionReplayProjection } from './interaction-replay';
-import type { NormalizedSafeInteractionPlan } from './safe-interaction';
 import { measureDomChecks, pairDomCheckMeasurements } from './dom-check-runner';
+import type { BrowserExtensionAdsObserverOptions } from './browser-extension-ads-observer-options';
 import {
     candidateScreenshotArtifacts,
     environmentArtifact,
@@ -58,139 +57,7 @@ import {
     phaseScreenshotIds,
     withExtensionRuleFacts,
 } from './extension-phase-records';
-import type { DomCheck, DomCheckMeasurement, DomCheckRecord } from '../types/dom-check';
-
-/**
- * Runtime-owned inputs shared by all phases of one Extension candidate experiment.
- */
-export interface BrowserExtensionAdsObserverOptions {
-    /**
-     * Exact candidate rule persisted by the Extension in phase C.
-     */
-    candidateRule: string;
-
-    /**
-     * Optional explicit selector for a network candidate.
-     */
-    adElementSelector?: string;
-
-    /**
-     * Runner-bound target and repository baseline.
-     */
-    trustedValidationContext: TrustedValidationContext;
-
-    /**
-     * Browser profile shared by every adapter-owned phase.
-     */
-    profile: ReproProfile;
-
-    /**
-     * Trace and artifact owner shared with the fix runtime.
-     */
-    recorder: TraceRecorder;
-
-    /**
-     * Directory containing all phase artifacts.
-     */
-    artifactsDir: string;
-
-    /**
-     * Single-shot client used for structured phase and candidate review.
-     */
-    vision: SingleShotClient;
-
-    /**
-     * Bounded description of the reporter-defined symptom.
-     */
-    reporterSymptom: string;
-
-    /**
-     * Problem class driving the visual review rubric; ads semantics when omitted.
-     */
-    symptomKind?: SymptomKind;
-
-    /**
-     * One-based semantic candidate attempt number.
-     */
-    attemptNumber: number;
-
-    /**
-     * Whether Chromium requires the CI no-sandbox flag.
-     */
-    noSandbox: boolean;
-
-    /**
-     * Reveal steps the model passed to apply_rule, replayed identically in every phase.
-     */
-    interactionPlan?: NormalizedSafeInteractionPlan;
-
-    /**
-     * DOM checks the model attached to apply_rule, measured after capture in phases B and C.
-     */
-    domChecks?: readonly DomCheck[];
-
-    /**
-     * Optional bounded browser and vision seams used by behavioral fixtures.
-     */
-    dependencies?: BrowserExtensionAdsObserverDependencies;
-}
-
-/**
- * Bounded seams around browser and vision operations while retaining the production observer.
- */
-export interface BrowserExtensionAdsObserverDependencies {
-    /**
-     * Execute one browser phase through a deterministic fixture boundary.
-     */
-    runPhase?: (
-        input: AdsEnvironmentPhaseObservationInput,
-        config: Parameters<typeof runPhase>[0],
-    ) => ReturnType<typeof runPhase>;
-
-    /**
-     * Probe the candidate target through a deterministic fixture boundary.
-     */
-    probeStructuralSnapshot?: (
-        input: AdsEnvironmentPhaseObservationInput,
-        evaluator: Parameters<typeof probeStructuralSnapshot>[0],
-        selector: string,
-    ) => ReturnType<typeof probeStructuralSnapshot>;
-
-    /**
-     * Inspect one captured page through a deterministic fixture boundary.
-     */
-    inspectFullPageVisualCapture?: (
-        input: AdsEnvironmentPhaseObservationInput,
-        options: Parameters<typeof inspectFullPageVisualCapture>[0],
-        capture: Parameters<typeof inspectFullPageVisualCapture>[1],
-    ) => ReturnType<typeof inspectFullPageVisualCapture>;
-
-    /**
-     * Read one phase's recorded network log through a deterministic fixture boundary. Production
-     * reads the phase's own HAR artifact back from disk; a fixture that registers no HAR file
-     * supplies the entries directly.
-     */
-    readPhaseNetworkLog?: (
-        input: AdsEnvironmentPhaseObservationInput,
-        har: EnvironmentArtifactReference,
-    ) => NetworkRequestEntry[];
-
-    /**
-     * Resolve the exact before/after artifact pairing for candidate review.
-     */
-    resolveCandidateVisualEvidence?: (
-        input: AdsEnvironmentPhaseObservationInput,
-        options: Parameters<typeof resolveCandidateVisualEvidence>[0],
-    ) => ReturnType<typeof resolveCandidateVisualEvidence>;
-
-    /**
-     * Review one exact candidate pairing through a deterministic fixture boundary.
-     */
-    reviewCandidateVisually?: (
-        input: AdsEnvironmentPhaseObservationInput,
-        options: Parameters<typeof reviewCandidateVisually>[0],
-    ) => ReturnType<typeof reviewCandidateVisually>;
-}
+import type { DomCheckMeasurement, DomCheckRecord } from '../types/dom-check';
 
 /**
  * Complete phase material retained until phase C can bind before/after evidence.
@@ -287,6 +154,12 @@ export class BrowserExtensionAdsObserver {
     >();
 
     /**
+     * The bound selector whose geometry called the baseline healthy while vision saw the symptom
+     * there, or null when the baseline verdict followed vision.
+     */
+    private baselineVisionOverruledBy: OverruledSelector | null = null;
+
+    /**
      * Create one observer for a single candidate experiment.
      *
      * @param options - Trusted candidate, browser, vision, and artifact inputs.
@@ -334,6 +207,7 @@ export class BrowserExtensionAdsObserver {
             session: input.session,
             recorder: this.options.recorder,
             artifactsDir: this.options.artifactsDir,
+            logger: this.options.logger,
             allowedOrigin: this.options.trustedValidationContext.reportedUrl,
             consentStrategy: this.options.profile.consentStrategy,
         });
@@ -342,13 +216,15 @@ export class BrowserExtensionAdsObserver {
             this.options.adElementSelector,
         );
         const rememberedWindow = this.tileWindows.get('B') ?? this.tileWindows.get('A');
+        const trustedPageEvaluator = await createTrustedPageEvaluator(page);
         const phaseConfig: Parameters<typeof runPhase>[0] = {
             handlers,
             page,
             artifactsDir: this.options.artifactsDir,
             phase: input.phase,
             url: this.options.trustedValidationContext.reportedUrl,
-            trustedPageEvaluator: await createTrustedPageEvaluator(page),
+            trustedPageEvaluator,
+            materialize: async () => await materializePage(trustedPageEvaluator),
             ...(selector ? { adElementSelector: selector } : {}),
             ...(input.phase === PhaseLabel.C && rememberedWindow
                 ? { tileWindow: rememberedWindow }
@@ -370,6 +246,20 @@ export class BrowserExtensionAdsObserver {
             : await runPhase(phaseConfig);
         if (input.phase !== PhaseLabel.C && phaseResult.tileCoverage?.window) {
             this.tileWindows.set(input.phase, phaseResult.tileCoverage.window);
+        }
+        if (phaseResult.error !== undefined) {
+            return {
+                kind: 'failed',
+                sessionId: input.proof.sessionId,
+                limitation: {
+                    code: EnvironmentAdapterLimitationCode.PhaseNavigationFailed,
+                    stage: EnvironmentLimitationStage.Phase,
+                    detail: describePhaseNavigationFailure(input.phase, phaseResult),
+                },
+                ...(phaseResult.navigationFallbackReason === undefined
+                    ? {}
+                    : { navigationFallbackReason: phaseResult.navigationFallbackReason }),
+            };
         }
         if (phaseCaptureFailed(phaseResult, this.options.recorder, input.phase)) {
             return {
@@ -523,6 +413,21 @@ export class BrowserExtensionAdsObserver {
     }
 
     /**
+     * Name the selector whose geometry overruled vision in the filtered baseline.
+     *
+     * On a breakage report a bound selector decides the phase by whether its element is visible. A
+     * broken state drawn inside an element that stays visible — a wall inside an embedded player —
+     * then reads as a healthy baseline although vision saw the breakage, and the model needs to
+     * know the selector, not the description, is what failed.
+     *
+     * @returns The overruling selector and its source, or null when the baseline verdict followed
+     *   vision.
+     */
+    baselineVisionOverruledSelector(): OverruledSelector | null {
+        return this.baselineVisionOverruledBy;
+    }
+
+    /**
      * Read one phase's requests back from its HAR artifact.
      *
      * The HAR is the run's own redacted record, written by the phase runner moments earlier, so it
@@ -622,6 +527,23 @@ export class BrowserExtensionAdsObserver {
         candidateValidation: ValidatorObservedPhaseCompletion['candidateValidation'],
     ): ValidatorPhaseCompletion {
         const symptomPresent = this.symptomPresentInPhase(observed);
+        // Only the geometry branch can call a phase healthy that vision saw broken.
+        if (
+            input.phase === PhaseLabel.B &&
+            !symptomPresent &&
+            observed.symptomPresence === ReporterSymptomPresence.Present
+        ) {
+            this.baselineVisionOverruledBy = {
+                selector: resolveValidatedSelector(
+                    this.options.candidateRule,
+                    this.options.adElementSelector,
+                ),
+                source:
+                    normalizeRule(this.options.candidateRule).kind === RuleKind.Cosmetic
+                        ? SelectorSource.Rule
+                        : SelectorSource.AdElementSelector,
+            };
+        }
         let vision: ValidatorObservedPhaseCompletion['vision'];
         if (visualReview === null) {
             vision = {

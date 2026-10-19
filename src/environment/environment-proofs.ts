@@ -29,7 +29,16 @@ export const BoundedIdSchema = v.pipe(v.string(), v.minLength(1), v.maxLength(25
 /**
  * Bounded single-line public failure detail.
  */
-export const PublicDetailSchema = v.pipe(v.string(), v.minLength(1), v.maxLength(500));
+/**
+ * Longest public detail a proof or limitation carries; it is shown to the model and serialized.
+ */
+export const PUBLIC_DETAIL_MAX_LENGTH = 500;
+
+export const PublicDetailSchema = v.pipe(
+    v.string(),
+    v.minLength(1),
+    v.maxLength(PUBLIC_DETAIL_MAX_LENGTH),
+);
 
 /**
  * The one rendering of a structured value a read-back could not observe.

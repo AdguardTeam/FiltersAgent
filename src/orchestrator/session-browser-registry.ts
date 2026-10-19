@@ -163,6 +163,11 @@ export interface ProductionBrowserRegistryInput extends AgentRuntimeBrowserConte
     targetUrl: string;
 
     /**
+     * Run logger receiving the browser tools' navigation and capture failures.
+     */
+    logger: Logger;
+
+    /**
      * The run's issue snapshot, answering fetch_issue.
      */
     issue: RawIssue;
@@ -214,6 +219,7 @@ export async function createProductionBrowserRegistry(
             artifactsDir: input.artifactsDir,
             recorder: input.recorder,
             allowedOrigin: input.targetUrl,
+            logger: input.logger,
             vision: input.vision,
             reporterSymptom: input.reporterSymptom,
             openPageRetries: input.openPageRetries,

@@ -1,3 +1,4 @@
+import { pino } from 'pino';
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import { writeFileSync } from 'node:fs';
 import {
@@ -26,13 +27,17 @@ afterEach(() => {
 
 const publicResolver: HostnameResolver = vi.fn().mockResolvedValue(['93.184.216.34']);
 
-type TestBrowserToolConfig = Omit<BrowserToolConfig, 'allowedOrigin' | 'resolveHostname'> &
-    Partial<Pick<BrowserToolConfig, 'allowedOrigin' | 'resolveHostname'>>;
+type TestBrowserToolConfig = Omit<
+    BrowserToolConfig,
+    'allowedOrigin' | 'resolveHostname' | 'logger'
+> &
+    Partial<Pick<BrowserToolConfig, 'allowedOrigin' | 'resolveHostname' | 'logger'>>;
 
 function createTestBrowserToolHandlers(config: TestBrowserToolConfig): BrowserToolHandlers {
     return createBrowserToolHandlers({
         allowedOrigin: 'https://example.com',
         resolveHostname: publicResolver,
+        logger: pino({ level: 'silent' }),
         ...config,
     });
 }
@@ -954,6 +959,34 @@ describe('open_page', () => {
 
         expect(result.statusCode).toBe(403);
         expect(result.fallbackReason).toBe('http_blocked');
+    });
+
+    it('writes an HTTP-blocked navigation to the run log', async () => {
+        const page = {
+            ...mockSession().getPage(),
+            goto: vi.fn().mockResolvedValue({ status: () => 403 }),
+        };
+        const logged: Record<string, unknown>[] = [];
+        const logger = pino(
+            { level: 'warn' },
+            { write: (line: string) => logged.push(JSON.parse(line) as Record<string, unknown>) },
+        );
+        const tools = createTestBrowserToolHandlers({
+            session: mockSession({ getPage: vi.fn().mockReturnValue(page) }),
+            recorder: { addArtifact: vi.fn() } as unknown as TraceRecorder,
+            artifactsDir: '/tmp',
+            logger,
+        });
+
+        await tools.open_page({ url: 'https://example.com/blocked' });
+
+        expect(logged).toEqual([
+            expect.objectContaining({
+                targetUrl: 'https://example.com/blocked',
+                statusCode: 403,
+                fallbackReason: 'http_blocked',
+            }),
+        ]);
     });
 
     it('classifies a missing target separately from an HTTP block', async () => {

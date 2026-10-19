@@ -1,3 +1,4 @@
+import { pino } from 'pino';
 import { describe, expect, it, vi } from 'vitest';
 import type { Request, Route } from 'playwright-core';
 import { createBrowserToolHandlers } from '../../src/browser/browser-tools';
@@ -87,6 +88,7 @@ function fixture(policy: RedirectOriginPolicy = RedirectOriginPolicy.KeepRelated
         } as unknown as IBrowserSession,
         recorder: {} as TraceRecorder,
         artifactsDir: '/tmp',
+        logger: pino({ level: 'silent' }),
         allowedOrigin: 'https://example.com/',
         redirectOriginPolicy: policy,
         resolveHostname: async () => ['93.184.216.34'],

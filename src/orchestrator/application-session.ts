@@ -248,6 +248,7 @@ export function buildApplicationToolSet(
         recorder,
         artifactsDir: session.artifactsDir,
         allowedOrigin,
+        logger,
     });
 
     const entries: ActionLogEntry[] = [];

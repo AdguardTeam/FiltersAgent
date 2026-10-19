@@ -49,6 +49,17 @@ describe('extractAdSelector', () => {
         expect(extractAdSelector(rule)).toBe('.ad-slot');
     });
 
+    it.each([
+        ['example.com###ad', '#ad'],
+        ['###ad', '#ad'],
+        ['example.com#@##ad', '#ad'],
+        ['example.com#?##ad:has(img)', '#ad:has(img)'],
+        ['example.com#@?##ad', '#ad'],
+        ['example.com##div#ad', 'div#ad'],
+    ])('keeps the id hash of the selector in %s', (rule, selector) => {
+        expect(extractAdSelector(rule)).toBe(selector);
+    });
+
     it('returns null for a #$# scriptlet rule', () => {
         const rule = "example.com#$#//scriptlet('abort-on-property-read','ads')";
         expect(extractAdSelector(rule)).toBeNull();

@@ -1,4 +1,5 @@
 import * as v from 'valibot';
+import { BROWSER_FALLBACK_REASON_VALUES } from './browser-fallback-reason';
 import { DomCheckRecordSchema } from './dom-check';
 
 /**
@@ -143,6 +144,7 @@ export const PhaseResultSchema = v.object({
     ruleApplications: v.optional(v.array(RuleApplicationFactSchema)),
     antiAdblockDetected: v.boolean(),
     error: v.optional(v.string()),
+    navigationFallbackReason: v.optional(v.picklist(BROWSER_FALLBACK_REASON_VALUES)),
 });
 
 /**

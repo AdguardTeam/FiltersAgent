@@ -1,12 +1,12 @@
-import { RuleKind, normalizeRule } from '../repo/rule-normalizer';
+import { RuleKind, findCosmeticSeparator, normalizeRule } from '../repo/rule-normalizer';
 
 /**
  * Extract a CSS selector from a cosmetic filter rule.
  *
  * Handles `##`, `#@#`, `#?#`, `#@?#`, and `#$#` CSS injection. Does not match scriptlet rules. For
- * CSS injection, returns only the selector before the declaration block. Searches for the LAST
- * occurrence of any regular cosmetic separator to handle rules like
- * `domain.com#@#.ads#?#.override`.
+ * CSS injection, returns only the selector before the declaration block. The selector starts after
+ * the FIRST separator: a domain list holds no `#`, while a selector may — `example.com###ad` hides
+ * `#ad`.
  *
  * @param rule - The raw filter rule line.
  * @returns The CSS selector portion, or null if no cosmetic CSS separator found.
@@ -25,22 +25,11 @@ export function extractAdSelector(rule: string): string | null {
         return normalized.selector?.trim() || null;
     }
 
-    const separators = ['#@?#', '#@#', '#?#', '##'] as const;
-    let bestSep = '';
-    let bestIndex = -1;
-
-    for (const sep of separators) {
-        const idx = trimmed.lastIndexOf(sep);
-        if (idx > bestIndex) {
-            bestIndex = idx;
-            bestSep = sep;
-        }
-    }
-
-    if (bestIndex === -1 || bestSep === '') {
+    const separator = findCosmeticSeparator(trimmed);
+    if (separator === undefined) {
         return null;
     }
-    return trimmed.slice(bestIndex + bestSep.length);
+    return trimmed.slice(separator.index + separator.sep.length).trim() || null;
 }
 
 /**

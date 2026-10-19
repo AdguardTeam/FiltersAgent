@@ -14,7 +14,6 @@ import {
     writeFileSync,
 } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
-import type { Stats } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import {
     basename,
@@ -27,6 +26,7 @@ import {
     sep as localOutputDirectoryPathSeparator,
 } from 'node:path';
 import { type ExtensionEnvironmentKind } from '../types/extension-environment-kind';
+import { createDirectoryIfMissing, fsyncDirectory, lstatIfExists } from './local-fs-primitives';
 
 export const LOCAL_RUN_OUTPUT_MARKER_NAME = '.adguard-filters-agent-output';
 
@@ -69,23 +69,6 @@ function isPathAtOrBelow(parentPath: string, candidatePath: string): boolean {
             !relativePath.startsWith(`..${localOutputDirectoryPathSeparator}`) &&
             !isAbsolute(relativePath))
     );
-}
-
-/**
- * Read path metadata without following a final symlink.
- *
- * @param path - Absolute path to inspect.
- * @returns Path metadata, or null when the path does not exist.
- */
-function lstatIfExists(path: string): Stats | null {
-    try {
-        return lstatSync(path);
-    } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-            return null;
-        }
-        throw error;
-    }
 }
 
 /**
@@ -254,16 +237,13 @@ export function materializeLocalRunOutputDir(outputDir: string, workspaceRoot: s
             .split(localOutputDirectoryPathSeparator)
             .filter(Boolean)) {
             cursor = join(cursor, component);
-            if (existsSync(cursor)) {
-                const stats = lstatSync(cursor);
-                if (stats.isSymbolicLink()) {
-                    throw new Error(`Local output path contains a symlink: ${cursor}`);
-                }
-                if (!stats.isDirectory()) {
-                    throw new Error(`Local output path component is not a directory: ${cursor}`);
-                }
-            } else {
-                mkdirSync(cursor, { mode: 0o700 });
+            createDirectoryIfMissing(cursor);
+            const stats = lstatSync(cursor);
+            if (stats.isSymbolicLink()) {
+                throw new Error(`Local output path contains a symlink: ${cursor}`);
+            }
+            if (!stats.isDirectory()) {
+                throw new Error(`Local output path component is not a directory: ${cursor}`);
             }
         }
     } else {
@@ -432,26 +412,6 @@ function parsePublicationId(value: string): PublicationId {
 }
 
 /**
- * Fsync one exact owned directory.
- *
- * @param path - Directory path.
- */
-function fsyncDirectory(path: string): void {
-    let descriptor: number | undefined;
-    try {
-        descriptor = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
-        if (!fstatSync(descriptor).isDirectory()) {
-            throw new Error('Publication path is not a directory.');
-        }
-        fsyncSync(descriptor);
-    } finally {
-        if (descriptor !== undefined) {
-            closeSync(descriptor);
-        }
-    }
-}
-
-/**
  * Create one exclusive single-link file, fsync it, and verify its exact size.
  *
  * @param path - New exact file path.
@@ -538,8 +498,7 @@ function ensurePublicationRunsRoot(outputRoot: string): string {
     }
     const canonicalRoot = realpathSync(outputRoot);
     const runsPath = join(canonicalRoot, LOCAL_PUBLICATION_RUNS_DIRECTORY);
-    if (!existsSync(runsPath)) {
-        mkdirSync(runsPath, { mode: 0o700 });
+    if (createDirectoryIfMissing(runsPath)) {
         fsyncDirectory(canonicalRoot);
     }
     const runsStats = lstatSync(runsPath);

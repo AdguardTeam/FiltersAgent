@@ -15,7 +15,6 @@ import { ExtensionManifestVersion } from './extension-preparation';
 import {
     EnvironmentAdapterLimitationCode,
     EnvironmentLimitationStage,
-    EnvironmentLifecycle,
     type AdapterPhaseLease,
     type EnvironmentCleanupReceipt,
     type EnvironmentAdapterLimitation,
@@ -27,6 +26,7 @@ import {
     type FilteringEnvironmentAdapter,
     type FilteringEnvironmentAdapterState,
 } from './filtering-environment';
+import { EnvironmentLifecycle } from './environment-lifecycle';
 import {
     EnvironmentFilteringState,
     BlockerVerificationMethod,

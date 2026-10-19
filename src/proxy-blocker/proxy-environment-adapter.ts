@@ -7,7 +7,6 @@ import {
 import {
     CandidateOperation,
     EnvironmentAdapterLimitationCode,
-    EnvironmentLifecycle,
     EnvironmentLimitationStage,
     type AdapterPhaseLease,
     type EnvironmentAdapterLimitation,
@@ -21,6 +20,7 @@ import {
     type FilteringEnvironmentAdapter,
     type FilteringEnvironmentAdapterState,
 } from '../environment/filtering-environment';
+import { EnvironmentLifecycle } from '../environment/environment-lifecycle';
 import {
     EnvironmentFilteringState,
     type CliAdapterProof,

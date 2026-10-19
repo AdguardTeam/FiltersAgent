@@ -10,7 +10,7 @@ import {
 } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join, parse } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
     cleanupUnpublishedLocalPublicationReservation,
     clearLocalRunOutputDir,
@@ -24,6 +24,29 @@ import {
     validateLocalRunOutputDir,
     writeReservedPublicationFile,
 } from '../../src/local/output-directory';
+
+/**
+ * A path another process creates at the moment this one tries to, and what it creates there.
+ */
+const concurrentCreation = vi.hoisted(() => ({
+    path: undefined as string | undefined,
+    create: undefined as ((path: string) => void) | undefined,
+}));
+
+vi.mock('node:fs', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('node:fs')>();
+    return {
+        ...actual,
+        mkdirSync: (...args: Parameters<typeof actual.mkdirSync>) => {
+            const [path] = args;
+            if (path === concurrentCreation.path && concurrentCreation.create) {
+                concurrentCreation.path = undefined;
+                concurrentCreation.create(String(path));
+            }
+            return actual.mkdirSync(...args);
+        },
+    };
+});
 
 describe('resolveLocalRunOutputDir', () => {
     it('defaults current and historical runs to separate project-local tmp directories', () => {
@@ -215,6 +238,43 @@ describe('materializeLocalRunOutputDir', () => {
                 materializeLocalRunOutputDir(join(tmpPath, 'redirect', 'run'), workspaceRoot),
             ).toThrow(/symlink/i);
         } finally {
+            rmSync(workspaceRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('shares a fresh output root with a run that creates the same parent concurrently', () => {
+        const workspaceRoot = mkdtempSync(join(tmpdir(), 'local-output-concurrent-'));
+        const sharedRoot = join(workspaceRoot, 'tmp', 'series');
+        concurrentCreation.path = sharedRoot;
+        concurrentCreation.create = (path) => mkdirSync(path);
+
+        try {
+            const canonicalOutput = materializeLocalRunOutputDir(
+                join(sharedRoot, 'runs', 'case'),
+                workspaceRoot,
+            );
+            expect(existsSync(join(canonicalOutput, LOCAL_RUN_OUTPUT_MARKER_NAME))).toBe(true);
+        } finally {
+            concurrentCreation.path = undefined;
+            rmSync(workspaceRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('rejects a symlink planted where it was about to create an output component', () => {
+        const workspaceRoot = mkdtempSync(join(tmpdir(), 'local-output-concurrent-link-'));
+        const trackedDirectory = join(workspaceRoot, 'benchmark');
+        const plantedPath = join(workspaceRoot, 'tmp', 'series');
+        mkdirSync(trackedDirectory);
+        concurrentCreation.path = plantedPath;
+        concurrentCreation.create = (path) => symlinkSync(trackedDirectory, path);
+
+        try {
+            expect(() =>
+                materializeLocalRunOutputDir(join(plantedPath, 'run'), workspaceRoot),
+            ).toThrow(/symlink/i);
+            expect(readdirSync(trackedDirectory)).toEqual([]);
+        } finally {
+            concurrentCreation.path = undefined;
             rmSync(workspaceRoot, { recursive: true, force: true });
         }
     });

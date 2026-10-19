@@ -78,6 +78,25 @@ runs one candidate gets in all, shared with retries after an inconclusive
 review and with new reveal steps. Each check gets a few seconds on the page;
 one that does not settle fails, and the phase skips the checks after it.
 
+Every phase scrolls through the page and waits for its height to settle before
+its reveal steps and captures, so the states the review compares were taken
+after the same lazy loading rather than at whatever point a news feed had
+reached. The reveal steps run after the scroll, so it cannot close a menu or an
+overlay they opened. A page that never settles, such as an endless feed, is
+captured anyway and the trace records why.
+
+When a phase browser cannot load the reported page at all, the experiment stops
+there and the `apply_rule` answer names the phase and the error. The environment
+stays selected: the page stopped the phase, not the environment. The answer
+follows who stopped it. A site refusal, such as HTTP 403, or a cause nothing
+recorded separates may pass on one more experiment, and a rule whose
+experiments fail to load the page twice gets no third. The runner's own
+refusal, such as a redirect off the reported origin, closes the rule after one
+experiment. When the unfiltered and baseline phases loaded and only the phase
+with the candidate left the origin, the candidate most likely caused the
+redirect, so the model is asked to change the rule; otherwise it is asked to
+finish.
+
 The review judges a candidate by what changed between the two states, so what
 both states share does not count against it. The original-resolution tiles
 span every element the candidate's selector matches, plus a viewport above

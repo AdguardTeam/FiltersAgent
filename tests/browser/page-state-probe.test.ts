@@ -1,3 +1,4 @@
+import { pino } from 'pino';
 import { describe, expect, it, vi } from 'vitest';
 import { runInNewContext } from 'node:vm';
 import { createBrowserToolHandlers } from '../../src/browser/browser-tools';
@@ -163,6 +164,7 @@ function handlersFor(fixture: PageFixture) {
         session,
         recorder: { addArtifact: vi.fn() } as unknown as TraceRecorder,
         artifactsDir: '/tmp',
+        logger: pino({ level: 'silent' }),
         allowedOrigin: 'https://example.com',
         resolveHostname: (async () => ['93.184.216.34']) as HostnameResolver,
     });

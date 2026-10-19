@@ -1,3 +1,4 @@
+import { pino } from 'pino';
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -238,6 +239,7 @@ describe('createToolRegistry', () => {
                     session: {} as IBrowserSession,
                     analyzer: {} as SiteAnalyzer,
                     artifactsDir: tmpDir,
+                    logger: pino({ level: 'silent' }),
                     recorder: new TraceRecorder({
                         runId: 'search-rank-test',
                         issueNumber: 1,
@@ -421,6 +423,7 @@ describe('createToolRegistry', () => {
                 session: mockSession,
                 analyzer: mockAnalyzer,
                 artifactsDir: '/tmp',
+                logger: pino({ level: 'silent' }),
                 recorder: new TraceRecorder({
                     runId: 'test',
                     issueNumber: 1,
@@ -525,6 +528,7 @@ describe('createToolRegistry', () => {
                 session: mockSession,
                 analyzer: mockAnalyzer,
                 artifactsDir: '/tmp',
+                logger: pino({ level: 'silent' }),
                 recorder: new TraceRecorder({
                     runId: 'test-surface-only-apply-rule',
                     issueNumber: 1,
@@ -644,6 +648,7 @@ describe('createToolRegistry', () => {
                 session: mockSession,
                 analyzer: mockAnalyzer,
                 artifactsDir: '/tmp',
+                logger: pino({ level: 'silent' }),
                 recorder: new TraceRecorder({
                     runId: 'navigation-budget',
                     issueNumber: 1,
@@ -677,6 +682,7 @@ describe('createToolRegistry', () => {
                     session: {} as IBrowserSession,
                     analyzer: {} as SiteAnalyzer,
                     artifactsDir: runDirectory,
+                    logger: pino({ level: 'silent' }),
                     recorder: new TraceRecorder({
                         runId: 'drift-test',
                         issueNumber: 1,
@@ -740,6 +746,7 @@ describe('createToolRegistry', () => {
                     session: mockSession,
                     analyzer: mockAnalyzer,
                     artifactsDir: '/tmp',
+                    logger: pino({ level: 'silent' }),
                     recorder: new TraceRecorder({
                         runId: 'interaction-rehearsal',
                         issueNumber: 1,

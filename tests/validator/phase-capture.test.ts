@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { runPhase } from '../../src/validator/phase-capture';
+import { BrowserFallbackReason } from '../../src/types/browser-fallback-reason';
+import { TraceEventType } from '../../src/types/trace';
 import { mockPage } from './phase-fixtures';
 import type { BrowserToolHandlers } from '../../src/browser/browser-tools';
 import type { PageStateInspection } from '../../src/types/page-state-inspection';
@@ -316,4 +318,74 @@ describe('runPhase', () => {
         expect(handlers.reset_network_log).toHaveBeenCalledOnce();
         expect(calls).toEqual(['reset', 'open']);
     });
+
+    it('keeps why the page could not be opened', async () => {
+        const handlers = mockHandlers({
+            openPageResult: {
+                error: 'main document returned HTTP 403',
+                statusCode: 403,
+                fallbackReason: BrowserFallbackReason.HttpBlocked,
+            },
+        });
+
+        const result = await runPhase({
+            handlers,
+            page: mockPage(),
+            artifactsDir: '/tmp/test-artifacts',
+            phase: 'B',
+            url: 'https://example.com',
+            trustedPageEvaluator: trustedEvaluatorFromHandlers(handlers),
+            recorder: mockRecorder(),
+        });
+
+        // The answer to the model says who refused the page; the reason has to survive the phase.
+        expect(result.navigationFallbackReason).toBe(BrowserFallbackReason.HttpBlocked);
+    });
+
+    it.each([
+        { settled: true as const },
+        { settled: false as const, reason: 'page height still changing' },
+    ])(
+        'loads lazy content before the reveal steps and captures either way: %o',
+        async (outcome) => {
+            const handlers = mockHandlers();
+            const order: string[] = [];
+            vi.mocked(handlers.screenshot).mockImplementation(async () => {
+                order.push('screenshot');
+                return { artifactId: 'shot', fullPageArtifactId: 'shot-full' } as never;
+            });
+            const recorder = mockRecorder();
+
+            const result = await runPhase({
+                handlers,
+                page: mockPage(),
+                artifactsDir: '/tmp/test-artifacts',
+                phase: 'B',
+                url: 'https://example.com',
+                trustedPageEvaluator: trustedEvaluatorFromHandlers(handlers),
+                materialize: async () => {
+                    order.push('materialize');
+                    return outcome;
+                },
+                interact: async () => {
+                    order.push('interact');
+                },
+                recorder,
+            });
+
+            // Every phase scrolls the same way first, so their captures share one load state, and the
+            // reveal steps come last so nothing the scroll does closes what they opened. A page that
+            // never settles, such as an endless feed, is still captured, and the trace says why.
+            expect(order.slice(0, 2)).toEqual(['materialize', 'interact']);
+            expect(order).toContain('screenshot');
+            expect(result.error).toBeUndefined();
+            expect(result.screenshotArtifactId).toBe('shot');
+            if (!outcome.settled) {
+                expect(vi.mocked(recorder.record)).toHaveBeenCalledWith(
+                    TraceEventType.Error,
+                    expect.objectContaining({ error: outcome.reason }),
+                );
+            }
+        },
+    );
 });

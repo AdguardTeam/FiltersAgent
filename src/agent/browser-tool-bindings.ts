@@ -7,6 +7,7 @@
  * declared here beside the registration that consumes it, so this leaf owns its own input and the
  * module graph stays one-directional.
  */
+import type { Logger } from 'pino';
 import type { RedirectOriginPolicy } from '../browser/redirect-origin-policy';
 import * as v from 'valibot';
 import type { Finding } from '../types/site-analysis';
@@ -60,6 +61,11 @@ export interface BrowserToolOptions {
      * Reported issue URL whose canonical origin browser navigation must remain on.
      */
     allowedOrigin: string;
+
+    /**
+     * Run logger receiving the browser tools' navigation and capture failures.
+     */
+    logger: Logger;
 
     /**
      * Physical navigation attempts allowed for one model-visible open_page call.
@@ -138,6 +144,7 @@ export async function registerBrowserTools(
         recorder,
         artifactsDir,
         allowedOrigin,
+        logger: browserTools.logger,
         openPageRetries: browserTools.openPageRetries,
         redirectOriginPolicy: browserTools.redirectOriginPolicy,
         consentStrategy: browserTools.consentStrategy,

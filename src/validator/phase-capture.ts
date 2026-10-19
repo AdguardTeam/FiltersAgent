@@ -12,6 +12,8 @@ import { checkAntiAdblock } from './anti-adblock-check';
 import { measureElementTileWindow } from './element-tile-window';
 import type { Page } from 'playwright-core';
 import type { TrustedPageEvaluator } from '../browser/trusted-page-evaluator';
+import type { BrowserFallbackReason } from '../types/browser-fallback-reason';
+import { settleLazyContent, type PageMaterialization } from './page-materialization';
 
 /**
  * Configuration for a single phase of validation.
@@ -77,6 +79,14 @@ export interface PhaseConfig {
     interact?: () => Promise<void>;
 
     /**
+     * Optional bounded lazy-content materialization: a scroll pass that waits for the document
+     * height to settle. It runs before the reveal steps and every capture, so phases of one
+     * experiment are captured in the same load state rather than wherever the site's lazy loading
+     * happened to be, and nothing the scroll does closes what the reveal steps opened.
+     */
+    materialize?: () => Promise<PageMaterialization>;
+
+    /**
      * Whether this phase must capture overlapping original-resolution tiles for vision review.
      */
     captureVisualTiles?: boolean;
@@ -90,9 +100,9 @@ export interface PhaseConfig {
 /**
  * Capture a single validation phase in the filtering state the environment already established.
  *
- * The phase applies no rules itself: the blocker owns the filtering state. It navigates, replays
- * the reveal steps, captures screenshot, HAR, and DOM artifacts, then records whether an
- * anti-adblock response is present.
+ * The phase applies no rules itself: the blocker owns the filtering state. It navigates, loads lazy
+ * content, replays the reveal steps, captures screenshot, HAR, and DOM artifacts, then records
+ * whether an anti-adblock response is present.
  *
  * @param config - The phase configuration.
  * @returns The PhaseResult for this phase.
@@ -118,7 +128,15 @@ export async function runPhase(config: PhaseConfig): Promise<PhaseResult> {
             appliedRules: [],
             antiAdblockDetected: false,
             error: String(openResult.error),
+            ...(openResult.fallbackReason === undefined
+                ? {}
+                : { navigationFallbackReason: openResult.fallbackReason as BrowserFallbackReason }),
         };
+    }
+
+    // ── Load lazy content the same way in every phase, before the reveal steps ──
+    if (config.materialize) {
+        await settleLazyContent(config.phase, config.materialize, config.recorder);
     }
 
     // ── Replay the reveal steps before every capture ─────────────────────

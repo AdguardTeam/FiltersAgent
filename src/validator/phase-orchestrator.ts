@@ -22,6 +22,12 @@ import {
     type EnvironmentPhase,
     type EnvironmentPhaseStateProof,
 } from '../environment/environment-proofs';
+import { failedPhaseNavigation, navigationFailedResult } from './experiment-navigation-failure';
+import {
+    AdsEnvironmentExperimentVerdict,
+    ExperimentInconclusiveReason,
+    type AdsEnvironmentExperimentResult,
+} from './ads-environment-experiment-result';
 
 /**
  * Recorder surface required by the shared Ads experiment.
@@ -160,66 +166,6 @@ export interface AdsEnvironmentExperimentConfig extends EnvironmentPhaseExecutio
      * Exact additive candidate applied in C.
      */
     candidate: EnvironmentCandidate;
-}
-
-/**
- * Intent-aware provisional verdict of a shared Ads A/B/C environment experiment.
- */
-export const AdsEnvironmentExperimentVerdict = {
-    /**
-     * The controlled baseline and candidate phases together confirmed the intended effect.
-     */
-    Verified: 'verified',
-
-    /**
-     * The experiment completed without establishing whether the intended effect held.
-     */
-    Inconclusive: 'inconclusive',
-
-    /**
-     * A required environment capability was not available to complete the experiment.
-     */
-    CapabilityLimited: 'capability_limited',
-
-    /**
-     * A phase stopped with an environment or cleanup failure rather than a limitation.
-     */
-    Failed: 'failed',
-} as const;
-
-/**
- * AdsEnvironmentExperimentVerdict value.
- */
-export type AdsEnvironmentExperimentVerdict =
-    (typeof AdsEnvironmentExperimentVerdict)[keyof typeof AdsEnvironmentExperimentVerdict];
-
-/**
- * Result of a shared Ads A/B/C experiment before outer cleanup finalization.
- */
-export interface AdsEnvironmentExperimentResult {
-    /**
-     * Intent-aware provisional verdict.
-     */
-    verdict: AdsEnvironmentExperimentVerdict;
-
-    /**
-     * Canonical recorder-owned phase evidence completed before the verdict.
-     */
-    phases: EnvironmentPhaseEvidence[];
-
-    /**
-     * Stable limitation when a phase could not be established or observed.
-     */
-    limitation: EnvironmentAdapterLimitation | null;
-
-    /**
-     * Why an inconclusive experiment stopped, when the cause is diagnosable evidence rather than an
-     * environment fault.
-     *
-     * `baseline_symptom_absent` means every phase ran cleanly but the reporter symptom was not
-     * observed in the controlled baseline, so phase C was never worth running.
-     */
-    inconclusiveReason?: 'baseline_symptom_absent';
 }
 
 /**
@@ -472,6 +418,12 @@ export async function runAdsEnvironmentExperiment(
                 limitation: result.limitation,
             };
         }
+        const navigationFailure = failedPhaseNavigation(result.evidence);
+        if (navigationFailure) {
+            // The next phase opens the same page from the same network: running it costs a phase
+            // and its vision review and cannot rescue a comparison that has lost one side.
+            return navigationFailedResult(phases, navigationFailure);
+        }
     }
     const baseline = phases.find((phase) => phase.phase === PhaseLabel.B);
     if (
@@ -489,7 +441,9 @@ export async function runAdsEnvironmentExperiment(
             verdict: AdsEnvironmentExperimentVerdict.Inconclusive,
             phases,
             limitation: null,
-            ...(diagnosable ? { inconclusiveReason: 'baseline_symptom_absent' as const } : {}),
+            ...(diagnosable
+                ? { inconclusiveReason: ExperimentInconclusiveReason.BaselineSymptomAbsent }
+                : { inconclusiveReason: undefined }),
         };
     }
     if (config.signal?.aborted) {
@@ -512,6 +466,10 @@ export async function runAdsEnvironmentExperiment(
             phases,
             limitation: candidate.limitation,
         };
+    }
+    const candidateNavigationFailure = failedPhaseNavigation(candidate.evidence);
+    if (candidateNavigationFailure) {
+        return navigationFailedResult(phases, candidateNavigationFailure);
     }
     const completion = candidate.evidence.completion;
     const verified =

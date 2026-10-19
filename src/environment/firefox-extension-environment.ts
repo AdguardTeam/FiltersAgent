@@ -44,7 +44,6 @@ import { BrowserExtensionExecutorName } from './executor-name';
 import type { FilterListKey } from './filter-list-ref';
 import {
     EnvironmentAdapterLimitationCode,
-    EnvironmentLifecycle,
     EnvironmentLimitationStage,
     type AdapterPhaseLease,
     type EnvironmentCleanupReceipt,
@@ -56,6 +55,7 @@ import {
     type FilteringEnvironmentAdapter,
     type FilteringEnvironmentAdapterState,
 } from './filtering-environment';
+import { EnvironmentLifecycle } from './environment-lifecycle';
 import { adapterLimitation, PhaseLeaseRegistry } from './phase-lease-registry';
 import { normalizeRulesContent, sha256OfContent } from './rules-content';
 

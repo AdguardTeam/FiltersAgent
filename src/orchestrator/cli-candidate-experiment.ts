@@ -12,7 +12,7 @@ import { PhaseLabel } from '../types/validation';
 import {
     AdsEnvironmentExperimentVerdict,
     type AdsEnvironmentExperimentResult,
-} from '../validator/phase-orchestrator';
+} from '../validator/ads-environment-experiment-result';
 
 /**
  * Add the experiment's verdict to an apply_rule result on the proxy route.

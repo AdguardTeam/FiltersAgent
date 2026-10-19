@@ -1,3 +1,4 @@
+import { pino } from 'pino';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -131,6 +132,7 @@ describe('TOOL_PARAMETER_SCHEMAS', () => {
                 session: {} as IBrowserSession,
                 analyzer: {} as SiteAnalyzer,
                 artifactsDir: tmpDir,
+                logger: pino({ level: 'silent' }),
                 recorder: new TraceRecorder({
                     runId: 'tool-parameters',
                     issueNumber: 1,

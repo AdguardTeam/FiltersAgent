@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
     applyRuleResultForModel,
+    baselineSymptomAbsentAnswer,
     environmentLimitationAnswer,
 } from '../../src/orchestrator/apply-rule-model-result';
+import { SelectorSource } from '../../src/types/overruled-selector';
+import { AdsEnvironmentExperimentVerdict } from '../../src/validator/ads-environment-experiment-result';
 import { CandidateRefusalKind } from '../../src/orchestrator/candidate-refusals';
 import { MAX_TOOL_RESULT_BYTES } from '../../src/pi/tool-result-envelope';
 
@@ -88,5 +91,27 @@ describe('environmentLimitationAnswer', () => {
         const answer = environmentLimitationAnswer({ ...earlier }, earlier);
 
         expect(answer).toMatchObject({ repeatedFailure: true, retryable: false });
+    });
+});
+
+describe('baselineSymptomAbsentAnswer', () => {
+    it.each([
+        { source: SelectorSource.Rule, dropAdvised: false },
+        { source: SelectorSource.AdElementSelector, dropAdvised: true },
+    ])('advises dropping adElementSelector only when the model passed it: $source', (row) => {
+        const answer = baselineSymptomAbsentAnswer({
+            verdict: AdsEnvironmentExperimentVerdict.Inconclusive,
+            phases: ['A', 'B'],
+            seen: 1,
+            blockedHost: undefined,
+            revealSteps: null,
+            revealStepsRequested: false,
+            overruledSelector: { selector: '.player', source: row.source },
+        });
+
+        // Telling the model to drop a selector it never passed repeats the same experiment.
+        const guidance = (answer.guidance as string[]).join(' ');
+        expect(guidance.includes('without adElementSelector')).toBe(row.dropAdvised);
+        expect(guidance).toContain('.player');
     });
 });

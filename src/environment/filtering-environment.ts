@@ -1,3 +1,4 @@
+import { BROWSER_FALLBACK_REASON_VALUES } from '../types/browser-fallback-reason';
 import * as v from 'valibot';
 import type { IBrowserSession } from '../browser/browser-interfaces';
 import {
@@ -21,48 +22,7 @@ import {
 } from './environment-proofs';
 import { FilterListRef } from './filter-list-ref';
 import { PhaseLabel } from '../types/validation';
-
-/**
- * Lifecycle stage of one filtering environment adapter instance.
- */
-export const EnvironmentLifecycle = {
-    /**
-     * The adapter has not yet been prepared.
-     */
-    Unprepared: 'unprepared',
-
-    /**
-     * The adapter is prepared and ready to open phases.
-     */
-    Ready: 'ready',
-
-    /**
-     * The adapter prepared with a lesser capability than requested.
-     */
-    Limited: 'limited',
-
-    /**
-     * The adapter finished cleanup successfully.
-     */
-    Cleaned: 'cleaned',
-
-    /**
-     * Adapter cleanup did not complete successfully.
-     */
-    CleanupFailed: 'cleanup_failed',
-} as const;
-
-/**
- * Every EnvironmentLifecycle value, for schemas and exhaustive listings.
- */
-export const ENVIRONMENT_LIFECYCLE_VALUES = Object.values(EnvironmentLifecycle);
-
-export const EnvironmentLifecycleSchema = v.picklist(ENVIRONMENT_LIFECYCLE_VALUES);
-
-/**
- * EnvironmentLifecycle value.
- */
-export type EnvironmentLifecycle = (typeof EnvironmentLifecycle)[keyof typeof EnvironmentLifecycle];
+import { EnvironmentLifecycleSchema } from './environment-lifecycle';
 
 /**
  * Stage at which an environment adapter limitation was raised.
@@ -202,6 +162,12 @@ export const EnvironmentAdapterLimitationCode = {
      * The adapter could not produce proof of the phase's exact filtering state.
      */
     PhaseProofUnavailable: 'phase_proof_unavailable',
+
+    /**
+     * The phase browser could not load the reported page: the site refused it or never answered.
+     * The page, not the environment, stopped the phase, so the environment stays usable.
+     */
+    PhaseNavigationFailed: 'phase_navigation_failed',
 
     /**
      * Adapter cleanup did not complete.
@@ -375,6 +341,7 @@ export const ValidatorFailedPhaseCompletionSchema = v.strictObject({
     kind: v.literal('failed'),
     sessionId: BoundedIdSchema,
     limitation: EnvironmentAdapterLimitationSchema,
+    navigationFallbackReason: v.optional(v.picklist(BROWSER_FALLBACK_REASON_VALUES)),
 });
 
 export const ValidatorPhaseCompletionSchema = v.variant('kind', [

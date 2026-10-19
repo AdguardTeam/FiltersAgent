@@ -1,9 +1,12 @@
 import { RedirectOriginPolicy } from '../browser/redirect-origin-policy';
 import {
     applyRuleResultForModel,
+    baselineSymptomAbsentAnswer,
     environmentLimitationAnswer,
+    baselineSymptomAbsentRefusal,
     withRemainingCandidateAttempts,
 } from './apply-rule-model-result';
+import { NavigationFailureLedger } from './phase-navigation-failure-policy';
 import {
     CandidateRefusalMemo,
     candidateRefusal,
@@ -20,7 +23,6 @@ import * as v from 'valibot';
 import { withToolDeadline } from '../pi/session-tools';
 import { parseRevealSteps, symptomAbsenceLedgerKey } from './apply-rule-reveal-steps';
 import { candidatePlanDigest, parseDomChecks } from './apply-rule-dom-checks';
-import { revealStepsRepairGuidance } from '../environment/interaction-replay';
 import type { SingleShotClient } from '../pi/single-shot-types';
 import { ToolRegistry } from '../agent/tool-registry';
 import type { RepositoryLintCommand } from '../rules/repository-lint-command';
@@ -71,11 +73,11 @@ import {
     type BrowserExtensionCreatedSession,
     type EnvironmentPhaseConfigurationResult,
 } from '../environment/browser-extension-environment';
-import {
-    BrowserExtensionAdsObserver,
-    type BrowserExtensionAdsObserverDependencies,
-    type BrowserExtensionAdsObserverOptions,
-} from '../environment/browser-extension-ads-observer';
+import type {
+    BrowserExtensionAdsObserverDependencies,
+    BrowserExtensionAdsObserverOptions,
+} from '../environment/browser-extension-ads-observer-options';
+import { BrowserExtensionAdsObserver } from '../environment/browser-extension-ads-observer';
 import {
     SymptomKind,
     isBreakageSymptom,
@@ -146,6 +148,7 @@ import {
     parseCandidateVisualReviewArtifactId,
 } from '../types/candidate-artifact-identity';
 import { createTrustedValidationContext } from '../validator/trusted-validation-context';
+import { ExperimentInconclusiveReason } from '../validator/ads-environment-experiment-result';
 import {
     runAdsEnvironmentExperiment,
     type AdsEnvironmentPhaseObservationInput,
@@ -1000,6 +1003,11 @@ export class AgentRuntime {
      * cannot be judged in a controlled experiment at all.
      */
     private readonly baselineSymptomAbsentCounts = new Map<string, number>();
+
+    /**
+     * What each candidate rule's experiments recorded when a phase browser could not load the page.
+     */
+    private readonly navigationFailures = new NavigationFailureLedger();
 
     /**
      * Candidates the environment already refused for their operation or their published line.
@@ -3217,6 +3225,7 @@ export class AgentRuntime {
         return await createProductionBrowserRegistry({
             ...context,
             targetUrl,
+            logger: createLogger({ verbose: this.options.verbose ?? false }),
             issue: this.options.issue,
             filtersPath: this.options.filtersPath,
             placementMap: this.listCatalog.placementMap ?? undefined,
@@ -3688,35 +3697,20 @@ export class AgentRuntime {
             };
         }
         const interactionPlan = candidate.revealPlan;
-        // baselineSymptomAbsentCounts (written below, where an experiment concludes
-        // baseline_symptom_absent) records a verdict per candidate ledger key and already asks
-        // the model to stop after the second one via retryable: false. A model can ignore that
-        // ask and rerun phases A and B a third time for the byte-identical candidate rule, paying
-        // for two more full-page-vision browser phases (~40 images) a controlled experiment
-        // cannot possibly settle: the baseline has already twice shown, cleanly, that the symptom
-        // description names nothing the candidate can be judged against. This refusal makes the
-        // stop hard instead of advisory, before any phase can open. A different candidate rule
-        // keys separately and still gets its own two experiments.
-        // Different reveal steps put the page into a different state, so they earn the candidate
-        // its own two experiments; the same steps again cannot change the verdict.
-        const exhaustedLedgerKey = symptomAbsenceLedgerKey(
-            candidateLedgerKey(candidate.operation, candidate.normalized.canonical),
-            interactionPlan,
+        // Reveal steps put the page into another state, so a missing symptom counts per rule and
+        // steps.
+        const ruleLedgerKey = candidateLedgerKey(
+            candidate.operation,
+            candidate.normalized.canonical,
         );
-        if ((this.baselineSymptomAbsentCounts.get(exhaustedLedgerKey) ?? 0) >= 2) {
-            return {
-                validationSkipped: true,
-                errorKind: 'baseline_symptom_absent_exhausted',
-                retryable: false,
-                requiredAction: 'finish_fix_analysis_only',
-                guidance: [
-                    'The baseline never showed the described symptom in two controlled',
-                    'experiments for this exact candidate rule. A third identical experiment',
-                    'cannot succeed and will not be run.',
-                    'Finish with an analysis-only outcome that records the candidate rule and',
-                    'the live evidence you already gathered for it.',
-                ],
-            };
+        const exhaustedLedgerKey = symptomAbsenceLedgerKey(ruleLedgerKey, interactionPlan);
+        const exhaustedRefusal =
+            this.navigationFailures.refusal(ruleLedgerKey) ??
+            baselineSymptomAbsentRefusal(
+                this.baselineSymptomAbsentCounts.get(exhaustedLedgerKey) ?? 0,
+            );
+        if (exhaustedRefusal) {
+            return exhaustedRefusal;
         }
         const rawSymptomDescription =
             typeof args.symptomDescription === 'string' ? args.symptomDescription.trim() : '';
@@ -3821,6 +3815,7 @@ export class AgentRuntime {
             profile: structuredClone(state.profile),
             recorder: this.options.recorder,
             artifactsDir: this.options.artifactsDir,
+            logger: createLogger({ verbose: this.options.verbose ?? false }),
             vision: this.options.vision,
             // The reporter's own material leads and the model's per-candidate description follows
             // as what this one rule targets. Were the model's description to win outright, the
@@ -3963,57 +3958,28 @@ export class AgentRuntime {
         if (result) {
             return this.cliEvidenceRoute ? withCliExperimentVerdict(result, experiment) : result;
         }
-        if (experiment.inconclusiveReason === 'baseline_symptom_absent') {
-            // Phases ran cleanly; what failed is the symptom description the observer judged.
-            // This is diagnosable evidence, not a tool failure: it carries no `error`, so it
-            // never spends the apply_rule retry budget that guards against broken tooling. The
-            // count written here is read at the top of this method: once it reaches 2, a third
-            // call for this exact candidate is refused before any phase can open.
-            const ledgerKey = exhaustedLedgerKey;
-            const seen = (this.baselineSymptomAbsentCounts.get(ledgerKey) ?? 0) + 1;
-            this.baselineSymptomAbsentCounts.set(ledgerKey, seen);
-            const blockedHost = judgeableBlockedHost(candidateRule, state.targetUrl);
-            const revealStepsProjection = observer?.revealStepsProjection() ?? null;
-            const restatement = [
-                'The phase sessions judge one symptom description. The description in force did not',
-                'name anything that differs between the unfiltered page and the filtered baseline, so',
-                'the candidate was never judged.',
-                ...(blockedHost === undefined
-                    ? []
-                    : [
-                          `The filtered baseline also made no allowed request to ${blockedHost}, so`,
-                          'a block of that host has nothing to stop on this page.',
-                      ]),
-                'Pass symptomDescription to apply_rule and state the breakage you proved live: name the',
-                'element or content that filtering removes and where on the page it sits. Never describe',
-                'framing properties of the reporter screenshot such as cropping, window width, or text',
-                'cut off at an image edge — no phase session can reproduce those.',
-                ...(interactionPlan
-                    ? []
-                    : [
-                          'If the symptom appears only after the page waits or is touched, rehearse',
-                          'it with interact_page and pass that sequence as revealSteps.',
-                      ]),
-            ];
-            const exhausted = [
-                'The baseline still shows no symptom after a restated description, so this candidate',
-                'cannot be proven in a controlled experiment. Do not retry it. Finish with an',
-                'analysis-only outcome that records the candidate rule and the live evidence you',
-                'gathered for it.',
-            ];
-            return {
-                validationSkipped: true,
-                environmentExperiment: experiment.verdict,
+        if (experiment.inconclusiveReason === ExperimentInconclusiveReason.PhaseNavigationFailed) {
+            // The page stopped a phase, not the environment: the lock stays as it is.
+            return this.navigationFailures.answer(
+                ruleLedgerKey,
+                experiment.verdict,
+                experiment.phases.map((phase) => phase.phase),
+                experiment.failedNavigation,
+            );
+        }
+        if (experiment.inconclusiveReason === ExperimentInconclusiveReason.BaselineSymptomAbsent) {
+            // Read by baselineSymptomAbsentRefusal before the next experiment opens.
+            const seen = (this.baselineSymptomAbsentCounts.get(exhaustedLedgerKey) ?? 0) + 1;
+            this.baselineSymptomAbsentCounts.set(exhaustedLedgerKey, seen);
+            return baselineSymptomAbsentAnswer({
+                verdict: experiment.verdict,
                 phases: experiment.phases.map((phase) => phase.phase),
-                errorKind: 'baseline_symptom_absent',
-                retryable: seen === 1,
-                ...(seen === 1 ? {} : { requiredAction: 'finish_fix_analysis_only' }),
-                ...(revealStepsProjection ? { revealSteps: revealStepsProjection } : {}),
-                guidance: [
-                    ...revealStepsRepairGuidance(revealStepsProjection),
-                    ...(seen === 1 ? restatement : exhausted),
-                ],
-            };
+                seen,
+                blockedHost: judgeableBlockedHost(candidateRule, state.targetUrl),
+                revealSteps: observer?.revealStepsProjection() ?? null,
+                revealStepsRequested: interactionPlan !== undefined,
+                overruledSelector: observer?.baselineVisionOverruledSelector() ?? null,
+            });
         }
         return {
             validationSkipped: experiment.verdict !== 'verified',

@@ -1,3 +1,4 @@
+import { BrowserFallbackReason } from '../../src/types/browser-fallback-reason';
 import { APPLY_RULE_TOOL_DEADLINE_MS } from '../../src/orchestrator/browser-tool-deadlines';
 import { MAX_CANDIDATE_ATTEMPTS } from '../../src/orchestrator/agent-runtime-candidate-context';
 import { MAX_DOM_CHECKS, type DomCheckRecord } from '../../src/types/dom-check';
@@ -64,6 +65,10 @@ import type {
     FilteringEnvironmentAdapterState,
     FilteringEnvironmentExecution,
     ValidatorPhaseCompletion,
+} from '../../src/environment/filtering-environment';
+import {
+    EnvironmentAdapterLimitationCode,
+    EnvironmentLimitationStage,
 } from '../../src/environment/filtering-environment';
 import {
     ExtensionManifestVersion,
@@ -3326,6 +3331,126 @@ describe('AgentRuntime', () => {
             expect(observeEnvironmentPhase.mock.calls.length).toBeGreaterThan(
                 callsAfterTwoExperiments,
             );
+        } finally {
+            cleanupFixture();
+        }
+    });
+
+    it('tells the model which phase could not load the page and stops after the limit', async () => {
+        // investing.com: the unfiltered phase loaded, the filtered baseline got HTTP 403 from the
+        // site, and the model saw only "inconclusive" four experiments in a row.
+        const observeEnvironmentPhase = vi.fn(
+            async (input: AdsEnvironmentPhaseObservationInput): Promise<ValidatorPhaseCompletion> =>
+                input.phase === 'B'
+                    ? {
+                          kind: 'failed',
+                          sessionId: input.proof.sessionId,
+                          limitation: {
+                              code: EnvironmentAdapterLimitationCode.PhaseNavigationFailed,
+                              stage: EnvironmentLimitationStage.Phase,
+                              detail:
+                                  'Phase B navigation failed (http_blocked): main document ' +
+                                  'returned HTTP 403',
+                          },
+                          navigationFallbackReason: BrowserFallbackReason.HttpBlocked,
+                      }
+                    : {
+                          kind: 'observed',
+                          sessionId: input.proof.sessionId,
+                          targetUrl: 'https://nettg.pl/',
+                          targetObservation: { symptomPresent: true, pageUsable: true },
+                          navigationVerified: true,
+                          artifacts: [],
+                          vision: null,
+                          candidateValidation: null,
+                          rejectedCandidates: [],
+                      },
+        );
+        const { runtime, cleanupFixture } =
+            await baselineSymptomAbsentHarness(observeEnvironmentPhase);
+        try {
+            const candidateRule = 'nettg.pl##.ad-slot';
+
+            const first = await runtime.registry.dispatch('apply_rule', { candidateRule });
+            expect(first).toMatchObject({
+                validationSkipped: true,
+                errorKind: 'phase_navigation_failed',
+                failedPhase: 'B',
+                detail: expect.stringContaining('HTTP 403'),
+                retryable: true,
+            });
+            // The site refused a phase; the environment that ran it stays selected.
+            expect(runtime.getEnvironmentSelection()?.state).not.toBe('capability_limited');
+
+            const second = await runtime.registry.dispatch('apply_rule', { candidateRule });
+            expect(second).toMatchObject({
+                errorKind: 'phase_navigation_failed',
+                retryable: false,
+                requiredAction: 'finish_fix_analysis_only',
+            });
+
+            const callsAfterTwoExperiments = observeEnvironmentPhase.mock.calls.length;
+            const third = await runtime.registry.dispatch('apply_rule', { candidateRule });
+            expect(third).toMatchObject({
+                errorKind: 'phase_navigation_failed_exhausted',
+                retryable: false,
+                requiredAction: 'finish_fix_analysis_only',
+            });
+            expect(observeEnvironmentPhase.mock.calls.length).toBe(callsAfterTwoExperiments);
+        } finally {
+            cleanupFixture();
+        }
+    });
+
+    it('ends at once when the runner itself refused the baseline navigation', async () => {
+        // An anti-adblock redirect off the reported origin: the runner does not follow it, so the
+        // same experiment can only meet the same refusal.
+        const observeEnvironmentPhase = vi.fn(
+            async (input: AdsEnvironmentPhaseObservationInput): Promise<ValidatorPhaseCompletion> =>
+                input.phase === 'B'
+                    ? {
+                          kind: 'failed',
+                          sessionId: input.proof.sessionId,
+                          limitation: {
+                              code: EnvironmentAdapterLimitationCode.PhaseNavigationFailed,
+                              stage: EnvironmentLimitationStage.Phase,
+                              detail: 'Phase B navigation failed (navigation_off_origin)',
+                          },
+                          navigationFallbackReason: BrowserFallbackReason.NavigationOffOrigin,
+                      }
+                    : {
+                          kind: 'observed',
+                          sessionId: input.proof.sessionId,
+                          targetUrl: 'https://nettg.pl/',
+                          targetObservation: { symptomPresent: true, pageUsable: true },
+                          navigationVerified: true,
+                          artifacts: [],
+                          vision: null,
+                          candidateValidation: null,
+                          rejectedCandidates: [],
+                      },
+        );
+        const { runtime, cleanupFixture } =
+            await baselineSymptomAbsentHarness(observeEnvironmentPhase);
+        try {
+            const candidateRule = 'nettg.pl##.ad-slot';
+
+            const first = await runtime.registry.dispatch('apply_rule', { candidateRule });
+            expect(first).toMatchObject({
+                errorKind: 'phase_navigation_failed',
+                failedPhase: 'B',
+                retryable: false,
+                requiredAction: 'finish_fix_analysis_only',
+            });
+
+            const callsAfterOneExperiment = observeEnvironmentPhase.mock.calls.length;
+            const second = await runtime.registry.dispatch('apply_rule', { candidateRule });
+            expect(second).toMatchObject({
+                errorKind: 'phase_navigation_failed_exhausted',
+                retryable: false,
+                requiredAction: 'finish_fix_analysis_only',
+            });
+            expect(observeEnvironmentPhase.mock.calls.length).toBe(callsAfterOneExperiment);
         } finally {
             cleanupFixture();
         }

@@ -5,6 +5,12 @@ import { createHash } from 'node:crypto';
 import { installPreflightDiagnosticLog } from '../../src/local/preflight-diagnostic-log';
 import { BlockerVerificationMethod } from '../../src/environment/environment-proofs';
 import { ConsoleCoverage, type IBrowserSession } from '../../src/browser/browser-interfaces';
+import {
+    EnvironmentAdapterLimitationCode,
+    EnvironmentLimitationStage,
+} from '../../src/environment/filtering-environment';
+import { BrowserFallbackOrigin } from '../../src/types/browser-fallback-origin';
+import { BrowserFallbackReason } from '../../src/types/browser-fallback-reason';
 import type {
     AdapterPhaseLease,
     BoundEnvironmentPhaseHandle,
@@ -21,7 +27,9 @@ import type {
  * @param options - Scenario switches applied while observing phases.
  * @returns The experiment result together with the ordered boundary call log.
  */
-async function runOrderedExperiment(options: { baselineSymptomPresent?: boolean } = {}): Promise<{
+async function runOrderedExperiment(
+    options: { baselineSymptomPresent?: boolean; navigationFailsIn?: 'A' | 'B' | 'C' } = {},
+): Promise<{
     result: Awaited<ReturnType<typeof runAdsEnvironmentExperiment>>;
     calls: string[];
 }> {
@@ -173,6 +181,18 @@ async function runOrderedExperiment(options: { baselineSymptomPresent?: boolean 
         targetUrl: 'https://example.test/',
         candidate: { operation: 'add', rule: 'example.test##.ad' },
         observe: async ({ phase, proof }) => {
+            if (phase === options.navigationFailsIn) {
+                return {
+                    kind: 'failed',
+                    sessionId: proof.sessionId,
+                    limitation: {
+                        code: EnvironmentAdapterLimitationCode.PhaseNavigationFailed,
+                        stage: EnvironmentLimitationStage.Phase,
+                        detail: `Phase ${phase} navigation failed (http_blocked)`,
+                    },
+                    navigationFallbackReason: BrowserFallbackReason.HttpBlocked,
+                };
+            }
             let candidateValidation: Extract<
                 ValidatorPhaseCompletion,
                 { kind: 'observed' }
@@ -239,6 +259,26 @@ describe('runAdsEnvironmentExperiment', () => {
         expect(result.limitation).toBeNull();
         expect(calls).not.toContain('open:C');
     });
+
+    it.each([
+        { phase: 'A' as const, opened: ['open:A'] },
+        { phase: 'C' as const, opened: ['open:A', 'open:B', 'open:C'] },
+    ])(
+        'ends inconclusive on the phase whose browser could not load the page: $phase',
+        async (row) => {
+            const { result, calls } = await runOrderedExperiment({ navigationFailsIn: row.phase });
+
+            // The page stopped the phase, not the environment: no limitation, and no phase after
+            // the failed one opens.
+            expect(result).toMatchObject({
+                verdict: 'inconclusive',
+                limitation: null,
+                inconclusiveReason: 'phase_navigation_failed',
+                failedNavigation: { phase: row.phase, origin: BrowserFallbackOrigin.Site },
+            });
+            expect(calls.filter((call) => call.startsWith('open:'))).toEqual(row.opened);
+        },
+    );
 
     it('settles the bound phase as failed when the validation deadline aborts mid-observation', async () => {
         const calls: string[] = [];

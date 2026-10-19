@@ -1,5 +1,6 @@
 import type { Frame } from 'playwright-core';
 import type { Logger } from 'pino';
+import { navigationFailureLogger } from './navigation-failure-log';
 import * as v from 'valibot';
 import type { IBrowserSession } from './browser-interfaces';
 import type { TraceRecorder } from '../tracer/trace-recorder';
@@ -75,7 +76,7 @@ export interface BrowserToolConfig {
     /**
      * Operational logger mirroring navigation failure facts into the job log.
      */
-    logger?: Logger;
+    logger: Logger;
 
     /**
      * Reported issue URL whose origin admits initial top-level navigation.
@@ -366,16 +367,18 @@ export function createBrowserToolHandlers(config: BrowserToolConfig): BrowserToo
          * @returns Page URL, title, and status code on success; error on failure.
          */
         async open_page(args: Record<string, unknown>) {
+            const frameNavigations: string[] = [];
+            const refuse = navigationFailureLogger(logger, args.url, frameNavigations);
             admission.resetLoad();
             const url = typeof args.url === 'string' ? args.url : '';
             if (!url) {
                 return { error: 'url is required' };
             }
             if (admission.sessionOrigins().length === 0) {
-                return {
+                return refuse({
                     error: `navigation blocked: ${admission.configurationError ?? 'allowed origin is invalid'}`,
                     fallbackReason: BrowserFallbackReason.UnsafeTargetUrl,
-                };
+                });
             }
             try {
                 await validatePublicHttpUrl(url, {
@@ -383,16 +386,15 @@ export function createBrowserToolHandlers(config: BrowserToolConfig): BrowserToo
                     resolveHostname: resolveHostnameFresh,
                 });
             } catch (error) {
-                return {
+                return refuse({
                     error: `navigation blocked: ${(error as Error).message}`,
                     fallbackReason: refusalFallbackReason(error),
-                };
+                });
             }
 
             const page = session.getPage();
             let lastError: string | undefined;
             let lastFallbackReason: BrowserFallbackReason = BrowserFallbackReason.NavigationTimeout;
-            const frameNavigations: string[] = [];
             const recordFrameNavigation = (frame: Frame) => {
                 if (frame === page.mainFrame()) {
                     frameNavigations.push(frame.url());
@@ -429,13 +431,13 @@ export function createBrowserToolHandlers(config: BrowserToolConfig): BrowserToo
                                     ? BrowserFallbackReason.HttpBlocked
                                     : undefined;
                         if (fallbackReason) {
-                            return {
+                            return refuse({
                                 url: finalUrl,
                                 title: await page.title(),
                                 statusCode,
                                 error: `main document returned HTTP ${statusCode}`,
                                 fallbackReason,
-                            };
+                            });
                         }
                         const elapsedNavigationMs = Math.max(0, Date.now() - attemptStartedAt);
                         const remainingAttemptMs = pageStabilizationTimeoutMs - elapsedNavigationMs;
@@ -474,14 +476,14 @@ export function createBrowserToolHandlers(config: BrowserToolConfig): BrowserToo
                         );
                         blockedNavigationError = admission.takeBlockedNavigationError();
                         if (blockedNavigationError) {
-                            return {
+                            return refuse({
                                 url: page.url(),
                                 title: await page.title(),
                                 statusCode,
                                 error: `navigation blocked after consent setup: ${blockedNavigationError}`,
                                 fallbackReason: BrowserFallbackReason.NavigationOffOrigin,
                                 consent,
-                            };
+                            });
                         }
                         const postConsentUrl = page.url();
                         try {
@@ -496,7 +498,7 @@ export function createBrowserToolHandlers(config: BrowserToolConfig): BrowserToo
                                 );
                             }
                         } catch (error) {
-                            return {
+                            return refuse({
                                 url: postConsentUrl,
                                 title: await page.title(),
                                 statusCode,
@@ -505,7 +507,7 @@ export function createBrowserToolHandlers(config: BrowserToolConfig): BrowserToo
                                     (error as Error).message,
                                 fallbackReason: BrowserFallbackReason.NavigationOffOrigin,
                                 consent,
-                            };
+                            });
                         }
                         return {
                             url: postConsentUrl,
@@ -544,16 +546,7 @@ export function createBrowserToolHandlers(config: BrowserToolConfig): BrowserToo
                         ? { networkErrorCode: extractBrowserNetworkErrorCode(lastError) }
                         : {}),
                 };
-                logger?.warn(
-                    {
-                        targetUrl: url,
-                        fallbackReason: lastFallbackReason,
-                        frameNavigations,
-                        error: failure.error.slice(0, 500),
-                    },
-                    'open_page navigation failed',
-                );
-                return failure;
+                return refuse(failure);
             } finally {
                 page.off('framenavigated', recordFrameNavigation);
             }
