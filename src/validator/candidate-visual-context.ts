@@ -1,17 +1,26 @@
 /**
  * The reconciled half of the candidate visual review: the vocabulary one page state's observations
  * are collected into, the merge that reconciles the passes of a state under the supported limit,
- * and the compact context that hands both states to the text-only synthesis — plus the bounding
- * helpers every prompt in the review passes its untrusted context through.
+ * and the context that hands both states whole to the text-only synthesis — or refuses to — plus
+ * the bounding helpers every prompt in the review passes its untrusted context through.
  *
  * Nothing here talks to the vision provider: `candidate-visual-inventory` produces these
  * observations and `candidate-visual-verifier` consumes the rendered context, and neither is
  * imported back.
  */
+import { FULL_PAGE_TILE_LIMIT } from '../browser/full-page-tiles';
 import type { TraceRecorder } from '../tracer/trace-recorder';
-import type { CandidateVisualInstance } from '../types/candidate-visual-review';
-import type { CandidateVisualFullPageOverviewEvidence } from '../types/full-page-overview-evidence';
+import {
+    MAX_INSTANCE_DESCRIPTION_CHARS,
+    MAX_INSTANCE_LANDMARK_CHARS,
+    type CandidateVisualInstance,
+} from '../types/candidate-visual-review';
+import {
+    MAX_ARTIFACT_ID_CHARS,
+    type CandidateVisualFullPageOverviewEvidence,
+} from '../types/full-page-overview-evidence';
 import type { CaptureState } from '../types/validation';
+import { MAX_TILES_PER_VISION_BATCH } from './candidate-visual-planning';
 
 /**
  * Maximum complete inventory size accepted for reconciliation in either page state.
@@ -19,9 +28,112 @@ import type { CaptureState } from '../types/validation';
 export const MAX_RECONCILED_INSTANCES = 50;
 
 /**
- * Maximum compact tile-inventory context sent to the final semantic review.
+ * Longest model-defined symptom scope one inventory request may report. Declared here, not beside
+ * the batch output schema, because the synthesis context limit is derived from it and the inventory
+ * stage already imports this module; the reverse import would be a cycle.
  */
-const MAX_TILE_INVENTORY_CONTEXT_CHARS = 30_000;
+export const MAX_SYMPTOM_SCOPE_CHARS = 2_000;
+
+/**
+ * Length every batch rationale is cut to when the complete synthesis context exceeds its limit.
+ *
+ * A rationale explains a batch; the observations and the damage it reports are what the synthesis
+ * reconciles, so the rationale is the one text shortened and nothing else is. A thousand characters
+ * keeps what a batch saw and why, and drops the long restatements verbose vision models add after
+ * it.
+ */
+export const SHORTENED_RATIONALE_CHARS = 1_000;
+
+/**
+ * Characters one serialized record may spend on keys, quotes and punctuation beyond its bounded
+ * text: generous for the seven keys of a batch observation and the four of a numbered one.
+ */
+const SERIALIZED_RECORD_OVERHEAD_CHARS = 200;
+
+/**
+ * Largest serialized numbered observation: its cited artifact, landmark and description at their
+ * schema bounds.
+ */
+const MAX_SERIALIZED_INSTANCE_CHARS =
+    MAX_ARTIFACT_ID_CHARS +
+    MAX_INSTANCE_LANDMARK_CHARS +
+    MAX_INSTANCE_DESCRIPTION_CHARS +
+    SERIALIZED_RECORD_OVERHEAD_CHARS;
+
+/**
+ * Largest serialized batch observation without its damage: the artifacts one batch labels, its
+ * symptom scope and its shortened rationale.
+ *
+ * Damage stays out on purpose. At its schema bound — twenty entries of a thousand characters per
+ * batch — it would put the limit near a million characters, far past what the synthesis should be
+ * sent; a page whose real damage does not fit is refused instead.
+ */
+const MAX_SERIALIZED_OBSERVATION_FRAME_CHARS =
+    MAX_TILES_PER_VISION_BATCH * MAX_ARTIFACT_ID_CHARS +
+    MAX_SYMPTOM_SCOPE_CHARS +
+    SHORTENED_RATIONALE_CHARS +
+    SERIALIZED_RECORD_OVERHEAD_CHARS;
+
+/**
+ * Overview requests one page state makes beside its tile batches: the viewport and the full-page
+ * overview.
+ */
+const OVERVIEW_OBSERVATIONS_PER_STATE = 2;
+
+/**
+ * Most image requests the limit expects one page state to make: the tile batches of the largest
+ * tile capture plus its overviews.
+ *
+ * `tileBatches` also splits by bytes, so a state of heavy tiles makes more batches than this. Its
+ * context may then pass the limit and be refused, and that is intended, as is a refusal caused by
+ * JSON escaping that lengthens text past its bound: the limit covers the expected worst case, and
+ * whatever lies beyond it fails closed instead of losing observations.
+ */
+const MAX_OBSERVATIONS_PER_STATE =
+    Math.ceil(FULL_PAGE_TILE_LIMIT / MAX_TILES_PER_VISION_BATCH) + OVERVIEW_OBSERVATIONS_PER_STATE;
+
+/**
+ * Page states the synthesis reconciles: before and after the candidate.
+ */
+const RECONCILED_PAGE_STATES = 2;
+
+/**
+ * Largest inventory context sent to the final semantic review.
+ *
+ * Derived from the inventory's own bounds rather than chosen: every numbered observation both
+ * states may hold plus every batch frame with a shortened rationale. A context within those bounds
+ * always fits when its damage and JSON escaping stay within the slack, and one that does not is
+ * refused, so the synthesis is never asked to reconcile an observation it was not shown.
+ */
+export const MAX_TILE_INVENTORY_CONTEXT_CHARS =
+    MAX_SERIALIZED_INSTANCE_CHARS * MAX_RECONCILED_INSTANCES * RECONCILED_PAGE_STATES +
+    MAX_SERIALIZED_OBSERVATION_FRAME_CHARS * MAX_OBSERVATIONS_PER_STATE * RECONCILED_PAGE_STATES;
+
+/**
+ * How both state inventories fit the synthesis context.
+ */
+export const TileInventoryContextFit = {
+    /**
+     * Every observation and every batch text is sent as the inventory reported it.
+     */
+    Complete: 'complete',
+
+    /**
+     * Every observation is sent; batch rationales are cut to {@link SHORTENED_RATIONALE_CHARS}.
+     */
+    RationalesShortened: 'rationales_shortened',
+
+    /**
+     * The context passes the limit even with shortened rationales, so no synthesis is asked.
+     */
+    Overflow: 'overflow',
+} as const;
+
+/**
+ * TileInventoryContextFit value.
+ */
+export type TileInventoryContextFit =
+    (typeof TileInventoryContextFit)[keyof typeof TileInventoryContextFit];
 
 /**
  * Semantic role of one supplied evidence image or image batch.
@@ -104,27 +216,13 @@ export interface CandidateVisualTileInventory {
     coverageObserved: boolean;
 
     /**
-     * Model-defined descriptions of the repeated reporter symptom family.
-     */
-    symptomScopes: string[];
-
-    /**
      * Every model-observed occurrence tied to a runner-owned tile.
      */
     instances: CandidateVisualInstance[];
 
     /**
-     * Visible damage observations reported across the state tiles.
-     */
-    observedDamage: string[];
-
-    /**
-     * Bounded batch rationales retained for the final semantic review.
-     */
-    rationales: string[];
-
-    /**
-     * Compact runner-bound description of every image request that produced this inventory.
+     * Every image request that produced this inventory, with the symptom scope, damage and
+     * rationale it reported; the only place those texts are kept.
      */
     observations: CandidateVisualInventoryObservation[];
 }
@@ -145,19 +243,58 @@ export interface CandidateVisualFullPageOverviewEvidencePair {
 }
 
 /**
- * Final compact representation of both state inventories.
+ * Both state inventories rendered within the synthesis context limit.
  */
-export interface CandidateVisualTileInventoryContext {
+export interface FittedTileInventoryContext {
     /**
-     * Serialized model observations supplied to the final review.
+     * Whether the batch rationales had to be shortened to fit.
+     */
+    fit:
+        | typeof TileInventoryContextFit.Complete
+        | typeof TileInventoryContextFit.RationalesShortened;
+
+    /**
+     * Serialized observations of both states supplied to the final review.
      */
     text: string;
 
     /**
-     * Whether no inventory observations had to be omitted for prompt bounds.
+     * Length of {@link FittedTileInventoryContext.text}.
      */
-    complete: boolean;
+    chars: number;
+
+    /**
+     * Context limit the text was measured against.
+     */
+    limitChars: number;
 }
+
+/**
+ * Both state inventories that pass the synthesis context limit even with shortened rationales.
+ */
+export interface OverflowingTileInventoryContext {
+    /**
+     * Always {@link TileInventoryContextFit.Overflow}.
+     */
+    fit: typeof TileInventoryContextFit.Overflow;
+
+    /**
+     * Length of the context with every batch rationale shortened.
+     */
+    chars: number;
+
+    /**
+     * Context limit the context passed.
+     */
+    limitChars: number;
+}
+
+/**
+ * Both state inventories rendered for the final review, or the size that kept them out of it.
+ */
+export type CandidateVisualTileInventoryContext =
+    | FittedTileInventoryContext
+    | OverflowingTileInventoryContext;
 
 /**
  * Bound a potentially large optional context value before including it in a prompt.
@@ -245,57 +382,73 @@ export function combineStateInventories(
     return {
         coverageObserved:
             inventories.length > 0 && inventories.every((inventory) => inventory.coverageObserved),
-        symptomScopes: [...new Set(inventories.flatMap((inventory) => inventory.symptomScopes))],
         instances,
-        observedDamage: inventories.flatMap((inventory) => inventory.observedDamage).slice(0, 20),
-        rationales: inventories.flatMap((inventory) => inventory.rationales),
         observations: inventories.flatMap((inventory) => inventory.observations),
     };
 }
 
 /**
- * Serialize tile observations compactly for the final model without sending every image twice.
+ * Serialize both states for the final review, numbering every observation it must reconcile.
  *
  * @param before - Vision inventory of the complete control document.
  * @param after - Vision inventory of the complete candidate-applied document.
- * @returns Bounded text and whether the complete observation set was retained.
+ * @param shortenRationales - Whether every batch rationale is cut to its shortened length.
+ * @returns The serialized context.
+ */
+function serializeInventories(
+    before: CandidateVisualTileInventory,
+    after: CandidateVisualTileInventory,
+    shortenRationales: boolean,
+): string {
+    const render = (inventory: CandidateVisualTileInventory): Record<string, unknown> => ({
+        coverageObserved: inventory.coverageObserved,
+        instances: inventory.instances.map((instance, index) => ({
+            observationIndex: index + 1,
+            ...instance,
+        })),
+        observations: shortenRationales
+            ? inventory.observations.map((observation) => ({
+                  ...observation,
+                  rationale: observation.rationale.slice(0, SHORTENED_RATIONALE_CHARS),
+              }))
+            : inventory.observations,
+    });
+    return JSON.stringify({ before: render(before), after: render(after) });
+}
+
+/**
+ * Render both state inventories for the final review without dropping any observation.
+ *
+ * The synthesis must reconcile every numbered observation, so none is ever left out: when the
+ * complete context passes the limit only the batch rationales are shortened, and when even that
+ * does not fit the context is refused and the caller asks no synthesis at all.
+ *
+ * @param before - Vision inventory of the complete control document.
+ * @param after - Vision inventory of the complete candidate-applied document.
+ * @returns The fitted context text, or the size that passed the limit.
  */
 export function renderTileInventoryContext(
     before: CandidateVisualTileInventory,
     after: CandidateVisualTileInventory,
 ): CandidateVisualTileInventoryContext {
-    const indexedBefore = {
-        ...before,
-        instances: before.instances.map((instance, index) => ({
-            observationIndex: index + 1,
-            ...instance,
-        })),
-    };
-    const indexedAfter = {
-        ...after,
-        instances: after.instances.map((instance, index) => ({
-            observationIndex: index + 1,
-            ...instance,
-        })),
-    };
-    const serialized = JSON.stringify({ before: indexedBefore, after: indexedAfter });
-    if (serialized.length <= MAX_TILE_INVENTORY_CONTEXT_CHARS) {
-        return { text: serialized, complete: true };
+    const limitChars = MAX_TILE_INVENTORY_CONTEXT_CHARS;
+    const complete = serializeInventories(before, after, false);
+    if (complete.length <= limitChars) {
+        return {
+            fit: TileInventoryContextFit.Complete,
+            text: complete,
+            chars: complete.length,
+            limitChars,
+        };
     }
-    return {
-        text: JSON.stringify({
-            contextTruncated: true,
-            before: {
-                ...indexedBefore,
-                instances: indexedBefore.instances.slice(0, 10),
-                rationales: before.rationales.slice(0, 3),
-            },
-            after: {
-                ...indexedAfter,
-                instances: indexedAfter.instances.slice(0, 10),
-                rationales: after.rationales.slice(0, 3),
-            },
-        }),
-        complete: false,
-    };
+    const shortened = serializeInventories(before, after, true);
+    if (shortened.length <= limitChars) {
+        return {
+            fit: TileInventoryContextFit.RationalesShortened,
+            text: shortened,
+            chars: shortened.length,
+            limitChars,
+        };
+    }
+    return { fit: TileInventoryContextFit.Overflow, chars: shortened.length, limitChars };
 }

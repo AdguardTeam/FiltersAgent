@@ -198,7 +198,13 @@ applied, does not count.
   it, as a wall inside a player iframe does.
   Otherwise the phase counts when the page let a request through to the host
   a blocking candidate names, or when vision did not find the problem absent,
-  so an indeterminate classification counts as reproduced. A run refused after
+  so an indeterminate classification counts as reproduced. One measurement
+  outranks vision on any other report: when the candidate is a cosmetic rule
+  (hiding or CSS injection) and its own selector, measured on the baseline
+  after the reveal steps completed, matched no element, the phase does not
+  count. A selector the page cannot measure this way, such as `:contains`, a
+  pseudo-element or a legacy `[-ext-` attribute, leaves the decision to
+  vision. A run refused after
   preparation, or whose baseline phase failed, is `not_reproduced` even when
   the agent's own prepared session showed the problem. An `apply_rule` call
   refused before the environment is built prepares nothing.

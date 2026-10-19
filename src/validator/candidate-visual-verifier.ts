@@ -37,16 +37,25 @@ import {
 import { MAX_REPORTER_SYMPTOM_CHARS } from './reporter-symptom-scope';
 import {
     CandidateVisualEvidenceSource,
+    SHORTENED_RATIONALE_CHARS,
+    TileInventoryContextFit,
     boundedModel,
     boundedSemanticContext,
     combineStateInventories,
     renderTileInventoryContext,
     type CandidateVisualFullPageOverviewEvidencePair,
-    type CandidateVisualTileInventoryContext,
+    type FittedTileInventoryContext,
 } from './candidate-visual-context';
 import { planFullPageOverview } from './candidate-visual-planning';
 import { inconclusiveModelOutput, synthesizeFinalReview } from './candidate-visual-synthesis';
 import type { CandidateVisualVerifierOptions } from './candidate-visual-evidence';
+
+/**
+ * `phase` of the decision event that records the synthesis context's size and fit. A trace reader
+ * looks a refused synthesis up by this marker, so it is declared once here instead of being
+ * respelled at the record call.
+ */
+export const SYNTHESIS_CONTEXT_DECISION_PHASE = 'candidate_visual_synthesis_context';
 
 /**
  * Maximum prompt length accepted for browser-collected facts.
@@ -121,13 +130,13 @@ function domCheckContext(options: CandidateVisualVerifierOptions): string[] {
  * Build the final text-only request after every evidence image was inspected in bounded calls.
  *
  * @param options - Trusted review options containing candidate and runner context.
- * @param inventoryContext - Compact complete visual observations from the same vision model.
+ * @param inventoryContext - Every visual observation from the same vision model, within the limit.
  * @param fullPageOverviewEvidence - Provenance for original or omitted full-page overviews.
  * @returns Ordered text messages containing the complete before/after observation inventory.
  */
 function buildReviewMessages(
     options: CandidateVisualVerifierOptions,
-    inventoryContext: CandidateVisualTileInventoryContext,
+    inventoryContext: FittedTileInventoryContext,
     fullPageOverviewEvidence: CandidateVisualFullPageOverviewEvidencePair,
 ): SingleShotMessage[] {
     const symptomKind = options.symptomKind ?? SymptomKind.Ads;
@@ -365,6 +374,22 @@ export async function reviewCandidateVisually(
             CaptureState.After,
         );
         const inventoryContext = renderTileInventoryContext(beforeInventory, afterInventory);
+        options.recorder.record(TraceEventType.Decision, {
+            phase: SYNTHESIS_CONTEXT_DECISION_PHASE,
+            validationArtifactId: options.validationArtifactId,
+            contextChars: inventoryContext.chars,
+            limitChars: inventoryContext.limitChars,
+            rationalesShortened: inventoryContext.fit !== TileInventoryContextFit.Complete,
+            refused: inventoryContext.fit === TileInventoryContextFit.Overflow,
+        });
+        if (inventoryContext.fit === TileInventoryContextFit.Overflow) {
+            // A synthesis shown part of the inventory cannot reconcile all of it, so none is asked.
+            throw new Error(
+                `The synthesis context needs ${inventoryContext.chars} characters with every ` +
+                    `batch rationale shortened to ${SHORTENED_RATIONALE_CHARS}; the limit is ` +
+                    `${inventoryContext.limitChars}.`,
+            );
+        }
         const messages = buildReviewMessages(options, inventoryContext, fullPageOverviewEvidence);
         const allowedBeforeArtifactIds = new Set([
             options.evidence.beforeViewport.id,
@@ -386,8 +411,7 @@ export async function reviewCandidateVisually(
             options.evidence.beforeCoverageComplete &&
                 options.evidence.afterCoverageComplete &&
                 beforeInventory.coverageObserved &&
-                afterInventory.coverageObserved &&
-                inventoryContext.complete,
+                afterInventory.coverageObserved,
             model,
         );
         semanticOutput = normalized.semanticOutput;

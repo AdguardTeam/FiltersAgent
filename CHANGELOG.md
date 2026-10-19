@@ -58,6 +58,14 @@ The format is based on [Keep a Changelog], and this project adheres to
 - Changed the AdGuard CLI module to install the stable AdGuard CLI 1.4.13
   instead of 1.5.0-rc.1, and to refuse a pre-release `releaseUrl`. Seed the
   CLI home again after upgrading.
+- Changed the candidate visual review to ask the baseline and candidate
+  screenshots the same inventory question without naming which state they
+  show, so the baseline inventory no longer reports the reporter's symptom on
+  a capture that does not show it.
+- Changed the candidate experiment to judge the candidate phase by the paired
+  before/after review alone instead of a second single-image inventory, and
+  added `failedCandidateChecks` to the `apply_rule` answer to name each runner
+  check that kept a verified review from verifying the candidate.
 
 ### Removed
 
@@ -185,6 +193,27 @@ The format is based on [Keep a Changelog], and this project adheres to
 - Fixed the candidate visual review counting blank space the page already
   had without the candidate, such as unloaded video panels, as ad layout
   residue.
+- Fixed the candidate visual review of a long page ending inconclusive after
+  its final step saw only some of the observations it had to reconcile: it
+  now sees every observation, or, when they cannot all fit, the review ends
+  inconclusive without that step and names the context size and limit.
+- Fixed a candidate being proposed as a verified patch when its vision review
+  verified it but its controlled experiment did not: the `apply_rule` answer
+  now leads with `environmentExperiment`, and `finish_fix` names the failed
+  checks.
+- Fixed a run keeping a verified patch when its recorded environment
+  evidence could not back it: such a run now ends `failed` with
+  `environment_unavailable` and no patch, and every other run keeps its
+  status; `run-result.json` names the refused check in
+  `environmentProjectionRefusal` and the trace records it.
+- Fixed Firefox runs never carrying their environment execution in
+  `run-result.json` once an experiment reached the candidate phase: a signed
+  XPI reports no version, and the run now binds it that way.
+- Fixed a cosmetic rule (hiding or CSS injection) whose selector matches
+  nothing on the filtered baseline being verified on screenshots alone:
+  `apply_rule` now ends such an experiment `baseline_symptom_absent`, names
+  the selector in `unmatchedBaselineSelector`, and suggests `revealSteps` for
+  an element that appears only after a click, a scroll or a key press.
 - Fixed the AdGuard CLI route reporting a ready environment while it decrypted
   no HTTPS: preparation now sends an HTTPS request to the issue's site through
   the CLI, and a run whose request does not go through the filter ends

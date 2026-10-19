@@ -7,6 +7,7 @@ import {
 } from '../../../lab/e2e/benchmark-outcome';
 import { INTAKE_SKIPPED_PREFIX } from '../../../lab/local/local-failure-stage';
 import { PROVIDER_REJECTION_PREFIX } from '../../../src/pi/single-shot';
+import { EnvironmentProjectionRefusal } from '../../../src/types/environment-projection-refusal';
 import { ExtensionMode, type FixRunResult } from '../../../src/types/fix-run-result';
 import { InfrastructureFailureReason } from '../../../src/types/infrastructure-failure-reason';
 import { ReporterSymptomPresence } from '../../../src/types/reporter-symptom-presence';
@@ -183,6 +184,42 @@ describe('classifyAgentOutcome', () => {
             status: BenchmarkCaseStatus.InfrastructureFailure,
             detail: 'Every live navigation timed out.',
         });
+    });
+
+    it('fails a run whose environment evidence did not project with the refusal, not the reasoning', () => {
+        // The agent's reasoning still describes the verified patch the refusal took away.
+        const reasoning = 'The candidate hides the banner and the experiment verified it.';
+        const outcome = classifyAgentOutcome(
+            runResult({
+                runStatus: 'failed',
+                verificationStatus: 'unavailable',
+                infrastructureFailureReason: InfrastructureFailureReason.EnvironmentUnavailable,
+                environmentProjectionRefusal: EnvironmentProjectionRefusal.VerifiedWithoutExactAbc,
+                reasoning,
+            }),
+        );
+
+        expect(outcome.status).toBe(BenchmarkCaseStatus.InfrastructureFailure);
+        expect(outcome.detail).toContain(EnvironmentProjectionRefusal.VerifiedWithoutExactAbc);
+        expect(outcome.detail).not.toContain(reasoning);
+    });
+
+    it('keeps the reasoning of a run that failed for its own reason before a projection refusal', () => {
+        // The lifecycle leaves a run it did not fail as it was, so the cause is the run's own.
+        const reasoning = 'The reasoning provider stopped answering.';
+        const outcome = classifyAgentOutcome(
+            runResult({
+                runStatus: 'failed',
+                verificationStatus: 'unavailable',
+                infrastructureFailureReason: InfrastructureFailureReason.LlmUnavailable,
+                environmentProjectionRefusal: EnvironmentProjectionRefusal.NoProjectablePhases,
+                reasoning,
+            }),
+        );
+
+        expect(outcome.status).toBe(BenchmarkCaseStatus.InfrastructureFailure);
+        expect(outcome.detail).toContain(reasoning);
+        expect(outcome.detail).toContain(EnvironmentProjectionRefusal.NoProjectablePhases);
     });
 });
 

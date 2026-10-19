@@ -88,6 +88,7 @@ import { BROWSER_LAUNCH_DEADLINE_MS } from '../../src/orchestrator/browser-tool-
 import type { AdsEnvironmentPhaseObservationInput } from '../../src/validator/phase-orchestrator';
 import type { PiRuntime } from '../../src/pi/runtime';
 import { testCoreConfig } from '../config/test-core-config';
+import { fakeInteractionSession } from '../environment/interaction-session-fixture';
 const { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } = fs;
 const { describe, expect, it, vi } = vitest;
 
@@ -670,6 +671,7 @@ function verifiedCandidateToolResult(recorder: TraceRecorder, rule = 'nettg.pl##
         phaseA: { url: 'https://nettg.pl/' },
         phaseB: { url: 'https://nettg.pl/' },
         phaseC: { url: 'https://nettg.pl/' },
+        environmentExperiment: 'verified',
         visualReview: {
             verdict: 'verified',
             symptom: 'resolved',
@@ -906,109 +908,144 @@ async function abortingLaunchHarness(): Promise<{
     };
 }
 
-describe('AgentRuntime', () => {
-    it('gives repeated semantic candidates unique physical environment experiment identities', async () => {
-        const filtersPath = mkdtempSync(join(tmpdir(), 'agent-runtime-environment-retry-'));
-        const baseRegistry = emptyRegistry();
-        baseRegistry.register({
-            definition: {
-                type: 'function',
-                function: {
-                    name: 'lookup_rule_guidance',
-                    description: 'Read rule guidance.',
-                    parameters: { type: 'object', properties: {} },
+/**
+ * How one {@link extensionExperimentRuntime} scenario runs its experiments.
+ */
+interface ExtensionExperimentRuntimeOptions {
+    /**
+     * The candidate rule the scenario applies; the review stub binds its hash.
+     */
+    candidateRule: string;
+
+    /**
+     * Whether the paired review of the given one-based experiment verifies the candidate.
+     */
+    reviewVerifies: (experiment: number) => boolean;
+
+    /**
+     * The browser session the adapter opens for one phase; a bare session when absent.
+     */
+    phaseSession?: (phase: PhaseLabel) => IBrowserSession;
+
+    /**
+     * How many elements the candidate's selector matches in one phase; when absent, one except in a
+     * candidate phase whose review verifies.
+     */
+    targetCount?: (phase: PhaseLabel) => number;
+}
+
+/**
+ * Build a runtime that runs every apply_rule as a real Extension experiment: a hermetic adapter,
+ * the real observer with its browser leaves stubbed, and a paired review whose verdict the scenario
+ * chooses per experiment. A verified review comes with a candidate phase whose target is gone.
+ *
+ * @param scenario - The scenario's candidate, review verdicts and phase sessions.
+ * @returns The runtime and what its experiments recorded.
+ */
+async function extensionExperimentRuntime(scenario: ExtensionExperimentRuntimeOptions) {
+    const filtersPath = mkdtempSync(join(tmpdir(), 'agent-runtime-environment-retry-'));
+    const baseRegistry = emptyRegistry();
+    baseRegistry.register({
+        definition: {
+            type: 'function',
+            function: {
+                name: 'lookup_rule_guidance',
+                description: 'Read rule guidance.',
+                parameters: { type: 'object', properties: {} },
+            },
+        },
+        handler: async () => ({ topic: 'element_hiding' }),
+    });
+    const actualContext = {
+        kind: 'browser_extension' as const,
+        product: 'AdGuard Browser Extension',
+        browser: 'CloakBrowser Chromium',
+        productVersion: '5.5.2.3',
+    };
+    const baselineDigest = 'd'.repeat(64);
+    let lifecycle: FilteringEnvironmentAdapterState['lifecycle'] = 'ready';
+    let cleanupReceipt: FilteringEnvironmentAdapterState['cleanup'] = null;
+    const adapterState = (): FilteringEnvironmentAdapterState => ({
+        kind: 'browser_extension',
+        lifecycle,
+        stateDigest: 'e'.repeat(64),
+        actualContext,
+        capabilities: ['browser_navigation', 'filtering_control'],
+        preparation: {
+            preparedAt: '2026-07-24T00:00:00.000Z',
+            buildDigest: 'f'.repeat(64),
+            extensionRootDigest: null,
+        },
+        baseline: {
+            environment: 'browser_extension',
+            acquiredAt: '2026-07-24T00:00:00.000Z',
+            enabledListKeys: ['adguard:2'],
+            resources: [
+                {
+                    listKey: 'adguard:2',
+                    rulesetId: 'ruleset_2',
+                    path: 'filters/ruleset_2.json',
+                    version: '2.0.0',
+                    byteCount: 2,
+                    sha256: 'a'.repeat(64),
                 },
-            },
-            handler: async () => ({ topic: 'element_hiding' }),
-        });
-        const actualContext = {
-            kind: 'browser_extension' as const,
-            product: 'AdGuard Browser Extension',
-            browser: 'CloakBrowser Chromium',
-            productVersion: '5.5.2.3',
-        };
-        const baselineDigest = 'd'.repeat(64);
-        let lifecycle: FilteringEnvironmentAdapterState['lifecycle'] = 'ready';
-        let cleanupReceipt: FilteringEnvironmentAdapterState['cleanup'] = null;
-        const adapterState = (): FilteringEnvironmentAdapterState => ({
-            kind: 'browser_extension',
-            lifecycle,
-            stateDigest: 'e'.repeat(64),
-            actualContext,
-            capabilities: ['browser_navigation', 'filtering_control'],
-            preparation: {
-                preparedAt: '2026-07-24T00:00:00.000Z',
-                buildDigest: 'f'.repeat(64),
-                extensionRootDigest: null,
-            },
-            baseline: {
-                environment: 'browser_extension',
-                acquiredAt: '2026-07-24T00:00:00.000Z',
+            ],
+            aggregateDigest: baselineDigest,
+        },
+        openLeaseIds: [],
+        cleanup: cleanupReceipt,
+    });
+    const openedExperimentIds: string[] = [];
+    const adapter: FilteringEnvironmentAdapter = {
+        kind: 'browser_extension',
+        capabilities: () => ['browser_navigation', 'filtering_control'],
+        prepare: async () => ({ ready: true, state: adapterState() }),
+        openPhase: async (request) => {
+            if (request.phase === 'A') {
+                openedExperimentIds.push(request.experimentId);
+            }
+            const candidateDigest =
+                request.phase === 'C'
+                    ? createHash('sha256').update(request.candidate!.rule).digest('hex')
+                    : null;
+            const sessionId = `${request.experimentId}-${request.phase}`;
+            let filteringState:
+                | 'disabled'
+                | 'published_baseline'
+                | 'published_baseline_plus_candidate' = 'disabled';
+            if (request.phase === 'B') {
+                filteringState = 'published_baseline';
+            }
+            if (request.phase === 'C') {
+                filteringState = 'published_baseline_plus_candidate';
+            }
+            const extensionProof = {
+                packageVersion: '5.5.2.3',
+                manifestVersion: '5.5.2.3',
+                profileKind: 'agent_selected' as const,
                 enabledListKeys: ['adguard:2'],
-                resources: [
-                    {
-                        listKey: 'adguard:2',
-                        rulesetId: 'ruleset_2',
-                        path: 'filters/ruleset_2.json',
-                        version: '2.0.0',
-                        byteCount: 2,
-                        sha256: 'a'.repeat(64),
-                    },
-                ],
-                aggregateDigest: baselineDigest,
-            },
-            openLeaseIds: [],
-            cleanup: cleanupReceipt,
-        });
-        const openedExperimentIds: string[] = [];
-        const adapter: FilteringEnvironmentAdapter = {
-            kind: 'browser_extension',
-            capabilities: () => ['browser_navigation', 'filtering_control'],
-            prepare: async () => ({ ready: true, state: adapterState() }),
-            openPhase: async (request) => {
-                if (request.phase === 'A') {
-                    openedExperimentIds.push(request.experimentId);
-                }
-                const candidateDigest =
-                    request.phase === 'C'
-                        ? createHash('sha256').update(request.candidate!.rule).digest('hex')
-                        : null;
-                const sessionId = `${request.experimentId}-${request.phase}`;
-                let filteringState:
-                    | 'disabled'
-                    | 'published_baseline'
-                    | 'published_baseline_plus_candidate' = 'disabled';
-                if (request.phase === 'B') {
-                    filteringState = 'published_baseline';
-                }
-                if (request.phase === 'C') {
-                    filteringState = 'published_baseline_plus_candidate';
-                }
-                const extensionProof = {
-                    packageVersion: '5.5.2.3',
-                    manifestVersion: '5.5.2.3',
-                    profileKind: 'agent_selected' as const,
-                    enabledListKeys: ['adguard:2'],
-                    activeRulesetListKeys: ['adguard:2'],
-                    stealthEnabled: false,
-                    userRulesDigest: candidateDigest,
-                    application: {
-                        method: BlockerVerificationMethod.ExtensionState,
-                        appliedRules: request.phase === 'C' ? [request.candidate!.rule] : [],
-                        actionLog: [],
-                    },
-                    provenance: {
-                        source: PreparedExtensionSource.PinnedRelease,
-                        extensionPath: '/tmp/cache/extension',
-                        manifestVersion: 3 as const,
-                        extensionSourceSha256: 'e'.repeat(64),
-                        extensionSourceTag: 'v5.5.2.3',
-                    },
-                };
-                return {
-                    ready: true,
-                    handle: {
-                        session: {
+                activeRulesetListKeys: ['adguard:2'],
+                stealthEnabled: false,
+                userRulesDigest: candidateDigest,
+                application: {
+                    method: BlockerVerificationMethod.ExtensionState,
+                    appliedRules: request.phase === 'C' ? [request.candidate!.rule] : [],
+                    actionLog: [],
+                },
+                provenance: {
+                    source: PreparedExtensionSource.PinnedRelease,
+                    extensionPath: '/tmp/cache/extension',
+                    manifestVersion: 3 as const,
+                    extensionSourceSha256: 'e'.repeat(64),
+                    extensionSourceTag: 'v5.5.2.3',
+                },
+            };
+            return {
+                ready: true,
+                handle: {
+                    session:
+                        scenario.phaseSession?.(request.phase) ??
+                        ({
                             artifactsDir: '/tmp/artifacts',
                             isClosed: false,
                             getPage: () => ({}) as never,
@@ -1017,315 +1054,338 @@ describe('AgentRuntime', () => {
                             resetNetworkLog: () => undefined,
                             getConsoleLog: () => [],
                             consoleCoverage: ConsoleCoverage.BrowserLogOnly,
-                        } as IBrowserSession,
-                        adapterProof: {
-                            leaseId: sessionId,
-                            adapterStateDigest: 'e'.repeat(64),
-                            phase: request.phase,
-                            filteringState,
-                            sessionId,
-                            actualContext,
-                            baselineDigest: request.phase === 'A' ? null : baselineDigest,
-                            candidateDigest,
-                            extension: request.phase === 'A' ? null : extensionProof,
-                        },
-                        close: async () => undefined,
+                        } as IBrowserSession),
+                    adapterProof: {
+                        leaseId: sessionId,
+                        adapterStateDigest: 'e'.repeat(64),
+                        phase: request.phase,
+                        filteringState,
+                        sessionId,
+                        actualContext,
+                        baselineDigest: request.phase === 'A' ? null : baselineDigest,
+                        candidateDigest,
+                        extension: request.phase === 'A' ? null : extensionProof,
                     },
-                };
-            },
-            drainOpenHandles: async () => ({
-                attempted: 0,
-                closed: 0,
-                failed: 0,
-                failures: [],
-            }),
-            cleanup: async () => {
-                lifecycle = 'cleaned';
-                cleanupReceipt = {
-                    attempted: true,
-                    completed: true,
-                    finalizerAttempts: 0,
-                    finalizerCompleted: 0,
-                    finalizerFailed: 0,
-                    failures: [],
-                };
-                return cleanupReceipt;
-            },
-            snapshot: adapterState,
-        };
-        const legacyApplyRule = vi.fn(async () => ({ legacy: true }));
-        let candidateObservation = 0;
-        let fixtureAttempt = 0;
-        const validationArtifactIds: string[] = [];
-        const reviewedDomChecks: Array<readonly DomCheckRecord[] | undefined> = [];
-        const candidateRule = 'nettg.pl##.articleAdSlot';
-        const candidateRuleHash = createHash('sha256').update(candidateRule).digest('hex');
-        const artifactsDir = join(filtersPath, 'artifacts');
-        mkdirSync(artifactsDir, { recursive: true });
-        const fixtureArtifacts = new Map<
-            number,
-            Map<
-                'A' | 'B' | 'C',
-                {
-                    viewport: { id: string; path: string };
-                    fullPage: { id: string; path: string };
-                    tile: { id: string; path: string };
-                }
-            >
-        >();
-        const verificationByToken = new Map<string, boolean>();
-        const registerArtifact = (
-            recorder: TraceRecorder,
-            id: string,
-            path: string,
-            type: string,
-        ): void => {
-            writeFileSync(path, '{}');
-            recorder.addArtifact({ id, path, type, bytes: 2 });
-        };
-        // oxlint-disable-next-line unicorn/consistent-function-scoping -- Scenario-local fixture.
-        const structuralSnapshot = (targetPresent: boolean): StructuralSnapshot => ({
-            probeSucceeded: true,
-            targetCount: targetPresent ? 1 : 0,
-            targetVisibleCount: targetPresent ? 1 : 0,
-            targetTotalHeight: targetPresent ? 100 : 0,
-            targetTotalArea: targetPresent ? 10_000 : 0,
-            documentHeight: 1_000,
-            fixedTopOverlayBottom: 0,
-            visibleHeadingCount: 1,
-            visibleBreadcrumbCount: 0,
-            overlappedHeadingCount: 0,
-            overlappedBreadcrumbCount: 0,
-            minimumOverlappedLandmarkTop: null,
-            meaningfulTextLength: 1_000,
-            textGeometry: {
-                totalCount: 1,
-                visibleCount: 1,
-                visibleArea: 10_000,
-                clippedCount: 0,
-                occludedCount: 0,
-            },
-            mediaGeometry: {
-                totalCount: 0,
-                visibleCount: 0,
-                visibleArea: 0,
-                clippedCount: 0,
-                occludedCount: 0,
-            },
-            controlGeometry: {
-                totalCount: 0,
-                visibleCount: 0,
-                visibleArea: 0,
-                clippedCount: 0,
-                occludedCount: 0,
-            },
-        });
-        const runtime = await createExtensionRuntime(
-            {
-                ...runtimeOptions(),
-                filtersPath,
-                artifactsDir,
-                issueAttachmentArtifactIds: [],
-            },
-            {
-                createBaseRegistry: async () => baseRegistry,
-                ...launchReadBackDependencies(),
-                createBrowserSession: async () => fakePreparedSession(),
-                createBrowserRegistry: async () => {
-                    const registry = emptyRegistry();
-                    registry.register({
-                        definition: {
-                            type: 'function',
-                            function: {
-                                name: 'apply_rule',
-                                description: 'Legacy candidate validation.',
-                                parameters: { type: 'object', properties: {} },
-                            },
-                        },
-                        handler: legacyApplyRule,
-                    });
-                    return registry;
+                    close: async () => undefined,
                 },
-                filteringExecutors: hermeticExtensionRegistry(() => adapter),
-                browserExtensionAdsObserverDependencies: {
-                    runPhase: async (input, config): Promise<PhaseResult> => {
-                        if (input.phase === 'A') {
-                            fixtureAttempt += 1;
-                        }
-                        if (input.phase === 'C') {
-                            candidateObservation += 1;
-                        }
-                        const verified = input.phase === 'C' && candidateObservation === 2;
-                        verificationByToken.set(input.phaseTokenId, verified);
-                        const suffix = deriveCandidateArtifactExecutionSuffix(input.phaseTokenId);
-                        const phaseArtifacts = {
-                            viewport: {
-                                id: `viewport-${suffix}`,
-                                path: join(artifactsDir, `viewport-${suffix}.png`),
-                            },
-                            fullPage: {
-                                id: `full-${suffix}`,
-                                path: join(artifactsDir, `full-${suffix}.png`),
-                            },
-                            tile: {
-                                id: `tile-${suffix}`,
-                                path: join(artifactsDir, `tile-${suffix}.png`),
-                            },
-                        };
-                        const attemptArtifacts = fixtureArtifacts.get(fixtureAttempt) ?? new Map();
-                        attemptArtifacts.set(input.phase, phaseArtifacts);
-                        fixtureArtifacts.set(fixtureAttempt, attemptArtifacts);
-                        for (const artifact of Object.values(phaseArtifacts)) {
-                            registerArtifact(
-                                config.recorder,
-                                artifact.id,
-                                artifact.path,
-                                'image/png',
-                            );
-                        }
-                        const harId = `har-${suffix}`;
-                        const harPath = join(artifactsDir, `${harId}.json`);
-                        const domId = `dom-${suffix}`;
-                        const domPath = join(artifactsDir, `${domId}.html`);
-                        registerArtifact(config.recorder, harId, harPath, 'application/json');
-                        registerArtifact(config.recorder, domId, domPath, 'text/html');
-                        return {
-                            phase: input.phase,
-                            screenshotArtifactId: phaseArtifacts.viewport.id,
-                            fullPageScreenshotArtifactId: phaseArtifacts.fullPage.id,
-                            tileCoverage: {
-                                complete: true,
-                                documentWidth: 1_000,
-                                documentHeight: 1_000,
-                                viewportWidth: 1_000,
-                                viewportHeight: 1_000,
-                                overlapPx: 0,
-                                tiles: [
-                                    {
-                                        artifactId: phaseArtifacts.tile.id,
-                                        index: 0,
-                                        x: 0,
-                                        y: 0,
-                                        width: 1_000,
-                                        height: 1_000,
-                                        landmark: 'Article body',
-                                    },
-                                ],
-                            },
-                            harArtifactId: harId,
-                            domArtifactId: domId,
-                            url: 'https://nettg.pl/',
-                            appliedRules: [],
-                            ruleApplications: [],
-                            antiAdblockDetected: false,
-                        };
+            };
+        },
+        drainOpenHandles: async () => ({
+            attempted: 0,
+            closed: 0,
+            failed: 0,
+            failures: [],
+        }),
+        cleanup: async () => {
+            lifecycle = 'cleaned';
+            cleanupReceipt = {
+                attempted: true,
+                completed: true,
+                finalizerAttempts: 0,
+                finalizerCompleted: 0,
+                finalizerFailed: 0,
+                failures: [],
+            };
+            return cleanupReceipt;
+        },
+        snapshot: adapterState,
+    };
+    const legacyApplyRule = vi.fn(async () => ({ legacy: true }));
+    let candidateObservation = 0;
+    let fixtureAttempt = 0;
+    const validationArtifactIds: string[] = [];
+    const reviewedDomChecks: Array<readonly DomCheckRecord[] | undefined> = [];
+    const candidateRule = scenario.candidateRule;
+    const candidateRuleHash = createHash('sha256').update(candidateRule).digest('hex');
+    const artifactsDir = join(filtersPath, 'artifacts');
+    mkdirSync(artifactsDir, { recursive: true });
+    const fixtureArtifacts = new Map<
+        number,
+        Map<
+            'A' | 'B' | 'C',
+            {
+                viewport: { id: string; path: string };
+                fullPage: { id: string; path: string };
+                tile: { id: string; path: string };
+            }
+        >
+    >();
+    const verificationByToken = new Map<string, boolean>();
+    const registerArtifact = (
+        recorder: TraceRecorder,
+        id: string,
+        path: string,
+        type: string,
+    ): void => {
+        writeFileSync(path, '{}');
+        recorder.addArtifact({ id, path, type, bytes: 2 });
+    };
+    // oxlint-disable-next-line unicorn/consistent-function-scoping -- Scenario-local fixture.
+    const structuralSnapshot = (targetCount: number): StructuralSnapshot => ({
+        probeSucceeded: true,
+        targetCount,
+        targetVisibleCount: targetCount,
+        targetTotalHeight: targetCount * 100,
+        targetTotalArea: targetCount * 10_000,
+        documentHeight: 1_000,
+        fixedTopOverlayBottom: 0,
+        visibleHeadingCount: 1,
+        visibleBreadcrumbCount: 0,
+        overlappedHeadingCount: 0,
+        overlappedBreadcrumbCount: 0,
+        minimumOverlappedLandmarkTop: null,
+        meaningfulTextLength: 1_000,
+        textGeometry: {
+            totalCount: 1,
+            visibleCount: 1,
+            visibleArea: 10_000,
+            clippedCount: 0,
+            occludedCount: 0,
+        },
+        mediaGeometry: {
+            totalCount: 0,
+            visibleCount: 0,
+            visibleArea: 0,
+            clippedCount: 0,
+            occludedCount: 0,
+        },
+        controlGeometry: {
+            totalCount: 0,
+            visibleCount: 0,
+            visibleArea: 0,
+            clippedCount: 0,
+            occludedCount: 0,
+        },
+    });
+    const runtime = await createExtensionRuntime(
+        {
+            ...runtimeOptions(),
+            filtersPath,
+            artifactsDir,
+            issueAttachmentArtifactIds: [],
+        },
+        {
+            createBaseRegistry: async () => baseRegistry,
+            ...launchReadBackDependencies(),
+            createBrowserSession: async () => fakePreparedSession(),
+            createBrowserRegistry: async () => {
+                const registry = emptyRegistry();
+                registry.register({
+                    definition: {
+                        type: 'function',
+                        function: {
+                            name: 'apply_rule',
+                            description: 'Legacy candidate validation.',
+                            parameters: { type: 'object', properties: {} },
+                        },
                     },
-                    probeStructuralSnapshot: async (input): Promise<StructuralSnapshot> =>
-                        structuralSnapshot(
-                            input.phase !== 'C' || !verificationByToken.get(input.phaseTokenId),
-                        ),
-                    inspectFullPageVisualCapture: async (
-                        input,
-                        options,
-                    ): Promise<FullPageVisualCaptureResult> => {
-                        const suffix = deriveCandidateArtifactExecutionSuffix(input.phaseTokenId);
-                        const artifactId = `inventory-${suffix}`;
-                        const artifactPath = join(artifactsDir, `${artifactId}.json`);
-                        registerArtifact(
-                            options.recorder,
-                            artifactId,
-                            artifactPath,
-                            'application/json',
-                        );
-                        return {
-                            inventory: {
-                                reporterSymptomPresence:
-                                    input.phase === 'C' &&
-                                    verificationByToken.get(input.phaseTokenId)
-                                        ? 'absent'
-                                        : 'present',
-                            } as FullPageVisualCaptureResult['inventory'],
-                            artifactId,
-                            artifactPath,
-                            coverageComplete: true,
-                            inspectedArtifactIds: [],
-                            missingArtifactIds: [],
-                            batchFailures: [],
-                        };
-                    },
-                    resolveCandidateVisualEvidence: (_input, options): CandidateVisualEvidence => {
-                        validationArtifactIds.push(options.validationArtifactId);
-                        const attempt = fixtureArtifacts.get(fixtureAttempt)!;
-                        const before = attempt.get('B')!;
-                        const after = attempt.get('C')!;
-                        return {
-                            factualValidation: {} as CandidateVisualEvidence['factualValidation'],
-                            beforeViewport: before.viewport,
-                            beforeFullPage: before.fullPage,
-                            afterViewport: after.viewport,
-                            afterFullPage: after.fullPage,
-                            beforeTiles: [],
-                            afterTiles: [],
-                            beforeCoverageComplete: true,
-                            afterCoverageComplete: true,
-                            beforeDocumentCoverageComplete: true,
-                            afterDocumentCoverageComplete: true,
-                        };
-                    },
-                    reviewCandidateVisually: async (
-                        input,
-                        options,
-                    ): Promise<CandidateVisualVerifierResult> => {
-                        reviewedDomChecks.push(options.domChecks);
-                        const verified = verificationByToken.get(input.phaseTokenId) === true;
-                        const suffix = deriveCandidateArtifactExecutionSuffix(input.phaseTokenId);
-                        const artifactId =
-                            `visual-review-${candidateRuleHash.slice(0, 12)}` +
-                            `-execution-${suffix}`;
-                        const artifactPath = join(artifactsDir, `${artifactId}.json`);
-                        registerArtifact(
-                            options.recorder,
-                            artifactId,
-                            artifactPath,
-                            'application/json',
-                        );
-                        const unresolvedInstance = {
-                            artifactId: options.evidence.afterViewport.id,
-                            landmark: 'Article body',
-                            description: 'The advertisement remains visible.',
-                        };
-                        const review: CandidateVisualReview = {
-                            verdict: verified ? 'verified' : 'rejected',
-                            symptom: verified ? 'resolved' : 'not_resolved',
-                            symptomScope: 'The reported advertisement.',
-                            adLayoutResidue: verified ? 'absent' : 'present',
-                            coverageComplete: true,
-                            beforeInstances: [
+                    handler: legacyApplyRule,
+                });
+                return registry;
+            },
+            filteringExecutors: hermeticExtensionRegistry(() => adapter),
+            browserExtensionAdsObserverDependencies: {
+                runPhase: async (input, config): Promise<PhaseResult> => {
+                    if (input.phase === 'A') {
+                        fixtureAttempt += 1;
+                    }
+                    if (input.phase === 'C') {
+                        candidateObservation += 1;
+                    }
+                    await config.interact?.();
+                    const verified =
+                        input.phase === 'C' && scenario.reviewVerifies(candidateObservation);
+                    verificationByToken.set(input.phaseTokenId, verified);
+                    const suffix = deriveCandidateArtifactExecutionSuffix(input.phaseTokenId);
+                    const phaseArtifacts = {
+                        viewport: {
+                            id: `viewport-${suffix}`,
+                            path: join(artifactsDir, `viewport-${suffix}.png`),
+                        },
+                        fullPage: {
+                            id: `full-${suffix}`,
+                            path: join(artifactsDir, `full-${suffix}.png`),
+                        },
+                        tile: {
+                            id: `tile-${suffix}`,
+                            path: join(artifactsDir, `tile-${suffix}.png`),
+                        },
+                    };
+                    const attemptArtifacts = fixtureArtifacts.get(fixtureAttempt) ?? new Map();
+                    attemptArtifacts.set(input.phase, phaseArtifacts);
+                    fixtureArtifacts.set(fixtureAttempt, attemptArtifacts);
+                    for (const artifact of Object.values(phaseArtifacts)) {
+                        registerArtifact(config.recorder, artifact.id, artifact.path, 'image/png');
+                    }
+                    const harId = `har-${suffix}`;
+                    const harPath = join(artifactsDir, `${harId}.json`);
+                    const domId = `dom-${suffix}`;
+                    const domPath = join(artifactsDir, `${domId}.html`);
+                    registerArtifact(config.recorder, harId, harPath, 'application/json');
+                    registerArtifact(config.recorder, domId, domPath, 'text/html');
+                    return {
+                        phase: input.phase,
+                        screenshotArtifactId: phaseArtifacts.viewport.id,
+                        fullPageScreenshotArtifactId: phaseArtifacts.fullPage.id,
+                        tileCoverage: {
+                            complete: true,
+                            documentWidth: 1_000,
+                            documentHeight: 1_000,
+                            viewportWidth: 1_000,
+                            viewportHeight: 1_000,
+                            overlapPx: 0,
+                            tiles: [
                                 {
-                                    artifactId: options.evidence.beforeViewport.id,
+                                    artifactId: phaseArtifacts.tile.id,
+                                    index: 0,
+                                    x: 0,
+                                    y: 0,
+                                    width: 1_000,
+                                    height: 1_000,
                                     landmark: 'Article body',
-                                    description: 'The advertisement is visible.',
                                 },
                             ],
-                            remainingInstances: verified ? [] : [unresolvedInstance],
-                            pageIntegrity: 'intact',
-                            validationArtifactId: options.validationArtifactId,
-                            candidateRuleHash,
-                            beforeViewportArtifactId: options.evidence.beforeViewport.id,
-                            afterViewportArtifactId: options.evidence.afterViewport.id,
-                            beforeFullPageArtifactId: options.evidence.beforeFullPage?.id ?? null,
-                            afterFullPageArtifactId: options.evidence.afterFullPage?.id ?? null,
-                            model: 'vision-model',
-                            rationale: verified
-                                ? 'The advertisement disappeared without page damage.'
-                                : 'The advertisement remains visible.',
-                            observedDamage: [],
-                        };
-                        return { review, artifactId, artifactPath };
-                    },
+                        },
+                        harArtifactId: harId,
+                        domArtifactId: domId,
+                        url: 'https://nettg.pl/',
+                        appliedRules: [],
+                        ruleApplications: [],
+                        antiAdblockDetected: false,
+                    };
+                },
+                probeStructuralSnapshot: async (input): Promise<StructuralSnapshot> =>
+                    structuralSnapshot(
+                        scenario.targetCount?.(input.phase) ??
+                            (input.phase !== 'C' || !verificationByToken.get(input.phaseTokenId)
+                                ? 1
+                                : 0),
+                    ),
+                inspectFullPageVisualCapture: async (
+                    input,
+                    options,
+                ): Promise<FullPageVisualCaptureResult> => {
+                    const suffix = deriveCandidateArtifactExecutionSuffix(input.phaseTokenId);
+                    const artifactId = `inventory-${suffix}`;
+                    const artifactPath = join(artifactsDir, `${artifactId}.json`);
+                    registerArtifact(
+                        options.recorder,
+                        artifactId,
+                        artifactPath,
+                        'application/json',
+                    );
+                    return {
+                        // Only the baseline phases are inventoried, and both show the symptom.
+                        inventory: {
+                            reporterSymptomPresence: 'present',
+                        } as FullPageVisualCaptureResult['inventory'],
+                        artifactId,
+                        artifactPath,
+                        coverageComplete: true,
+                        inspectedArtifactIds: [],
+                        missingArtifactIds: [],
+                        batchFailures: [],
+                    };
+                },
+                resolveCandidateVisualEvidence: (_input, options): CandidateVisualEvidence => {
+                    validationArtifactIds.push(options.validationArtifactId);
+                    const attempt = fixtureArtifacts.get(fixtureAttempt)!;
+                    const before = attempt.get('B')!;
+                    const after = attempt.get('C')!;
+                    return {
+                        factualValidation: {} as CandidateVisualEvidence['factualValidation'],
+                        beforeViewport: before.viewport,
+                        beforeFullPage: before.fullPage,
+                        afterViewport: after.viewport,
+                        afterFullPage: after.fullPage,
+                        beforeTiles: [],
+                        afterTiles: [],
+                        beforeCoverageComplete: true,
+                        afterCoverageComplete: true,
+                        beforeDocumentCoverageComplete: true,
+                        afterDocumentCoverageComplete: true,
+                    };
+                },
+                reviewCandidateVisually: async (
+                    input,
+                    options,
+                ): Promise<CandidateVisualVerifierResult> => {
+                    reviewedDomChecks.push(options.domChecks);
+                    const verified = verificationByToken.get(input.phaseTokenId) === true;
+                    const suffix = deriveCandidateArtifactExecutionSuffix(input.phaseTokenId);
+                    const artifactId = `visual-review-${candidateRuleHash.slice(0, 12)}-execution-${suffix}`;
+                    const artifactPath = join(artifactsDir, `${artifactId}.json`);
+                    registerArtifact(
+                        options.recorder,
+                        artifactId,
+                        artifactPath,
+                        'application/json',
+                    );
+                    const unresolvedInstance = {
+                        artifactId: options.evidence.afterViewport.id,
+                        landmark: 'Article body',
+                        description: 'The advertisement remains visible.',
+                    };
+                    const review: CandidateVisualReview = {
+                        verdict: verified ? 'verified' : 'rejected',
+                        symptom: verified ? 'resolved' : 'not_resolved',
+                        symptomScope: 'The reported advertisement.',
+                        adLayoutResidue: verified ? 'absent' : 'present',
+                        coverageComplete: true,
+                        beforeInstances: [
+                            {
+                                artifactId: options.evidence.beforeViewport.id,
+                                landmark: 'Article body',
+                                description: 'The advertisement is visible.',
+                            },
+                        ],
+                        remainingInstances: verified ? [] : [unresolvedInstance],
+                        pageIntegrity: 'intact',
+                        validationArtifactId: options.validationArtifactId,
+                        candidateRuleHash,
+                        beforeViewportArtifactId: options.evidence.beforeViewport.id,
+                        afterViewportArtifactId: options.evidence.afterViewport.id,
+                        beforeFullPageArtifactId: options.evidence.beforeFullPage?.id ?? null,
+                        afterFullPageArtifactId: options.evidence.afterFullPage?.id ?? null,
+                        model: 'vision-model',
+                        rationale: verified
+                            ? 'The advertisement disappeared without page damage.'
+                            : 'The advertisement remains visible.',
+                        observedDamage: [],
+                    };
+                    return { review, artifactId, artifactPath };
                 },
             },
-        );
+        },
+    );
+    return {
+        runtime,
+        actualContext,
+        openedExperimentIds,
+        validationArtifactIds,
+        reviewedDomChecks,
+        legacyApplyRule,
+        cleanup: () => rmSync(filtersPath, { recursive: true, force: true }),
+    };
+}
+
+describe('AgentRuntime', () => {
+    it('gives repeated semantic candidates unique physical environment experiment identities', async () => {
+        const candidateRule = 'nettg.pl##.articleAdSlot';
+        const candidateRuleHash = createHash('sha256').update(candidateRule).digest('hex');
+        // The first review rejects the candidate; the second, under DOM checks, verifies it.
+        const {
+            runtime,
+            actualContext,
+            openedExperimentIds,
+            validationArtifactIds,
+            reviewedDomChecks,
+            legacyApplyRule,
+            cleanup,
+        } = await extensionExperimentRuntime({
+            candidateRule,
+            reviewVerifies: (experiment) => experiment === 2,
+        });
         await runtime.registry.dispatch('lookup_rule_guidance', { topic: 'element_hiding' });
 
         const candidateResults: Record<string, unknown>[] = [];
@@ -1396,7 +1456,81 @@ describe('AgentRuntime', () => {
             sessionId: expect.stringContaining('execution-2'),
         });
         expect(legacyApplyRule).not.toHaveBeenCalled();
-        rmSync(filtersPath, { recursive: true, force: true });
+        cleanup();
+    });
+
+    it('names the failed check when a verified review meets unlike prepared phases', async () => {
+        const candidateRule = 'nettg.pl##.articleAdSlot';
+        const { runtime, cleanup } = await extensionExperimentRuntime({
+            candidateRule,
+            reviewVerifies: () => true,
+            // The control the reveal steps click is gone from the candidate phase's page.
+            phaseSession: (phase) =>
+                fakeInteractionSession(
+                    phase === PhaseLabel.C ? { targetMissing: true } : {},
+                    'https://nettg.pl',
+                ),
+        });
+        await runtime.registry.dispatch('lookup_rule_guidance', { topic: 'element_hiding' });
+        await runtime.registry.dispatch('launch_browser', {
+            extension: 'prepared',
+            targetUrl: 'https://nettg.pl/',
+            profile: browserProfile,
+            settings: { kind: 'agent_selected', filterIds: [2], stealthEnabled: false },
+        });
+
+        const revealSteps = [
+            { kind: 'click', textHint: 'I am 18+' },
+            { kind: 'wait', quietMs: 250 },
+        ];
+        const answer = await runtime.registry.dispatch('apply_rule', {
+            candidateRule,
+            revealSteps,
+        });
+
+        expect(answer).toMatchObject({
+            visualReview: { verdict: 'verified' },
+            environmentExperiment: 'inconclusive',
+            failedCandidateChecks: ['reveal_steps_prepared_alike'],
+        });
+        // The ledger records the refused review as rejected, so the same plan cannot run again.
+        await expect(
+            runtime.registry.dispatch('apply_rule', { candidateRule, revealSteps }),
+        ).resolves.toMatchObject({ errorKind: 'duplicate_candidate' });
+        cleanup();
+    });
+
+    it('answers a hiding selector the baseline does not match without reviewing it', async () => {
+        // The site renders the block only after a click; the reveal plan of one wait never
+        // brought it in, so the rule hid nothing while the baseline inventory still saw the ad.
+        const { runtime, reviewedDomChecks, cleanup } = await extensionExperimentRuntime({
+            candidateRule: 'nettg.pl##.code-block-1',
+            reviewVerifies: () => true,
+            targetCount: (phase) => (phase === PhaseLabel.A ? 1 : 0),
+            phaseSession: () => fakeInteractionSession({}, 'https://nettg.pl'),
+        });
+        await runtime.registry.dispatch('lookup_rule_guidance', { topic: 'element_hiding' });
+        await runtime.registry.dispatch('launch_browser', {
+            extension: 'prepared',
+            targetUrl: 'https://nettg.pl/',
+            profile: browserProfile,
+            settings: { kind: 'agent_selected', filterIds: [2], stealthEnabled: false },
+        });
+
+        const answer = await runtime.registry.dispatch('apply_rule', {
+            candidateRule: 'nettg.pl##.code-block-1',
+            revealSteps: [{ kind: 'wait', quietMs: 250 }],
+        });
+
+        expect(answer).toMatchObject({
+            validationSkipped: true,
+            errorKind: 'baseline_symptom_absent',
+            retryable: true,
+            unmatchedBaselineSelector: '.code-block-1',
+            phases: ['A', 'B'],
+        });
+        expect(reviewedDomChecks).toHaveLength(0);
+        cleanup();
     });
 
     it('lets the agent select Extension before exposing its lifecycle tools', async () => {
@@ -4155,6 +4289,43 @@ describe('AgentRuntime', () => {
         expect(runtime.validateTerminalOutcome(draftOutcome())).toBeUndefined();
     });
 
+    it('withholds the binding of a verified review the experiment did not verify', async () => {
+        const options = { ...runtimeOptions(), issueAttachmentArtifactIds: [] };
+        // The review verified the candidate, but the reveal steps prepared the candidate phase
+        // unlike the baseline, so the experiment withdrew the claim of proof.
+        const result = {
+            ...verifiedCandidateToolResult(options.recorder),
+            environmentExperiment: 'inconclusive',
+            failedCandidateChecks: ['reveal_steps_prepared_alike'],
+        };
+        const baseRegistry = emptyRegistry();
+        registerAnalyzeScreenshotStub(baseRegistry);
+        const runtime = await createExtensionRuntime(options, {
+            ...launchReadBackDependencies(),
+            createBaseRegistry: async () => baseRegistry,
+            createBrowserSession: async () => fakePreparedSession(),
+            createBrowserRegistry: async () => completePageRegistry('controlled', result),
+        });
+        await fetchRuntimeIssue(runtime);
+        await runtime.registry.dispatch('launch_browser', {
+            extension: 'prepared',
+            targetUrl: 'https://nettg.pl/',
+            profile: browserProfile,
+            settings: { kind: 'defaults_plus_required', requiredFilterIds: [2] },
+        });
+        await captureCompletePage(runtime, 'controlled');
+        await runtime.registry.dispatch('apply_rule', {
+            candidateRule: 'nettg.pl##.articleAdSlot',
+        });
+
+        expect(runtime.getVerifiedCandidateBinding(result.validationArtifactId)).toBeUndefined();
+        expect(runtime.validateTerminalOutcome(draftOutcome())).toMatchObject({
+            errorKind: 'candidate_visual_confirmation_required',
+            currentVisualVerdict: 'rejected',
+            failedCandidateChecks: ['reveal_steps_prepared_alike'],
+        });
+    });
+
     // AdguardFilters#242720: the reporter's import URL enabled 52 filters, Chrome allows 50
     // static rulesets, so the reported_on_current launch could never verify and every finish_fix
     // was rejected until the run sealed. The contract: a reported_on_current launch with the
@@ -5974,6 +6145,7 @@ describe('AgentRuntime', () => {
             },
             handler: async () => ({
                 validationArtifactId,
+                environmentExperiment: 'verified',
                 visualReview: {
                     verdict: 'verified',
                     symptom: 'resolved',
@@ -6151,6 +6323,7 @@ describe('AgentRuntime', () => {
             })
             .mockResolvedValueOnce({
                 validationArtifactId,
+                environmentExperiment: 'verified',
                 visualReview: {
                     verdict: 'verified',
                     symptom: 'resolved',
@@ -6277,6 +6450,7 @@ describe('AgentRuntime', () => {
             },
             handler: async () => ({
                 validationArtifactId,
+                environmentExperiment: 'verified',
                 visualReview: {
                     verdict: 'verified',
                     symptom: 'resolved',

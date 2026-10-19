@@ -5,19 +5,31 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { TraceRecorder } from '../../src/tracer/trace-recorder';
-import { reviewCandidateVisually } from '../../src/validator/candidate-visual-verifier';
+import {
+    reviewCandidateVisually,
+    SYNTHESIS_CONTEXT_DECISION_PHASE,
+} from '../../src/validator/candidate-visual-verifier';
+import { MAX_TILE_INVENTORY_CONTEXT_CHARS } from '../../src/validator/candidate-visual-context';
+import {
+    MAX_OBSERVED_DAMAGE_ENTRIES,
+    MAX_OBSERVED_DAMAGE_ENTRY_CHARS,
+    MAX_RATIONALE_CHARS,
+} from '../../src/validator/candidate-visual-inventory';
+import { VISUAL_REVIEW_UNAVAILABLE_PREFIX } from '../../src/validator/candidate-visual-synthesis';
 import type { CandidateVisualVerifierOptions } from '../../src/validator/candidate-visual-evidence';
 import { composeReporterSymptomScope } from '../../src/validator/reporter-symptom-scope';
 import {
     PRE_EXISTING_BLANK_PANELS,
     PRE_EXISTING_BLANK_SPACE_GROUND,
     PRE_EXISTING_BLANK_SPACE_RUBRIC,
+    PRE_EXISTING_DAMAGE_PREFIX,
     SymptomKind,
 } from '../../src/validator/symptom-rubric';
 import { SingleShotResultKind, type SingleShotClient } from '../../src/pi/single-shot-types';
 import type { SingleShotMessage } from '../../src/pi/single-shot-input';
 import { CandidateInstanceDisposition } from '../../src/types/candidate-visual-review';
 import { FullPageOverviewMode } from '../../src/types/full-page-overview-evidence';
+import { CaptureState } from '../../src/types/validation';
 import { MAX_EVALUATE_JS_EXPRESSION_CHARS } from '../../src/browser/browser-tools';
 import {
     MAX_DOM_CHECKS,
@@ -80,6 +92,24 @@ function imagePartCount(options: { messages: SingleShotMessage[] }): number {
         }
     }
     return count;
+}
+
+/**
+ * Page state an inventory request inspects, as the artifact IDs its image labels name: the prompts
+ * never name the state, so a stub tells the two apart by the fixture's IDs alone.
+ *
+ * @param options - The structured call options.
+ * @returns The inspected state, or undefined for a text-only request — the final synthesis.
+ */
+function inventoryRequestState(options: {
+    messages: SingleShotMessage[];
+}): CaptureState | undefined {
+    if (imagePartCount(options) === 0) {
+        return undefined;
+    }
+    return JSON.stringify(options.messages).includes('artifact=before-')
+        ? CaptureState.Before
+        : CaptureState.After;
 }
 
 /**
@@ -188,8 +218,8 @@ function makeProvider(output: Record<string, unknown> | Error): {
         const labelledArtifactIds = new Set(
             [...prompt.matchAll(/artifact=([^;\\]+)/gu)].map((match) => match[1]),
         );
-        const isBeforeTileBatch = prompt.includes('Page state: BEFORE');
-        const isAfterTileBatch = prompt.includes('Page state: AFTER');
+        const isBeforeTileBatch = inventoryRequestState(options) === CaptureState.Before;
+        const isAfterTileBatch = inventoryRequestState(options) === CaptureState.After;
         const beforeInstances = Array.isArray(output.beforeInstances)
             ? output.beforeInstances.filter(
                   (instance) =>
@@ -313,8 +343,7 @@ function makeSequencedFinalProvider(
     const inventoryChat = makeProvider(inventoryOutput).chat;
     let finalResponseIndex = 0;
     const chat = vi.fn(async (options: { messages: SingleShotMessage[] }) => {
-        const prompt = JSON.stringify(options.messages);
-        if (prompt.includes('Page state: BEFORE') || prompt.includes('Page state: AFTER')) {
+        if (inventoryRequestState(options) !== undefined) {
             return inventoryChat(options);
         }
         const response =
@@ -1169,7 +1198,7 @@ describe('reviewCandidateVisually', () => {
             const beforeTileCalls = chat.mock.calls.filter(([call]) => {
                 const serialized = JSON.stringify(call.messages);
                 return (
-                    serialized.includes('Page state: BEFORE') &&
+                    inventoryRequestState(call) === CaptureState.Before &&
                     serialized.includes('Inventory source: TILE_BATCH') &&
                     imagePartCount(call) > 0
                 );
@@ -1646,8 +1675,8 @@ describe('reviewCandidateVisually', () => {
         });
         const chat = vi.fn(async (options: { messages: SingleShotMessage[] }) => {
             const prompt = JSON.stringify(options.messages);
-            const isBeforeInventory = prompt.includes('Page state: BEFORE');
-            const isAfterInventory = prompt.includes('Page state: AFTER');
+            const isBeforeInventory = inventoryRequestState(options) === CaptureState.Before;
+            const isAfterInventory = inventoryRequestState(options) === CaptureState.After;
             const isTileBatch = prompt.includes('Inventory source: TILE_BATCH');
             const value = isBeforeInventory
                 ? {
@@ -1779,8 +1808,8 @@ describe('reviewCandidateVisually', () => {
         const recorder = new TraceRecorder({ runId: 'visual-review', issueNumber: 3, mode: 'fix' });
         const chat = vi.fn(async (options: { messages: SingleShotMessage[] }) => {
             const prompt = JSON.stringify(options.messages);
-            const isBeforeInventory = prompt.includes('Page state: BEFORE');
-            const isAfterInventory = prompt.includes('Page state: AFTER');
+            const isBeforeInventory = inventoryRequestState(options) === CaptureState.Before;
+            const isAfterInventory = inventoryRequestState(options) === CaptureState.After;
             const isTileBatch = prompt.includes('Inventory source: TILE_BATCH');
             const value = isBeforeInventory
                 ? {
@@ -2458,4 +2487,396 @@ describe('reviewCandidateVisually on a page too tall for one full-page overview'
             }
         },
     );
+});
+
+/**
+ * Batch rationale length of a verbose vision model, near the cap one inventory request may report.
+ */
+const VERBOSE_BATCH_RATIONALE_CHARS = 3_000;
+
+/**
+ * Tiles per state whose inventory overflows the full synthesis context at the largest damage and
+ * rationale a batch may report, but fits once every batch rationale is shortened.
+ */
+const TILES_FITTING_ONLY_SHORTENED = 15;
+
+/**
+ * Tiles per state whose inventory overflows the synthesis context even with shortened rationales.
+ */
+const TILES_OVERFLOWING_SHORTENED = 24;
+
+/**
+ * Runner-owned tiles of one page state, each written to disk.
+ *
+ * @param root - Directory the tile files are written to.
+ * @param state - Page-state prefix of every tile ID.
+ * @param count - Number of tiles.
+ * @returns The ordered tile evidence.
+ */
+function stateTiles(
+    root: string,
+    state: CaptureState,
+    count: number,
+): CandidateVisualVerifierOptions['evidence']['beforeTiles'] {
+    return Array.from({ length: count }, (_, index) => {
+        const tile = {
+            id: `${state}-tile-${index + 1}`,
+            path: join(root, `${state}-tile-${index + 1}.png`),
+            index,
+            x: 0,
+            y: index * 920,
+            width: 1_920,
+            height: 1_080,
+            landmark: `${state} landmark ${index + 1}`,
+        };
+        writeFileSync(tile.path, Buffer.from(`png:${tile.id}`));
+        return tile;
+    });
+}
+
+/**
+ * A vision stub answering every image request as one inventory batch and every text-only request as
+ * the final synthesis.
+ *
+ * @param batch - Inventory output for the artifact IDs one image request labels.
+ * @param synthesis - Final synthesis output.
+ * @returns The stub client and its call recorder.
+ */
+function batchAndSynthesisProvider(
+    batch: (labelledIds: string[]) => Record<string, unknown>,
+    synthesis: Record<string, unknown>,
+): { vision: SingleShotClient; chat: ReturnType<typeof vi.fn> } {
+    const chat = vi.fn(async (options: { messages: SingleShotMessage[] }) => {
+        const labelledIds = [
+            ...JSON.stringify(options.messages).matchAll(/artifact=([^;\\.]+)/gu),
+        ].map((match) => match[1] ?? '');
+        return {
+            kind: SingleShotResultKind.Parsed,
+            value: imagePartCount(options) > 0 ? batch(labelledIds) : synthesis,
+            usages: [],
+            attempts: 1,
+            model: 'vision-stub',
+        };
+    });
+    return { vision: clientWith(chat), chat };
+}
+
+/**
+ * Text of every text-only request, which is the final synthesis and its repairs.
+ *
+ * @param chat - The structured recorder of the review.
+ * @returns One joined text per synthesis request.
+ */
+function synthesisRequests(chat: ReturnType<typeof vi.fn>): string[] {
+    return chat.mock.calls
+        .map(([options]) => options as { messages: SingleShotMessage[] })
+        .filter((options) => imagePartCount(options) === 0)
+        .map((options) =>
+            options.messages
+                .map((message) => ('text' in message ? String(message.text) : ''))
+                .join('\n'),
+        );
+}
+
+/**
+ * Inventory output of a batch reporting the largest damage and rationale it may.
+ *
+ * @param labelledIds - Artifact IDs the request labels.
+ * @returns The batch output.
+ */
+function maximalDamageBatch(labelledIds: string[]): Record<string, unknown> {
+    const label = labelledIds.join(',');
+    return {
+        coverageObserved: true,
+        symptomScope: `Advertising slots on ${label}.`,
+        instances: [],
+        observedDamage: Array.from({ length: MAX_OBSERVED_DAMAGE_ENTRIES }, (_, index) =>
+            `Damage ${index + 1} on ${label}. `.padEnd(MAX_OBSERVED_DAMAGE_ENTRY_CHARS, 'x'),
+        ),
+        rationale: `Rationale for ${label}. `.padEnd(MAX_RATIONALE_CHARS, 'x'),
+    };
+}
+
+/**
+ * The recorded synthesis-context decision of a review.
+ *
+ * @param recorder - The review's trace recorder.
+ * @returns Payload of the one context decision event.
+ */
+function synthesisContextEvent(recorder: TraceRecorder): Record<string, unknown> | undefined {
+    const events = recorder
+        .toJSON()
+        .events.filter(
+            (event) =>
+                event.type === 'decision' &&
+                event.payload.phase === SYNTHESIS_CONTEXT_DECISION_PHASE,
+        );
+    expect(events).toHaveLength(1);
+    return events[0]?.payload;
+}
+
+describe('reviewCandidateVisually synthesis context', () => {
+    it('reconciles 29 BEFORE observations in one synthesis request that numbers them all', async () => {
+        // A long page with a verbose vision model: every observation and every batch rationale is
+        // long, and the synthesis must still be handed each observation it has to reconcile.
+        const root = mkdtempSync(join(tmpdir(), 'candidate-visual-review-many-observations-'));
+        const recorder = new TraceRecorder({ runId: 'visual-review', issueNumber: 3, mode: 'fix' });
+        const observationCount = 29;
+        const { vision, chat } = batchAndSynthesisProvider(
+            (labelledIds) => ({
+                coverageObserved: true,
+                symptomScope: 'Repeated advertising slots between article cards.',
+                instances: labelledIds
+                    .filter((id) => id.startsWith('before-tile-'))
+                    .map((artifactId) => ({
+                        artifactId,
+                        landmark: `Between the article cards of ${artifactId}.`,
+                        description: `An advertising slot on ${artifactId}. `.padEnd(900, 'x'),
+                    })),
+                observedDamage: [],
+                rationale: `Inventoried ${labelledIds.join(',')}. `.padEnd(
+                    VERBOSE_BATCH_RATIONALE_CHARS,
+                    'x',
+                ),
+            }),
+            resolvedFinalOutput({
+                beforeInventoryReconciliation: Array.from(
+                    { length: observationCount },
+                    (_, index) => ({
+                        observationIndex: index + 1,
+                        disposition: 'same_symptom',
+                        rationale: 'This observation is a reporter-defined advertising slot.',
+                    }),
+                ),
+            }),
+        );
+        try {
+            const options = makeOptions(root, vision, recorder);
+            options.evidence.beforeTiles = stateTiles(root, CaptureState.Before, observationCount);
+
+            const result = await reviewCandidateVisually(options);
+
+            const requests = synthesisRequests(chat);
+            expect(requests).toHaveLength(1);
+            expect(sentTexts(chat).some((text) => text.includes('missing='))).toBe(false);
+            const inventoryLine = requests[0]
+                ?.split('\n')
+                .find((line) => line.startsWith('{"before"'));
+            const inventory = JSON.parse(inventoryLine ?? '{}') as {
+                before?: { instances?: Array<{ observationIndex: number }> };
+            };
+            expect(inventory.before?.instances?.map((item) => item.observationIndex)).toEqual(
+                Array.from({ length: observationCount }, (_, index) => index + 1),
+            );
+            expect(result.review.verdict).toBe('verified');
+            expect(result.review.beforeInstances).toHaveLength(observationCount);
+            expect(synthesisContextEvent(recorder)).toMatchObject({
+                limitChars: MAX_TILE_INVENTORY_CONTEXT_CHARS,
+                rationalesShortened: false,
+                refused: false,
+            });
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it('leaves the review inconclusive without a synthesis call when the context cannot fit', async () => {
+        const root = mkdtempSync(join(tmpdir(), 'candidate-visual-review-context-overflow-'));
+        const recorder = new TraceRecorder({ runId: 'visual-review', issueNumber: 3, mode: 'fix' });
+        const { vision, chat } = batchAndSynthesisProvider(
+            maximalDamageBatch,
+            resolvedFinalOutput(),
+        );
+        try {
+            const options = makeOptions(root, vision, recorder);
+            options.evidence.beforeTiles = stateTiles(
+                root,
+                CaptureState.Before,
+                TILES_OVERFLOWING_SHORTENED,
+            );
+            options.evidence.afterTiles = stateTiles(
+                root,
+                CaptureState.After,
+                TILES_OVERFLOWING_SHORTENED,
+            );
+
+            const result = await reviewCandidateVisually(options);
+
+            expect(synthesisRequests(chat)).toEqual([]);
+            expect(result.review.verdict).toBe('inconclusive');
+            const event = synthesisContextEvent(recorder);
+            expect(result.review.rationale.startsWith(VISUAL_REVIEW_UNAVAILABLE_PREFIX)).toBe(true);
+            expect(result.review.rationale).toContain(String(event?.contextChars));
+            expect(result.review.rationale).toContain(String(MAX_TILE_INVENTORY_CONTEXT_CHARS));
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it('records the context size, limit, shortening and refusal in the trace', async () => {
+        const root = mkdtempSync(join(tmpdir(), 'candidate-visual-review-context-trace-'));
+        const fitting = new TraceRecorder({ runId: 'visual-review', issueNumber: 3, mode: 'fix' });
+        const overflowing = new TraceRecorder({
+            runId: 'visual-review',
+            issueNumber: 3,
+            mode: 'fix',
+        });
+        const shortened = batchAndSynthesisProvider(
+            maximalDamageBatch,
+            resolvedFinalOutput({ beforeInventoryReconciliation: [] }),
+        );
+        const refused = batchAndSynthesisProvider(maximalDamageBatch, resolvedFinalOutput());
+        try {
+            const fittingOptions = makeOptions(root, shortened.vision, fitting);
+            fittingOptions.evidence.beforeTiles = stateTiles(
+                root,
+                CaptureState.Before,
+                TILES_FITTING_ONLY_SHORTENED,
+            );
+            fittingOptions.evidence.afterTiles = stateTiles(
+                root,
+                CaptureState.After,
+                TILES_FITTING_ONLY_SHORTENED,
+            );
+            await reviewCandidateVisually(fittingOptions);
+            const overflowingOptions = makeOptions(root, refused.vision, overflowing);
+            overflowingOptions.evidence.beforeTiles = stateTiles(
+                root,
+                CaptureState.Before,
+                TILES_OVERFLOWING_SHORTENED,
+            );
+            overflowingOptions.evidence.afterTiles = stateTiles(
+                root,
+                CaptureState.After,
+                TILES_OVERFLOWING_SHORTENED,
+            );
+            await reviewCandidateVisually(overflowingOptions);
+
+            const fittingEvent = synthesisContextEvent(fitting);
+            expect(fittingEvent).toMatchObject({
+                limitChars: MAX_TILE_INVENTORY_CONTEXT_CHARS,
+                rationalesShortened: true,
+                refused: false,
+            });
+            expect(fittingEvent?.contextChars).toBeLessThanOrEqual(
+                MAX_TILE_INVENTORY_CONTEXT_CHARS,
+            );
+            expect(synthesisRequests(shortened.chat)).toHaveLength(1);
+            const overflowingEvent = synthesisContextEvent(overflowing);
+            expect(overflowingEvent).toMatchObject({
+                limitChars: MAX_TILE_INVENTORY_CONTEXT_CHARS,
+                rationalesShortened: true,
+                refused: true,
+            });
+            expect(overflowingEvent?.contextChars).toBeGreaterThan(
+                MAX_TILE_INVENTORY_CONTEXT_CHARS,
+            );
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+});
+
+/**
+ * Artifact IDs of the default fixture, with the page state taken out: what the image labels of a
+ * BEFORE and an AFTER request may differ in and nothing else.
+ */
+const STATE_PREFIXED_ARTIFACT_ID = /\b(?:before|after)-(tile-\d+|viewport|full-page)\b/gu;
+
+/**
+ * Text of every inventory request of one page state, with each artifact ID replaced by its
+ * position.
+ *
+ * @param chat - The structured recorder of the review.
+ * @param state - Page state whose requests are read.
+ * @returns One joined text per request, sorted so the order the requests ran in does not count.
+ */
+function positionalInventoryRequests(
+    chat: ReturnType<typeof vi.fn>,
+    state: CaptureState,
+): string[] {
+    return chat.mock.calls
+        .map(([options]) => options as { messages: SingleShotMessage[] })
+        .filter((options) => inventoryRequestState(options) === state)
+        .map((options) =>
+            options.messages
+                .map((message) => ('text' in message ? String(message.text) : ''))
+                .join('\n')
+                .replaceAll(STATE_PREFIXED_ARTIFACT_ID, '$1'),
+        )
+        .sort();
+}
+
+describe('reviewCandidateVisually blind inventory', () => {
+    it('asks the BEFORE and AFTER images the same inventory question', async () => {
+        // An inventory told which state it looks at answers what that state is expected to show:
+        // a BEFORE pass copied the reporter's ad onto a page whose filtered capture had none.
+        for (const symptomKind of [SymptomKind.Ads, SymptomKind.Breakage]) {
+            const root = mkdtempSync(join(tmpdir(), 'candidate-visual-review-blind-'));
+            const recorder = new TraceRecorder({
+                runId: 'visual-review',
+                issueNumber: 3,
+                mode: 'fix',
+            });
+            const { vision, chat } = makeProvider({
+                symptom: 'resolved',
+                symptomScope: 'All repeated anti-adblock overlays on the movie listing.',
+                coverageComplete: true,
+                beforeInstances: [],
+                remainingInstances: [],
+                pageIntegrity: 'intact',
+                rationale: 'The overlay disappeared and the underlying page remains intact.',
+                observedDamage: [],
+            });
+            try {
+                await reviewCandidateVisually({
+                    ...makeOptions(root, vision, recorder),
+                    symptomKind,
+                });
+
+                const before = positionalInventoryRequests(chat, CaptureState.Before);
+                expect(before).toHaveLength(3);
+                expect(positionalInventoryRequests(chat, CaptureState.After)).toEqual(before);
+            } finally {
+                rmSync(root, { recursive: true, force: true });
+            }
+        }
+    });
+
+    it('marks BEFORE damage as pre-existing and leaves AFTER damage unmarked for the synthesis', async () => {
+        const root = mkdtempSync(join(tmpdir(), 'candidate-visual-review-pre-existing-'));
+        const recorder = new TraceRecorder({ runId: 'visual-review', issueNumber: 3, mode: 'fix' });
+        const damage = 'The "AD FEATURE" label overlaps the headline of the first article card.';
+        const { vision, chat } = batchAndSynthesisProvider(
+            () => ({
+                coverageObserved: true,
+                symptomScope: 'Advertising slots between article cards.',
+                instances: [],
+                observedDamage: [damage],
+                rationale: 'Every supplied image was inventoried.',
+            }),
+            resolvedFinalOutput({ beforeInventoryReconciliation: [] }),
+        );
+        try {
+            await reviewCandidateVisually(makeOptions(root, vision, recorder));
+
+            const requests = synthesisRequests(chat);
+            expect(requests).toHaveLength(1);
+            const inventoryLine = requests[0]
+                ?.split('\n')
+                .find((line) => line.startsWith('{"before"'));
+            const inventory = JSON.parse(inventoryLine ?? '{}') as Record<
+                CaptureState,
+                { observations: Array<{ observedDamage: string[] }> } | undefined
+            >;
+            const damageOf = (state: CaptureState): string[] =>
+                inventory[state]?.observations.flatMap((item) => item.observedDamage) ?? [];
+            expect(damageOf(CaptureState.Before)).toEqual(
+                Array.from({ length: 3 }, () => `${PRE_EXISTING_DAMAGE_PREFIX} ${damage}`),
+            );
+            expect(damageOf(CaptureState.After)).toEqual(Array.from({ length: 3 }, () => damage));
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
 });

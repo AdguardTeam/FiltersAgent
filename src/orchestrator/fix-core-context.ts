@@ -5,7 +5,10 @@ import { extname, join } from 'node:path';
 import { parseCandidateValidationArtifactId } from '../types/candidate-artifact-identity';
 import type { RawIssue } from '../github/fetch-issue';
 import { selectPromptSafeReporterComments } from '../github/prompt-safety';
-import { EnvironmentSelectionState } from '../environment/environment-vocabulary';
+import {
+    EnvironmentDispositionStatus,
+    EnvironmentSelectionState,
+} from '../environment/environment-vocabulary';
 import { type EnvironmentSelectionSnapshot } from '../environment/environment-selection-contract';
 import { type ProvisionalEnvironmentDisposition } from '../environment/filtering-environment';
 import type { TraceRecorder } from '../tracer/trace-recorder';
@@ -350,5 +353,5 @@ export function acceptedCandidateDisposition(
     if (!candidateDigest.startsWith(identity.candidateShortHash)) {
         return undefined;
     }
-    return { status: 'verified', candidateDigest, failure: null };
+    return { status: EnvironmentDispositionStatus.Verified, candidateDigest, failure: null };
 }

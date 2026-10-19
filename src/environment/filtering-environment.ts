@@ -8,7 +8,11 @@ import {
 import { ReporterSymptomPresenceSchema } from '../types/reporter-symptom-presence';
 import { ReproProfileSchema } from '../types/repro-profile';
 import { ExecutorNameSchema } from './executor-name';
-import { EnvironmentCapabilitySchema } from './environment-vocabulary';
+import {
+    ENVIRONMENT_DISPOSITION_STATUS_VALUES,
+    EnvironmentCapabilitySchema,
+    EnvironmentDispositionStatus,
+} from './environment-vocabulary';
 import { ActualExecutionContextSchema } from './environment-selection-contract';
 import {
     BoundedIdSchema,
@@ -358,7 +362,7 @@ export const EnvironmentPhaseEvidenceSchema = v.strictObject({
 });
 
 export const ProvisionalEnvironmentDispositionSchema = v.strictObject({
-    status: v.picklist(['verified', 'rejected', 'inconclusive', 'failed', 'capability_limited']),
+    status: v.picklist(ENVIRONMENT_DISPOSITION_STATUS_VALUES),
     candidateDigest: v.nullable(DigestSchema),
     failure: v.nullable(EnvironmentAdapterLimitationSchema),
 });
@@ -382,7 +386,7 @@ export const FilteringEnvironmentExecutionSchema = v.pipe(
     }),
     v.check(
         (execution) =>
-            execution.disposition.status !== 'verified' ||
+            execution.disposition.status !== EnvironmentDispositionStatus.Verified ||
             (execution.cleanup.completed &&
                 execution.phases.some((phase) => phase.phase === PhaseLabel.A) &&
                 execution.phases.some((phase) => phase.phase === PhaseLabel.B) &&
@@ -399,7 +403,7 @@ export const FilteringEnvironmentExecutionSchema = v.pipe(
             );
         }
         return (
-            execution.disposition.status === 'failed' &&
+            execution.disposition.status === EnvironmentDispositionStatus.Failed &&
             execution.disposition.candidateDigest === null &&
             execution.disposition.failure?.code === EnvironmentAdapterLimitationCode.CleanupFailed
         );
@@ -434,6 +438,11 @@ export type EnvironmentArtifactReference = v.InferOutput<typeof EnvironmentArtif
 export type ValidatorObservedPhaseCompletion = v.InferOutput<
     typeof ValidatorObservedPhaseCompletionSchema
 >;
+
+/**
+ * The vision record that decided one observed phase.
+ */
+export type EnvironmentVisionReference = v.InferOutput<typeof EnvironmentVisionReferenceSchema>;
 
 /**
  * One canonical browser capture projected into compatibility evidence.

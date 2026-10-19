@@ -246,6 +246,47 @@ export type EnvironmentSelectionState =
     (typeof EnvironmentSelectionState)[keyof typeof EnvironmentSelectionState];
 
 /**
+ * The decision an investigation asks its canonical environment execution to back.
+ */
+export const EnvironmentDispositionStatus = {
+    /**
+     * The controlled experiment verified the candidate.
+     */
+    Verified: 'verified',
+
+    /**
+     * The investigation rejected the candidate it ran.
+     */
+    Rejected: 'rejected',
+
+    /**
+     * The investigation reached no verified decision.
+     */
+    Inconclusive: 'inconclusive',
+
+    /**
+     * The investigation or the environment's cleanup failed.
+     */
+    Failed: 'failed',
+
+    /**
+     * The environment lacked a capability the investigation required.
+     */
+    CapabilityLimited: 'capability_limited',
+} as const;
+
+/**
+ * EnvironmentDispositionStatus value.
+ */
+export type EnvironmentDispositionStatus =
+    (typeof EnvironmentDispositionStatus)[keyof typeof EnvironmentDispositionStatus];
+
+/**
+ * Every EnvironmentDispositionStatus value, for the disposition schema.
+ */
+export const ENVIRONMENT_DISPOSITION_STATUS_VALUES = Object.values(EnvironmentDispositionStatus);
+
+/**
  * FilteringEnvironmentAvailability value.
  */
 export type FilteringEnvironmentAvailability =

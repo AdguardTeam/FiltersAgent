@@ -6,11 +6,17 @@
  * It holds no runtime state and imports nothing from the runtime, so the split modules never import
  * the runtime back.
  */
+import type { CandidateExperimentCheck } from '../environment/candidate-phase-checks';
 import { CandidateOperation } from '../environment/filtering-environment';
 import type { NormalizedSafeInteractionPlan } from '../environment/safe-interaction';
 import { decodeIssueTextUrl } from '../github/issue-text-url';
 import type { NormalizedRule } from '../repo/rule-normalizer';
+import type {
+    CandidateVisualReview,
+    CandidateVisualVerdict,
+} from '../types/candidate-visual-review';
 import { FixOutcomeKind, type FixOutcome } from '../types/fix-outcome';
+import type { AdsEnvironmentExperimentVerdict } from '../validator/ads-environment-experiment-result';
 import type { DomCheckPlan } from './apply-rule-dom-checks';
 
 /**
@@ -95,6 +101,31 @@ export interface PendingCandidateAttempt {
      * it attached none.
      */
     domChecks?: DomCheckPlan;
+}
+
+/**
+ * Trusted apply_rule response fields retained under their producing browser session.
+ */
+export interface CandidateValidationReference {
+    /**
+     * Exact browser session active when apply_rule returned.
+     */
+    sessionId: string;
+
+    /**
+     * Schema-valid runner-bound semantic review returned by apply_rule.
+     */
+    visualReview: CandidateVisualReview;
+
+    /**
+     * Recorder artifact identity of the persisted semantic review.
+     */
+    visualReviewArtifactId: string;
+
+    /**
+     * The controlled experiment's verdict on the candidate; undefined when the result carried none.
+     */
+    experimentVerdict: AdsEnvironmentExperimentVerdict | undefined;
 }
 
 /**
@@ -214,9 +245,20 @@ export interface CandidateValidationOutcome {
     attemptNumber: number;
 
     /**
-     * Vision verdict returned by the attempt, when available.
+     * The verdict that decides the attempt, when its result carried a review: the review's own,
+     * except that a verified review the experiment did not verify is recorded as rejected.
      */
-    visualVerdict?: string;
+    visualVerdict?: CandidateVisualVerdict;
+
+    /**
+     * The paired review's own verdict, when the result carried a review.
+     */
+    reviewVerdict?: CandidateVisualVerdict;
+
+    /**
+     * The runner checks the candidate phase failed under a verified review; empty when none did.
+     */
+    failedCandidateChecks?: CandidateExperimentCheck[];
 
     /**
      * Bounded vision rationale used only to distinguish technical unavailability from a verdict.

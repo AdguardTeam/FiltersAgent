@@ -37,6 +37,7 @@ import type {
 } from './candidate-visual-evidence';
 import {
     CandidateVisualEvidenceSource,
+    MAX_SYMPTOM_SCOPE_CHARS,
     boundedModel,
     boundedSemanticContext,
     combineStateInventories,
@@ -61,18 +62,31 @@ export const MAX_RATIONALE_CHARS = 4_000;
 const MAX_TILE_BATCH_INSTANCES = 20;
 
 /**
+ * Most damage entries one inventory request may report: enough for every flaw a three-tile batch
+ * shows. The synthesis context limit leaves damage out, so a page reporting more than fits is
+ * refused rather than cut.
+ */
+export const MAX_OBSERVED_DAMAGE_ENTRIES = 20;
+
+/**
+ * Longest damage entry one inventory request may report: one flaw and its landmark in a few
+ * sentences.
+ */
+export const MAX_OBSERVED_DAMAGE_ENTRY_CHARS = 1_000;
+
+/**
  * Strict output requested while the vision model inventories one bounded tile batch.
  */
 const CandidateVisualTileBatchOutputSchema = v.strictObject({
     coverageObserved: v.boolean(),
-    symptomScope: v.pipe(v.string(), v.minLength(1), v.maxLength(2_000)),
+    symptomScope: v.pipe(v.string(), v.minLength(1), v.maxLength(MAX_SYMPTOM_SCOPE_CHARS)),
     instances: v.pipe(
         v.array(CandidateVisualInstanceSchema),
         v.maxLength(MAX_TILE_BATCH_INSTANCES),
     ),
     observedDamage: v.pipe(
-        v.array(v.pipe(v.string(), v.minLength(1), v.maxLength(1_000))),
-        v.maxLength(20),
+        v.array(v.pipe(v.string(), v.minLength(1), v.maxLength(MAX_OBSERVED_DAMAGE_ENTRY_CHARS))),
+        v.maxLength(MAX_OBSERVED_DAMAGE_ENTRIES),
     ),
     rationale: v.pipe(v.string(), v.minLength(1), v.maxLength(MAX_RATIONALE_CHARS)),
 });
@@ -82,7 +96,8 @@ const CandidateVisualTileBatchOutputSchema = v.strictObject({
  */
 interface InventoryImagesRequest {
     /**
-     * Whether the supplied images show the control or the candidate-applied document.
+     * Whether the supplied images show the control or the candidate-applied document. The code
+     * keeps it to itself: the prompt never names it.
      */
     state: CaptureState;
 
@@ -165,6 +180,10 @@ async function inventoryImages(
         throw new Error(`Vision model did not return schema-valid JSON: ${result.detail}`);
     }
     const output = result.value;
+    const observedDamage =
+        request.state === CaptureState.Before
+            ? output.observedDamage.map((entry) => `${PRE_EXISTING_DAMAGE_PREFIX} ${entry}`)
+            : output.observedDamage;
     const model = boundedModel(options.vision.modelId);
     const artifactIds = request.images.map((image) => image.id);
     const allowedIds = new Set(artifactIds);
@@ -191,10 +210,7 @@ async function inventoryImages(
     );
     return {
         coverageObserved: output.coverageObserved,
-        symptomScopes: [output.symptomScope],
         instances: output.instances,
-        observedDamage: output.observedDamage,
-        rationales: [output.rationale],
         observations: [
             {
                 source: request.source,
@@ -202,7 +218,7 @@ async function inventoryImages(
                 coverageObserved: output.coverageObserved,
                 symptomScope: output.symptomScope,
                 instanceCount: output.instances.length,
-                observedDamage: output.observedDamage,
+                observedDamage,
                 rationale: output.rationale,
             },
         ],
@@ -210,24 +226,20 @@ async function inventoryImages(
 }
 
 /**
- * Prompt lines telling one inventory pass what to do with page damage it sees in its state.
+ * Prompt lines telling one inventory pass which page damage to list.
  *
- * An AFTER pass sees a flaw without knowing whether the candidate caused it, and with no BEFORE
- * flaws listed the synthesis has nothing to compare against: a card whose "AD FEATURE" label has
- * always overlapped its headline comes back from the AFTER tiles as text collision, and the review
- * reports pageIntegrity regressed for a candidate that touched nothing near it. The BEFORE passes
- * therefore list the page's own flaws under a fixed prefix, and the synthesis discounts AFTER
- * damage that matches one. An ads review also lists the page's own blank panels, which the
- * synthesis then tells from residue; in an incorrect-blocking review such a panel is the defect.
+ * Both states are asked the same thing, because a pass told its state answers what that state is
+ * expected to show. The code then marks every BEFORE entry {@link PRE_EXISTING_DAMAGE_PREFIX}, and
+ * the synthesis discounts AFTER damage that matches one: without the BEFORE list, a card whose "AD
+ * FEATURE" label has always overlapped its headline comes back from the AFTER tiles as text
+ * collision, and the review reports pageIntegrity regressed for a candidate that touched nothing
+ * near it. An ads review also lists the page's own blank panels, which the synthesis then tells
+ * from residue; in an incorrect-blocking review such a panel is the defect.
  *
- * @param state - Whether the pass looks at the control or the candidate-applied document.
  * @param kind - Problem class driving the review.
- * @returns Prompt lines for that state's damage reporting.
+ * @returns Prompt lines for damage reporting.
  */
-function stateDamageRubric(state: CaptureState, kind: SymptomKind): string[] {
-    if (state === CaptureState.After) {
-        return ['Also report visible non-target page damage after the candidate.'];
-    }
+function pageDamageRubric(kind: SymptomKind): string[] {
     const flaws = [
         'overlapping or clipped text',
         'broken images',
@@ -235,11 +247,8 @@ function stateDamageRubric(state: CaptureState, kind: SymptomKind): string[] {
         'collapsed layout',
     ].join(', ');
     return [
-        'This is the page before the candidate, so nothing in it is candidate damage. Still list',
-        'in observedDamage every rendering flaw the page already has apart from the',
-        `reporter-defined defect itself — ${flaws} — each prefixed "${PRE_EXISTING_DAMAGE_PREFIX}"`,
-        "and naming its landmark, so the later comparison can tell the page's own flaws from",
-        'damage a candidate causes.',
+        'List in observedDamage every visible rendering flaw of the page apart from the',
+        `reporter-defined defect itself — ${flaws} — each naming its landmark.`,
     ];
 }
 
@@ -280,10 +289,9 @@ export async function inventoryTileState(
                         'coverageObserved=false only when pixels are technically unreadable or the',
                         'image lacks enough visible page content to inspect that supplied region.',
                         ...COMPARISON_OBSTRUCTION_INVENTORY_RUBRIC,
-                        ...stateDamageRubric(state, options.symptomKind ?? SymptomKind.Ads),
+                        ...pageDamageRubric(options.symptomKind ?? SymptomKind.Ads),
                     ].join(' '),
                     userContext: [
-                        `Page state: ${state.toUpperCase()}.`,
                         `Candidate rule: ${options.candidateRule.slice(0, MAX_CANDIDATE_RULE_CHARS)}`,
                         'Reporter-defined symptom:',
                         boundedSemanticContext(
@@ -350,12 +358,11 @@ export async function inventoryOverviewImage(
             'target region at viewport resolution.',
             ...inventoryResidueRubric(options.symptomKind ?? SymptomKind.Ads),
             ...COMPARISON_OBSTRUCTION_INVENTORY_RUBRIC,
-            ...stateDamageRubric(state, options.symptomKind ?? SymptomKind.Ads),
+            ...pageDamageRubric(options.symptomKind ?? SymptomKind.Ads),
             'Set coverageObserved=false only when this image is technically unreadable for',
             'its stated overview purpose.',
         ].join(' '),
         userContext: [
-            `Page state: ${state.toUpperCase()}.`,
             `Inventory source: ${source.toUpperCase()}.`,
             `Candidate rule: ${options.candidateRule.slice(0, MAX_CANDIDATE_RULE_CHARS)}`,
             'Reporter-defined symptom:',
@@ -365,7 +372,7 @@ export async function inventoryOverviewImage(
                 options.recorder,
             ),
         ],
-        imageLabels: [`${sourceLabel}; page state=${state.toUpperCase()}; artifact=${image.id}.`],
+        imageLabels: [`${sourceLabel}; artifact=${image.id}.`],
         citationScope: `${source} instance outside its evidence image`,
         purpose: 'candidate_visual_overview_inventory',
         turnMeta: { source },
@@ -420,10 +427,7 @@ export async function inventoryPlannedFullPageOverview(
         provenance.reason ?? 'The full-page overview was omitted from the vision inventory.';
     return {
         coverageObserved: true,
-        symptomScopes: [],
         instances: [],
-        observedDamage: [],
-        rationales: [],
         observations: [
             {
                 source: CandidateVisualEvidenceSource.FullPageOverviewOmitted,

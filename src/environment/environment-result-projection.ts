@@ -16,6 +16,10 @@ import type {
 } from './filtering-environment';
 import type { PhaseApplicationProof } from './environment-proofs';
 import { PhaseLabel } from '../types/validation';
+import { EnvironmentProjectionRefusal } from '../types/environment-projection-refusal';
+import { EnvironmentDispositionStatus } from './environment-vocabulary';
+import { ExtensionLaunchFamily } from './extension-launch';
+import { SIGNED_XPI_BUILD_MARKER } from './firefox-phase-evidence';
 
 /**
  * Canonical owner of one globally unique environment artifact.
@@ -566,9 +570,8 @@ function executionBindingsAgree(execution: FilteringEnvironmentExecution): boole
         if (
             baselineProvenance === undefined ||
             !structurallyEqual(baselineProvenance, candidateProvenance) ||
-            // The bound product version is the one version the loaded build's own manifest
-            // records — the proof's top-level packageVersion, read from the same directory.
-            execution.actualContext.productVersion !== baseline.proof.extension?.packageVersion
+            execution.actualContext.productVersion !==
+                boundProductVersion(baseline.proof.extension?.packageVersion, baselineProvenance)
         ) {
             return false;
         }
@@ -581,27 +584,27 @@ function executionBindingsAgree(execution: FilteringEnvironmentExecution): boole
 }
 
 /**
- * Why canonical execution could not be projected into the retained compatibility fields.
+ * The product version an extension experiment's run context must report.
  *
- * Each refusal names one exact invariant. A bare refusal surfaces only as "Canonical environment
- * execution cannot be projected safely", and a run that has already produced a vision-verified
- * patch would die on that sentence with no way to tell which of the seven checks refused it.
+ * A Chromium build binds the one version its own manifest records — the proof's top-level
+ * packageVersion, read from the directory the browser loaded. A signed XPI reports no version:
+ * Firefox validates the archive itself and the host never reads it, so its proof carries the
+ * signed-XPI marker and its run context null, and null is the version bound. The marker counts only
+ * on a Firefox-family build, so a Chromium proof that claimed it would still disagree.
+ *
+ * @param packageVersion - The baseline phase proof's package version.
+ * @param provenance - The baseline phase proof's prepared-build provenance.
+ * @returns The product version the run context must carry.
  */
-export const EnvironmentProjectionRefusal = {
-    BindingsDisagree: 'bindings_disagree',
-    ArtifactIndexUnavailable: 'artifact_index_unavailable',
-    NoProjectablePhases: 'no_projectable_phases',
-    VerifiedWithoutExactAbc: 'verified_without_exact_abc',
-    PhaseSessionUnprojectable: 'phase_session_unprojectable',
-    VerifiedWithoutThreeSessions: 'verified_without_three_sessions',
-    VerifiedWithoutCandidateBinding: 'verified_without_candidate_binding',
-} as const;
-
-/**
- * One exact reason canonical execution did not project.
- */
-export type EnvironmentProjectionRefusal =
-    (typeof EnvironmentProjectionRefusal)[keyof typeof EnvironmentProjectionRefusal];
+function boundProductVersion(
+    packageVersion: string | undefined,
+    provenance: NonNullable<EnvironmentPhaseEvidence['proof']['extension']>['provenance'],
+): string | null | undefined {
+    return packageVersion === SIGNED_XPI_BUILD_MARKER &&
+        provenance?.launchFamily === ExtensionLaunchFamily.Firefox
+        ? null
+        : packageVersion;
+}
 
 /**
  * Outcome of one projection attempt: the compatibility fields, or the invariant that refused.
@@ -640,7 +643,8 @@ export function projectEnvironmentExecution(
     if (execution.phases.length > 0 && selectedPhases.length === 0) {
         return { refusal: EnvironmentProjectionRefusal.NoProjectablePhases };
     }
-    if (execution.disposition.status === 'verified' && !isExactAbcExperiment(selectedPhases)) {
+    const verified = execution.disposition.status === EnvironmentDispositionStatus.Verified;
+    if (verified && !isExactAbcExperiment(selectedPhases)) {
         return { refusal: EnvironmentProjectionRefusal.VerifiedWithoutExactAbc };
     }
     const projectedSessions = selectedPhases.map((phase) => projectPhaseSession(phase));
@@ -650,7 +654,7 @@ export function projectEnvironmentExecution(
     const sessions = projectedSessions.filter(
         (session): session is AgentBrowserSessionEvidence => session !== undefined,
     );
-    if (execution.disposition.status === 'verified' && sessions.length !== 3) {
+    if (verified && sessions.length !== 3) {
         return { refusal: EnvironmentProjectionRefusal.VerifiedWithoutThreeSessions };
     }
     const filtered = selectedPhases.filter((phase) => phase.phase !== PhaseLabel.A);
@@ -658,16 +662,9 @@ export function projectEnvironmentExecution(
     const settingsEvidence = filtered[0] ? projectPhaseSettings(filtered[0]) : undefined;
     const baselinePhase = selectedPhases.find((phase) => phase.phase === PhaseLabel.B);
     const candidatePhase = selectedPhases.find((phase) => phase.phase === PhaseLabel.C);
-    const candidateMaterial = resolveCandidateMaterial(
-        baselinePhase,
-        candidatePhase,
-        artifactIndex,
-    );
-    const candidateValidationEvidence =
-        execution.disposition.status === 'verified'
-            ? projectCandidateBinding(candidateMaterial)
-            : undefined;
-    if (execution.disposition.status === 'verified' && !candidateValidationEvidence) {
+    const material = resolveCandidateMaterial(baselinePhase, candidatePhase, artifactIndex);
+    const candidateValidationEvidence = verified ? projectCandidateBinding(material) : undefined;
+    if (verified && !candidateValidationEvidence) {
         return { refusal: EnvironmentProjectionRefusal.VerifiedWithoutCandidateBinding };
     }
     const candidateApplicationEvidence = projectCandidateApplication(candidatePhase);
@@ -693,7 +690,7 @@ export function projectEnvironmentExecution(
         domSnapshot: dom,
         har,
         trace: null,
-        candidateVisualReview: candidateMaterial?.validation.visualReviewArtifact.path ?? null,
+        candidateVisualReview: material?.validation.visualReviewArtifact.path ?? null,
     };
     if (candidateValidationEvidence) {
         artifactPaths.verifiedCandidateScreenshots = {
@@ -702,21 +699,21 @@ export function projectEnvironmentExecution(
             ...mapCandidateOverviews(candidateValidationEvidence, (artifact) => artifact.path),
         };
     }
-    if (!candidateMaterial?.validation.verified && candidateMaterial?.validation.candidateRule) {
+    if (!material?.validation.verified && material?.validation.candidateRule) {
         const rejectedCandidate = candidateCompletion?.rejectedCandidates.find(
-            (rejected) => rejected.candidateDigest === candidateMaterial.validation.candidateDigest,
+            (rejected) => rejected.candidateDigest === material.validation.candidateDigest,
         );
         artifactPaths.rejectedCandidateScreenshots = {
-            before: candidateMaterial.validation.beforeViewport.path,
-            after: candidateMaterial.validation.afterViewport.path,
-            ...mapCandidateOverviews(candidateMaterial.validation, (artifact) => artifact.path),
-            validationArtifactId: candidateMaterial.validation.validationArtifactId,
-            candidateRule: candidateMaterial.validation.candidateRule,
+            before: material.validation.beforeViewport.path,
+            after: material.validation.afterViewport.path,
+            ...mapCandidateOverviews(material.validation, (artifact) => artifact.path),
+            validationArtifactId: material.validation.validationArtifactId,
+            candidateRule: material.validation.candidateRule,
             rejectionReasons: rejectedCandidate?.reasonCodes ?? [
                 'candidate_validation_not_verified',
             ],
-            visualReview: candidateMaterial.visualReview,
-            visualReviewArtifactPath: candidateMaterial.validation.visualReviewArtifact.path,
+            visualReview: material.visualReview,
+            visualReviewArtifactPath: material.validation.visualReviewArtifact.path,
         };
     }
     return {
@@ -726,7 +723,7 @@ export function projectEnvironmentExecution(
             ...(settingsEvidence ? { settingsEvidence } : {}),
             ...(candidateValidationEvidence ? { candidateValidationEvidence } : {}),
             ...(candidateApplicationEvidence ? { candidateApplicationEvidence } : {}),
-            ...(candidateMaterial ? { candidateVisualReview: candidateMaterial.visualReview } : {}),
+            ...(material ? { candidateVisualReview: material.visualReview } : {}),
             artifactPaths,
         },
     };

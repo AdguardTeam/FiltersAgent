@@ -20,11 +20,13 @@ import {
 } from '../environment/environment-proofs';
 import { FilteringEnvironmentExecutionSchema } from '../environment/filtering-environment';
 import {
+    EnvironmentDispositionStatus,
     EnvironmentSelectionReservedCase,
     EnvironmentSelectionState,
 } from '../environment/environment-vocabulary';
 import { EnvironmentSelectionSnapshotSchema } from '../environment/environment-selection-contract';
 import { projectEnvironmentResult } from '../environment/environment-result-projection';
+import { ENVIRONMENT_PROJECTION_REFUSAL_VALUES } from './environment-projection-refusal';
 import {
     CANDIDATE_VALIDATION_ARTIFACT_ID_PATTERN,
     candidateArtifactIdentitiesEqual,
@@ -138,10 +140,7 @@ function environmentArtifactPathDisagreements(
 /**
  * Whether a browser session ran without AdGuard or with the prepared extension.
  */
-export const ExtensionMode = {
-    None: 'none',
-    Prepared: 'prepared',
-} as const;
+export const ExtensionMode = { None: 'none', Prepared: 'prepared' } as const;
 
 /**
  * Every extension mode value, for schemas and exhaustive listings.
@@ -158,10 +157,7 @@ export const BrowserModeSchema = v.picklist(BROWSER_MODE_VALUES);
 /**
  * How an investigation executed: with a live browser or from reasoning alone.
  */
-export const EffectiveMode = {
-    Browser: 'browser',
-    Reasoning: 'reasoning',
-} as const;
+export const EffectiveMode = { Browser: 'browser', Reasoning: 'reasoning' } as const;
 
 /**
  * Every effective mode value, for schemas and exhaustive listings.
@@ -811,12 +807,12 @@ function candidateBindingFailureMessage(issue: RejectedResultIssue): string {
             failures.push(`visual verdict ${String(verdict)}`);
         }
         const runStatus = readUnknownProperty(result, 'runStatus');
-        const disposition = readUnknownProperty(
+        const status = readUnknownProperty(
             readUnknownProperty(readUnknownProperty(result, 'environmentExecution'), 'disposition'),
             'status',
         );
-        if (runStatus !== 'patch_proposed' && disposition !== 'verified') {
-            failures.push(`runStatus ${String(runStatus)} with disposition ${String(disposition)}`);
+        if (runStatus !== 'patch_proposed' && status !== EnvironmentDispositionStatus.Verified) {
+            failures.push(`runStatus ${String(runStatus)} with disposition ${String(status)}`);
         }
         const artifactPaths = readUnknownProperty(result, 'artifactPaths');
         if (readUnknownProperty(artifactPaths, 'verifiedCandidateScreenshots') === undefined) {
@@ -881,6 +877,9 @@ const FixRunResultInvariantsSchema = v.pipe(
         ),
         environmentSelection: v.optional(EnvironmentSelectionSnapshotSchema),
         environmentExecution: v.optional(FilteringEnvironmentExecutionSchema),
+        // The invariant that refused canonical execution: a defect in our own result assembly. A
+        // verified decision it refused has failed the run; any other run only records it.
+        environmentProjectionRefusal: v.optional(v.picklist(ENVIRONMENT_PROJECTION_REFUSAL_VALUES)),
         reporterSettings: v.optional(ReporterSettingsSnapshotSchema),
         extensionProvenance: v.optional(AgentExtensionProvenanceSchema),
         settingsEvidence: v.optional(AgentSettingsEvidenceSchema),
@@ -1057,7 +1056,8 @@ const FixRunResultInvariantsSchema = v.pipe(
                 result.candidatePatch !== null &&
                 review?.candidateRuleHash === candidateRuleHash &&
                 validationIdentity?.candidateShortHash === candidateRuleHash?.slice(0, 12)) ||
-            result.environmentExecution?.disposition.status === 'verified';
+            result.environmentExecution?.disposition.status ===
+                EnvironmentDispositionStatus.Verified;
         const shared =
             terminalBound &&
             review?.verdict === 'verified' &&
@@ -1400,6 +1400,12 @@ export const FixRunResultSchema: v.GenericSchema<
     v.check(
         (result) => result.candidateForReview === undefined || result.candidatePatch === null,
         'A candidate carried for review is by definition unverified and cannot accompany a patch.',
+    ),
+    v.check(
+        (result) =>
+            result.environmentProjectionRefusal === undefined ||
+            result.environmentExecution === undefined,
+        'A projection refusal leaves no canonical execution attached.',
     ),
 );
 

@@ -25,7 +25,7 @@ import type {
 /**
  * Maximum original-resolution tiles sent in one provider request.
  */
-const MAX_TILES_PER_VISION_BATCH = 3;
+export const MAX_TILES_PER_VISION_BATCH = 3;
 
 /**
  * Maximum raw screenshot bytes accepted in one multimodal provider request.

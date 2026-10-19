@@ -9,15 +9,16 @@ import {
     type FilteringEnvironmentExecution,
     type ProvisionalEnvironmentDisposition,
 } from '../environment/filtering-environment';
+import { projectEnvironmentExecution } from '../environment/environment-result-projection';
+import { EnvironmentDispositionStatus } from '../environment/environment-vocabulary';
+import { type EnvironmentProjectionRefusal } from '../types/environment-projection-refusal';
 import {
-    projectEnvironmentExecution,
-    type EnvironmentProjectionRefusal,
-} from '../environment/environment-result-projection';
-import {
+    FixRunStatus,
     VerificationStatus,
     type AgentBrowserSessionEvidence,
     type AgentCandidateValidationEvidence,
     type FixRunArtifactPaths,
+    type FixRunResult,
 } from '../types/fix-run-result';
 import { InfrastructureFailureReason } from '../types/infrastructure-failure-reason';
 import {
@@ -80,6 +81,84 @@ interface ProvisionalCompatibilityResult {
      * Artifact paths assembled before canonical environment projection.
      */
     artifactPaths?: FixRunArtifactPaths;
+
+    /**
+     * Run status assembled before projection; only a proposed patch fails on a refused projection.
+     */
+    runStatus?: FixRunStatus;
+}
+
+/**
+ * The fields that fail a run whose canonical environment evidence cannot back its decision: an
+ * incomplete cleanup and a refused projection end the run the same way, with no patch and no
+ * verification claim.
+ */
+const ENVIRONMENT_FAILURE_FIELDS = {
+    runStatus: FixRunStatus.Failed,
+    infrastructureFailureReason: InfrastructureFailureReason.EnvironmentUnavailable,
+    verificationStatus: VerificationStatus.Unavailable,
+    candidatePatch: null,
+} as const;
+
+/**
+ * Decide whether a refused projection is what failed the run.
+ *
+ * A refusal fails only a proposed patch, and fails it with `environment_unavailable`; the agent
+ * runtime never fails a run with that reason itself. Any other run that carries a refusal kept its
+ * own status, so a failure there has its own cause.
+ *
+ * @param result - A sealed run result.
+ * @returns True when the run carries a refusal and the refusal set its failure.
+ */
+export function projectionRefusalFailedRun(
+    result: Pick<FixRunResult, 'environmentProjectionRefusal' | 'infrastructureFailureReason'>,
+): boolean {
+    return (
+        result.environmentProjectionRefusal !== undefined &&
+        result.infrastructureFailureReason ===
+            ENVIRONMENT_FAILURE_FIELDS.infrastructureFailureReason
+    );
+}
+
+/**
+ * Fold a refused projection into the provisional result.
+ *
+ * Every refusal is named on the result. A proposed patch whose verified decision the canonical
+ * evidence cannot back has lost its evidence, so the run fails and the candidate binding and its
+ * verified screenshots go with the patch. Any other run proposed no verified patch: a run whose
+ * last experiment verified a candidate it did not propose, or one that has already failed and keeps
+ * its own reason, stays as the agent runtime assembled it.
+ *
+ * @param provisionalResult - Result data accumulated before outer cleanup.
+ * @param refusal - The invariant that refused the projection.
+ * @param disposition - The decision the canonical execution was asked to back.
+ * @returns The result naming the refusal, with no canonical execution attached.
+ */
+function refusedProjectionResult(
+    provisionalResult: object,
+    refusal: EnvironmentProjectionRefusal,
+    disposition: ProvisionalEnvironmentDisposition,
+): object {
+    const compatibility = provisionalResult as ProvisionalCompatibilityResult;
+    if (
+        disposition.status !== EnvironmentDispositionStatus.Verified ||
+        compatibility.runStatus !== FixRunStatus.PatchProposed
+    ) {
+        return { ...provisionalResult, environmentProjectionRefusal: refusal };
+    }
+    const { candidateValidationEvidence: _binding, artifactPaths, ...rest } = compatibility;
+    void _binding;
+    const result: Record<string, unknown> = {
+        ...rest,
+        ...ENVIRONMENT_FAILURE_FIELDS,
+        environmentProjectionRefusal: refusal,
+    };
+    if (artifactPaths) {
+        const { verifiedCandidateScreenshots: _verified, ...paths } = artifactPaths;
+        void _verified;
+        result.artifactPaths = paths;
+    }
+    return result;
 }
 
 /**
@@ -167,14 +246,15 @@ export async function completeFixResultAfterEnvironmentCleanup<T extends object>
     );
     const outcome = projectEnvironmentExecution(environmentExecution);
     if (!('projected' in outcome)) {
-        // Refusing to attach unprojectable canonical evidence is right; throwing here is not: a run
-        // that has already proven a candidate through A/B/C would die on this line and its patch
-        // would be discarded with it. The result keeps the evidence the agent runtime recorded and
-        // simply carries no canonical execution, which every downstream invariant already tolerates
-        // — while the named refusal makes the canonical defect diagnosable from the run that hit
-        // it.
+        // A refusal is a defect in our own result assembly, never something a page or a model
+        // causes. The result names it rather than throwing, so the run that hit the defect is the
+        // one that diagnoses it.
         lifecycle.onProjectionRefused?.(outcome.refusal);
-        return provisionalResult;
+        return refusedProjectionResult(
+            provisionalResult,
+            outcome.refusal,
+            lifecycle.disposition,
+        ) as T;
     }
     const projection = outcome.projected;
     const artifactPaths = mergeCanonicalEnvironmentArtifactPaths(
@@ -203,12 +283,7 @@ export async function completeFixResultAfterEnvironmentCleanup<T extends object>
         environmentExecution,
     };
     if (cleanupFailed) {
-        Object.assign(completedResult, {
-            runStatus: 'failed',
-            infrastructureFailureReason: InfrastructureFailureReason.EnvironmentUnavailable,
-            verificationStatus: VerificationStatus.Unavailable,
-            candidatePatch: null,
-        });
+        Object.assign(completedResult, ENVIRONMENT_FAILURE_FIELDS);
     }
     return completedResult as unknown as T & FixResultEnvironmentExecution;
 }

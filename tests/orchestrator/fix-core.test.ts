@@ -10,6 +10,7 @@ import {
 import * as fs from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import * as v from 'valibot';
 import * as vitest from 'vitest';
 import { vi } from 'vitest';
 import type { BrowserContext } from 'playwright-core';
@@ -34,9 +35,10 @@ import * as fixCoreContext from '../../src/orchestrator/fix-core-context';
 import type * as fixCoreInputs from '../../src/orchestrator/fix-core-inputs';
 import * as agenticRunEvidence from '../../src/orchestrator/agentic-run-evidence';
 import { candidatePatchVerificationRefusal } from '../../src/orchestrator/candidate-verdict';
-import type { CandidatePatch } from '../../src/types/fix-run-result';
+import { FixRunResultSchema, type CandidatePatch } from '../../src/types/fix-run-result';
 import { calculateTrustedBaselineHash } from '../../src/validator/trusted-validation-context';
 import * as fixEnvironmentLifecycle from '../../src/orchestrator/fix-environment-lifecycle';
+import { ENVIRONMENT_PROJECTION_DECISION_PHASE } from '../../src/orchestrator/environment-projection-refusal-report';
 import { BrowserConfigurationError } from '../../src/browser/browser-session';
 import type { BrowserSession, BrowserSessionConfig } from '../../src/browser/browser-session';
 import { ToolRegistry } from '../../src/agent/tool-registry';
@@ -327,6 +329,101 @@ describe('acceptedCandidateDisposition', () => {
     });
 });
 
+/**
+ * Build a cleaned-up lifecycle whose canonical execution the projection refuses by name. A verified
+ * disposition with no phase evidence cannot be an exact A/B/C experiment; an inconclusive one is
+ * refused for a rejected-candidate record no phase backs.
+ *
+ * @param status - The disposition the lifecycle carries.
+ * @returns The adapter, the recorder and the disposition the lifecycle carries.
+ */
+function refusedProjectionLifecycle(status: 'verified' | 'inconclusive' = 'verified') {
+    const cleanupReceipt = {
+        attempted: true,
+        completed: true,
+        finalizerAttempts: 0,
+        finalizerCompleted: 0,
+        finalizerFailed: 0,
+        failures: [],
+    };
+    const actualContext = {
+        kind: 'browser_extension' as const,
+        product: 'AdGuard Browser Extension',
+        browser: 'CloakBrowser Chromium',
+        productVersion: '5.0.0',
+    };
+    const adapterSnapshot: FilteringEnvironmentAdapterState = {
+        kind: 'browser_extension' as const,
+        lifecycle: 'cleaned',
+        stateDigest: 'a'.repeat(64),
+        actualContext,
+        capabilities: [],
+        preparation: null,
+        baseline: null,
+        openLeaseIds: [],
+        cleanup: cleanupReceipt,
+    };
+    const adapter = {
+        kind: 'browser_extension' as const,
+        capabilities: () => [],
+        prepare: async () => ({
+            ready: false as const,
+            limitation: {
+                code: 'phase_open_failed' as const,
+                stage: 'preparation' as const,
+                detail: 'Not used.',
+            },
+        }),
+        openPhase: async () => ({
+            ready: false as const,
+            limitation: {
+                code: 'phase_open_failed' as const,
+                stage: 'phase' as const,
+                detail: 'Not used.',
+            },
+        }),
+        drainOpenHandles: async () => ({ attempted: 0, closed: 0, failed: 0, failures: [] }),
+        cleanup: async () => cleanupReceipt,
+        snapshot: () => adapterSnapshot,
+    } as unknown as FilteringEnvironmentAdapter;
+    const disposition = {
+        status,
+        candidateDigest: status === 'verified' ? 'd'.repeat(64) : null,
+        failure: null,
+    };
+    const rejectedCandidates =
+        status === 'verified'
+            ? []
+            : [
+                  {
+                      experimentId: 'experiment-1',
+                      phase: 'C',
+                      candidateDigest: 'd'.repeat(64),
+                      reasonCodes: ['candidate_validation_not_verified'],
+                  },
+              ];
+    const recorder = {
+        recordCleanup: () => undefined,
+        finalize: () => ({
+            recorderVersion: 1 as const,
+            runId: 'run-refused',
+            kind: 'browser_extension' as const,
+            actualContext,
+            capabilities: [],
+            preparation: null,
+            baseline: null,
+            phases: [],
+            rejectedCandidates,
+            drain: { attempted: 0, closed: 0, failed: 0, failures: [] },
+            cleanup: cleanupReceipt,
+            investigationDisposition: disposition,
+            secondaryFailures: [],
+            disposition,
+        }),
+    } as unknown as Parameters<typeof completeFixResultAfterEnvironmentCleanup>[1]['recorder'];
+    return { adapter, recorder, disposition };
+}
+
 describe('completeFixResultAfterEnvironmentCleanup', () => {
     it('does not expose the provisional result until environment cleanup and finalization complete', async () => {
         const calls: string[] = [];
@@ -434,110 +531,117 @@ describe('completeFixResultAfterEnvironmentCleanup', () => {
         expect(calls).toEqual(['drain', 'cleanup', 'record-cleanup', 'finalize']);
     });
 
-    it('keeps a proven patch when canonical execution refuses to project, and names the refusal', async () => {
-        // A verified candidate died here once: the projection answered only `null` and the caller
-        // threw, discarding a run that had already proven its rule through A/B/C
-        // (mlekovitka.pl #238941, 2026-08-23).
-        const cleanupReceipt = {
-            attempted: true,
-            completed: true,
-            finalizerAttempts: 0,
-            finalizerCompleted: 0,
-            finalizerFailed: 0,
-            failures: [],
-        };
-        const actualContext = {
-            kind: 'browser_extension' as const,
-            product: 'AdGuard Browser Extension',
-            browser: 'CloakBrowser Chromium',
-            productVersion: '5.0.0',
-        };
-        const adapterSnapshot: FilteringEnvironmentAdapterState = {
-            kind: 'browser_extension' as const,
-            lifecycle: 'cleaned',
-            stateDigest: 'a'.repeat(64),
-            actualContext,
-            capabilities: [],
-            preparation: null,
-            baseline: null,
-            openLeaseIds: [],
-            cleanup: cleanupReceipt,
-        };
-        const adapter = {
-            kind: 'browser_extension' as const,
-            capabilities: () => [],
-            prepare: async () => ({
-                ready: false as const,
-                limitation: {
-                    code: 'phase_open_failed' as const,
-                    stage: 'preparation' as const,
-                    detail: 'Not used.',
-                },
-            }),
-            openPhase: async () => ({
-                ready: false as const,
-                limitation: {
-                    code: 'phase_open_failed' as const,
-                    stage: 'phase' as const,
-                    detail: 'Not used.',
-                },
-            }),
-            drainOpenHandles: async () => ({
-                attempted: 0,
-                closed: 0,
-                failed: 0,
-                failures: [],
-            }),
-            cleanup: async () => cleanupReceipt,
-            snapshot: () => adapterSnapshot,
-        } as unknown as FilteringEnvironmentAdapter;
-        // A verified disposition with no phase evidence cannot be an exact A/B/C experiment, so
-        // the projection refuses this execution by name.
-        const verified = {
-            status: 'verified' as const,
-            candidateDigest: 'd'.repeat(64),
-            failure: null,
-        };
-        const recorder = {
-            recordCleanup: () => undefined,
-            finalize: () => ({
-                recorderVersion: 1 as const,
-                runId: 'run-refused',
-                kind: 'browser_extension' as const,
-                actualContext,
-                capabilities: [],
-                preparation: null,
-                baseline: null,
-                phases: [],
-                rejectedCandidates: [],
-                drain: { attempted: 0, closed: 0, failed: 0, failures: [] },
-                cleanup: cleanupReceipt,
-                investigationDisposition: verified,
-                secondaryFailures: [],
-                disposition: verified,
-            }),
-        } as unknown as Parameters<typeof completeFixResultAfterEnvironmentCleanup>[1]['recorder'];
-
+    it('fails a run whose canonical evidence the projection refused', async () => {
+        const { adapter, recorder, disposition } = refusedProjectionLifecycle();
         const provisional = {
             runStatus: 'patch_proposed',
             verificationStatus: 'verified',
             candidatePatch: { rule: 'example.test##.ad' },
+            candidateValidationEvidence: { validationArtifactId: 'validation-binding' },
+            artifactPaths: {
+                screenshots: ['/artifacts/before.png', '/artifacts/after.png'],
+                domSnapshot: null,
+                har: null,
+                trace: '/artifacts/trace.json',
+                verifiedCandidateScreenshots: {
+                    before: '/artifacts/before.png',
+                    after: '/artifacts/after.png',
+                },
+            },
         };
         const refusals: string[] = [];
 
         const result = await completeFixResultAfterEnvironmentCleanup(provisional, {
             adapter,
             recorder,
-            disposition: verified,
+            disposition,
             onProjectionRefused: (refusal) => refusals.push(refusal),
         });
 
         expect(refusals).toEqual(['verified_without_exact_abc']);
-        // The patch survives, and the record simply carries no canonical execution rather than
-        // claiming one it could not project.
-        expect(result.candidatePatch).toEqual({ rule: 'example.test##.ad' });
-        expect(result.runStatus).toBe('patch_proposed');
-        expect(result.environmentExecution).toBeUndefined();
+        // A verified decision the canonical evidence cannot back is a defect in our own code, so
+        // the run fails the way an incomplete cleanup fails it and names the refusal.
+        expect(result).toMatchObject({
+            runStatus: 'failed',
+            infrastructureFailureReason: 'environment_unavailable',
+            verificationStatus: 'unavailable',
+            candidatePatch: null,
+            environmentProjectionRefusal: 'verified_without_exact_abc',
+            artifactPaths: {
+                screenshots: ['/artifacts/before.png', '/artifacts/after.png'],
+                trace: '/artifacts/trace.json',
+            },
+        });
+        expect(result).not.toHaveProperty('candidateValidationEvidence');
+        expect(result).not.toHaveProperty('environmentExecution');
+        expect(result.artifactPaths).not.toHaveProperty('verifiedCandidateScreenshots');
+    });
+
+    it('keeps the earlier failure reason when the projection refuses an already failed run', async () => {
+        const { adapter, recorder, disposition } = refusedProjectionLifecycle();
+        const provisional = {
+            runStatus: 'failed',
+            infrastructureFailureReason: 'llm_unavailable',
+            verificationStatus: 'unavailable',
+            candidatePatch: null,
+            reasoning: 'The reasoning provider was unreachable.',
+        };
+
+        const result = await completeFixResultAfterEnvironmentCleanup(provisional, {
+            adapter,
+            recorder,
+            disposition,
+        });
+
+        expect(result).toEqual({
+            ...provisional,
+            environmentProjectionRefusal: 'verified_without_exact_abc',
+        });
+    });
+
+    it('keeps an analysis-only run whose last experiment verified and names the refusal', async () => {
+        const { adapter, recorder, disposition } = refusedProjectionLifecycle();
+        const provisional = {
+            runStatus: 'analysis_only',
+            verificationStatus: 'partial',
+            candidatePatch: null,
+            reasoning: 'The agent did not propose the verified candidate.',
+        };
+
+        const result = await completeFixResultAfterEnvironmentCleanup(provisional, {
+            adapter,
+            recorder,
+            disposition,
+        });
+
+        expect(result).toEqual({
+            ...provisional,
+            environmentProjectionRefusal: 'verified_without_exact_abc',
+        });
+    });
+
+    it('keeps a run that claimed no verified patch and names the refusal', async () => {
+        const { adapter, recorder, disposition } = refusedProjectionLifecycle('inconclusive');
+        const provisional = {
+            runStatus: 'analysis_only',
+            verificationStatus: 'partial',
+            candidatePatch: null,
+            reasoning: 'The candidate did not verify.',
+        };
+        const refusals: string[] = [];
+
+        const result = await completeFixResultAfterEnvironmentCleanup(provisional, {
+            adapter,
+            recorder,
+            disposition,
+            onProjectionRefused: (refusal) => refusals.push(refusal),
+        });
+
+        expect(refusals).toEqual(['bindings_disagree']);
+        expect(result).toEqual({
+            ...provisional,
+            environmentProjectionRefusal: 'bindings_disagree',
+        });
     });
 
     it('keeps run artifacts while drain failure suppresses success after completed cleanup', async () => {
@@ -1358,6 +1462,75 @@ describe('runFixCore', () => {
             );
 
             expect(result.missingInformation).toEqual([entry]);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it('reports a projection refusal in the run result and the trace', async () => {
+        const root = mkdtempSync(join(tmpdir(), 'fix-core-projection-refusal-'));
+        const filtersPath = join(root, 'filters');
+        mkdirSync(join(filtersPath, 'BaseFilter', 'sections'), { recursive: true });
+        writeFileSync(join(filtersPath, 'BaseFilter/sections/foreign.txt'), '');
+        const piRuntime = await scriptedPiRuntime([
+            toolCall('fetch_issue', { issueNumber: 4 }),
+            toolCall('select_environment', environmentSelectionArgs(CORE_PROBE_NAME)),
+            toolCall('finish_fix', {
+                outcome: 'analysis_only',
+                reasoning: 'The selected desktop executor could not be prepared.',
+            }),
+        ]);
+        const { adapter, recorder, disposition } = refusedProjectionLifecycle();
+
+        try {
+            const result = await runFixCore(
+                { ...coreConfig(), repositoryPath: filtersPath },
+                { rawIssue: localIssue(), facts: localFacts() },
+                {
+                    artifactsDir: join(root, 'artifacts'),
+                    browserMode: 'on',
+                    agentRuntime: {},
+                },
+                {
+                    piRuntime,
+                    agentRuntime: {
+                        createBaseRegistry: async () => new ToolRegistry(),
+                        filteringExecutors: twoCoreExecutorRegistry(
+                            preparableProbeExecutor({
+                                ready: false,
+                                limitation: {
+                                    stage: 'prepare',
+                                    code: 'probe_preparation_failed',
+                                    detail: 'The probe desktop executor never became ready.',
+                                },
+                            }),
+                        ),
+                    },
+                    environmentLifecycle: { adapter, recorder, disposition },
+                },
+            );
+
+            expect(v.safeParse(FixRunResultSchema, result).success).toBe(true);
+            expect(result).toMatchObject({
+                runStatus: 'capability_limited',
+                candidatePatch: null,
+                environmentProjectionRefusal: 'verified_without_exact_abc',
+            });
+            const trace = JSON.parse(readFileSync(result.artifactPaths.trace!, 'utf8')) as {
+                events: { type: string; payload: Record<string, unknown> }[];
+            };
+            expect(
+                trace.events.find(
+                    (event) => event.payload.phase === ENVIRONMENT_PROJECTION_DECISION_PHASE,
+                ),
+            ).toMatchObject({
+                type: 'decision',
+                payload: {
+                    refusal: 'verified_without_exact_abc',
+                    runStatus: 'capability_limited',
+                    dispositionStatus: 'verified',
+                },
+            });
         } finally {
             rmSync(root, { recursive: true, force: true });
         }

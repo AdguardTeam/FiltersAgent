@@ -118,6 +118,115 @@ reported problem is what the candidate had to clear, and nothing BEFORE
 records outweighs visible advertising. An incorrect-blocking review has no
 such rule: there an empty panel is the reported problem itself.
 
+Each inventory request is blind to the state it looks at: the BEFORE and AFTER
+images are asked the same question, and nothing in the prompt or the image
+labels names the state; the code knows which images it sent and files the
+answer. A request told that it looks at the page before the candidate answers
+what that state is expected to show: one listed the reporter's advertising,
+with the coordinates of the reporter's screenshot, on a filtered capture where
+the candidate's selector matched nothing. Both states also list every visible
+rendering flaw with its landmark, and the code marks each BEFORE flaw
+`PRE-EXISTING:`, so the synthesis can still tell the page's own flaws from
+damage the candidate causes.
+
+The final step of the review is a text-only synthesis: it never sees the
+screenshots, only what the inventory requests reported about them, and it must
+reconcile every numbered observation of both states. So it is either shown all
+of them or not asked at all. Each request's symptom scope, damage and
+rationale are sent once, inside that request's record. The context limit is
+derived from the inventory's own bounds: the most observations a state may
+hold and the most requests a state makes, each at its largest size, with the
+request's damage left out because at its bound it would set the limit near a
+million characters. When the full context passes the limit, every request
+rationale is cut to a thousand characters, the one text that explains a batch
+rather than reports what it saw. When even that does not fit, the review ends
+inconclusive and names the size and the limit. The trace records the context
+size, the limit, and whether the rationales were cut or the context refused,
+since whether a review fits depends on how verbose the vision model is, which
+would otherwise be invisible.
+
+Phases A and B each get a single-image inventory, which decides whether the
+baseline reproduces the symptom. Phase C gets none: the paired review judges
+it. A lone after image has no before to compare and no DOM measurements, and
+its own reading once outvoted a review that had reconciled every observation:
+a downscaled overview it called too small to judge counted as the symptom
+still present, so a correct rule ended inconclusive. The symptom presence and
+capture coverage recorded for phase C now come from the review. A host block
+the requests proved stopped, or a resolved symptom with nothing remaining, is
+absent; an unresolved symptom or any remaining instance is present. A breakage
+candidate whose probe measured the named element is still judged by that
+element's geometry, unless the review sees the breakage while phase A's
+inventory found the page clean, and a host block by its requests. On top of a
+verified review the runner checks that phase C navigated cleanly, that the
+symptom is gone, that the page stayed usable, and that the reveal steps
+prepared phase C like the baseline. The experiment verifies the candidate only
+when every check passes. When the review verified, the `apply_rule` answer
+lists every failed check in `failedCandidateChecks`, so the agent learns why
+the candidate still did not verify. Otherwise the list is empty: a review that
+could not decide leaves the symptom and the page open, and naming those checks
+would tell the agent the symptom stayed and the page broke.
+
+Phase B has one check that outranks its inventory. When the report is not
+incorrect blocking and the candidate is a cosmetic rule (hiding or CSS
+injection), not an exception, the structural probe measures the rule's own
+selector on the filtered baseline. If that measurement ran and matched no
+element, the rule has nothing to hide or restyle, so phase B records the
+symptom absent whatever the inventory saw, and the experiment ends `baseline_symptom_absent` without
+phase C or the paired review. The inventory alone cannot settle this: one
+read the reporter's advertising into a baseline where the selector matched
+nothing, because the site rendered the block only after a click the reveal
+steps never made, and the review then verified a rule that hid nothing. The
+`apply_rule` answer names the selector under `unmatchedBaselineSelector` and,
+even when reveal steps were passed, tells the agent to rehearse a click, a
+scroll or a key press with `interact_page` and pass it as `revealSteps`. The
+answer counts toward the same two baseline-absent experiments per candidate
+and plan as any other. The gate stays out wherever an empty match proves
+nothing: a measurement that did not run, such as an extended-CSS selector
+(`:contains`) the page cannot query; a selector the page answers with an empty
+list without failing, such as a pseudo-element (`::before`, `:after`) or a
+legacy `[-ext-` attribute; and a baseline whose reveal steps did not
+complete. The probe reads the top document only, so a rule whose element sits
+in an iframe or a shadow root is reported as matching nothing even when it is
+right; the answer states the fact, and the agent can reword the selector or
+finish analysis-only.
+
+The experiment's verdict, not the review's, is the one the run acts on. Every
+`apply_rule` answer leads with it as `environmentExperiment`. When it refuses
+a review that verified the candidate, the answer adds what phase C showed and
+says that only new reveal steps or new DOM checks earn the same candidate
+another experiment. The candidate ledger records that review as rejected, so
+the same plan cannot run again in that session, and `finish_fix` refuses a
+draft for it with the failed checks rather than sending the agent back to the
+review. The candidate binding a draft needs to publish its patch is withheld
+unless the experiment verified, so a verified review on its own can no longer
+make a run propose a patch.
+
+Because a proposed patch now implies a verified experiment, the canonical
+environment execution recorded after cleanup must be able to back that
+decision. When its projection into the run result refuses, the run decision
+and the evidence disagree, which is a defect in the agent's own result
+assembly rather than something a page or a model can cause. What the refusal
+costs depends on what the run proposed. A verified patch whose evidence was
+refused has lost its proof, so the run fails the way an incomplete cleanup
+fails it: `failed` with `environment_unavailable`, no patch, verification
+unavailable, and neither the candidate binding nor its verified screenshots.
+Any other run proposed no verified patch and keeps its status, including a run
+whose last experiment verified a candidate it did not propose and a run that
+had already failed, which keeps its own reason. Every refusal is named in the
+run result's `environmentProjectionRefusal` and recorded in the trace as an
+`environment_projection` decision, beside the run status and the disposition
+the projection was asked to back, so the defect can be found from the one run
+that hit it.
+
+The projection binds an extension experiment to the product version the run
+context reports. A Chromium build reports the version its own manifest
+records, read from the directory the browser loaded. A Firefox build is a
+signed XPI that Firefox validates itself and the host never unpacks, so no
+version is ever read: its phase proofs carry a `signed-xpi` marker and the run
+context reports no version. For a Firefox-family build that marker binds an
+absent version; before, every Firefox experiment that reached phase C was
+refused and its canonical execution never reached the run result.
+
 ## Issue revisions and limits
 
 A live issue and an `export issue` bundle enter the same verified-revision

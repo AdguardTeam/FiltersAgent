@@ -25,6 +25,7 @@ import {
     type ValidatorObservedPhaseCompletion,
 } from './filtering-environment';
 import { EnvironmentPhaseStateProofSchema } from './environment-proofs';
+import { EnvironmentDispositionStatus } from './environment-vocabulary';
 import { PhaseLabel } from '../types/validation';
 
 /**
@@ -377,22 +378,21 @@ export class FilteringEnvironmentExecutionRecorder {
         );
         const cleanupFailed =
             !this.cleanupInput.cleanup.completed || this.cleanupInput.drain.failed > 0;
-        const cleanupFailure = {
+        const failure = {
             code: EnvironmentAdapterLimitationCode.CleanupFailed,
             stage: EnvironmentLimitationStage.Cleanup,
             detail: 'The filtering environment did not clean up completely.',
         };
         const finalDisposition = cleanupFailed
-            ? { status: 'failed' as const, candidateDigest: null, failure: cleanupFailure }
+            ? { status: EnvironmentDispositionStatus.Failed, candidateDigest: null, failure }
             : investigationDisposition;
-        let secondaryFailures = uniqueFailures([]);
-        if (cleanupFailed) {
-            secondaryFailures = uniqueFailures([
-                investigationDisposition.failure,
-                ...this.cleanupInput.drain.failures,
-                ...this.cleanupInput.cleanup.failures,
-            ]);
-        }
+        const secondaryFailures = cleanupFailed
+            ? uniqueFailures([
+                  investigationDisposition.failure,
+                  ...this.cleanupInput.drain.failures,
+                  ...this.cleanupInput.cleanup.failures,
+              ])
+            : [];
         const phases = [...this.ledger.values()]
             .map((entry) => entry.evidence)
             .filter((evidence): evidence is EnvironmentPhaseEvidence => evidence !== null);

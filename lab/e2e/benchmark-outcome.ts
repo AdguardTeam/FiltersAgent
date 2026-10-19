@@ -9,6 +9,7 @@ import { InfrastructureFailureReason } from '../../src/types/infrastructure-fail
 import { ReporterSymptomPresence } from '../../src/types/reporter-symptom-presence';
 import { PhaseLabel } from '../../src/types/validation';
 import { VISUAL_REVIEW_UNAVAILABLE_PREFIX } from '../../src/validator/candidate-visual-synthesis';
+import { projectionRefusalFailedRun } from '../../src/orchestrator/fix-environment-lifecycle';
 import { INTAKE_SKIPPED_PREFIX } from '../local/local-failure-stage';
 
 /**
@@ -104,8 +105,11 @@ export interface AgentOutcome {
 /**
  * Decide whether the locked run failed before producing comparable agent behavior, and say why.
  *
- * A run-level failure is explained by the run's own reasoning. A visual review that could not run
- * is explained by the review's rationale, which names what the vision provider did — refused the
+ * A run-level failure is explained by the run's own reasoning, unless the run failed because its
+ * environment evidence did not project: that run names the refusal, and its reasoning may still
+ * describe the verified patch the refusal took away. A run that failed for its own reason keeps its
+ * reasoning, with the refusal it also carries appended. A visual review that could not run is
+ * explained by the review's rationale, which names what the vision provider did — refused the
  * request or failed to answer — where the agent's reasoning only reports what it concluded around
  * the missing review.
  *
@@ -120,7 +124,11 @@ function infrastructureRunFailureDetail(result: FixRunResult): string | null {
             !isTargetEnvironmentFallbackReason(result.fallbackReason ?? null)) ||
         isInfrastructureFallbackReason(result.fallbackReason ?? null)
     ) {
-        return result.reasoning;
+        if (result.environmentProjectionRefusal === undefined) {
+            return result.reasoning;
+        }
+        const refusal = `Canonical environment execution could not be projected: ${result.environmentProjectionRefusal}.`;
+        return projectionRefusalFailedRun(result) ? refusal : `${result.reasoning} ${refusal}`;
     }
     const review = result.candidateVisualReview;
     if (
@@ -180,8 +188,12 @@ export function benchmarkFailureKind(runResult: FixRunResult | null): BenchmarkF
  * network rule by the `adElementSelector` passed to `apply_rule`: fewer matches render than in the
  * unfiltered control, or, when that control is not comparable, fewer than the page holds. Otherwise
  * a request the baseline let through to the host a block candidate names counts, and so does any
- * vision classification but `absent`, an indeterminate one included. A prepared session counts only
- * with a vision-verified, complete capture classified `present`.
+ * vision classification but `absent`, an indeterminate one included — except that a cosmetic
+ * candidate (hiding or CSS injection) whose own selector, measured on the baseline after the reveal
+ * steps completed, matched no element makes phase B absent whatever vision saw; a selector the page
+ * cannot measure that way (`:contains`, a pseudo-element, a legacy `[-ext-` attribute) leaves it to
+ * vision. A prepared session counts only with a vision-verified, complete capture classified
+ * `present`.
  *
  * @param result - Schema-validated result loaded from run-result.json.
  * @returns Whether a baseline phase or a prepared session counted the reported problem as present.

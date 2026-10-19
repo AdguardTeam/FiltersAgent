@@ -43,9 +43,12 @@ export function symptomKindForProblemType(problemType?: ProblemType): SymptomKin
 /**
  * Residue rubric lines for the per-image inventory prompts (tiles and overviews).
  *
- * The ads wording is load-bearing verbatim: existing review contracts pin it. The breakage wording
- * inverts the AFTER-state semantics — restored content must not be recorded as a matching
- * instance.
+ * An inventory pass is never told which state its images show, so these lines say what counts as an
+ * instance in any image: told it looked at the page before the candidate, a pass answered what that
+ * state is expected to show and recorded the reporter's advertising on a filtered capture that had
+ * none. Which state an instance belongs to is supplied by the code. The breakage wording still
+ * keeps restored working content out of the instances, and asks for advertising in every image,
+ * since the filtering-regression check compares those records across the states.
  *
  * @param kind - Problem class driving the review.
  * @returns Prompt lines describing what counts as a matching symptom instance.
@@ -55,20 +58,19 @@ export function inventoryResidueRubric(kind: SymptomKind): string[] {
         return [
             'The reporter-defined defect is broken or missing page functionality caused by',
             'filtering: a missing image or video, an empty region where content should render,',
-            'a control that visibly fails, or an on-page error message. In the BEFORE state',
-            'record each such breakage instance. In the AFTER state record an instance only',
-            'when the same functionality is still visibly broken or missing; restored working',
-            'content is not a matching instance. Separately, in BOTH states, record every',
-            'visible advertisement as an observation prefixed "AD PRESENCE:" with its location',
-            '— including in the BEFORE state, where ad presence must be recorded even though it',
-            'is not candidate damage. These observations feed the filtering-regression check.',
+            'a control that visibly fails, or an on-page error message. Record an instance',
+            'wherever such functionality is visibly broken or missing; working content is not a',
+            'matching instance. Separately, in every image, record every visible advertisement as',
+            'an observation prefixed "AD PRESENCE:" with its location, even though an',
+            'advertisement is not the reporter-defined defect. These observations feed the',
+            'filtering-regression check.',
         ];
     }
     return [
         'Treat an outer ad wrapper, its REKLAMA label, divider or frame, and reserved',
         'blank space or height as part of the reporter-defined advertising symptom',
-        'footprint. In the AFTER state, record any such residual as a matching',
-        'instance even when the ad creative itself disappeared.',
+        'footprint. Record any such residual as a matching instance even when no ad',
+        'creative is visible in it.',
         // Without this line the model read an ordinary ~60 px gap between two sections of an AFTER
         // tile as "a blank band consistent with an empty reserved ad-slot placeholder left by the
         // candidate rule", which rejected a correct candidate. The wording above names reserved
@@ -81,9 +83,11 @@ export function inventoryResidueRubric(kind: SymptomKind): string[] {
 }
 
 /**
- * Prefix a BEFORE inventory puts on a rendering flaw the page has without any candidate.
+ * Prefix the inventory code puts on every damage entry of the page before the candidate.
  *
- * The inventory prompt writes it and the synthesis prompt reads it, so both take it from here.
+ * The inventory prompt asks for damage the same way in both states, so a pass never learns which
+ * one it sees; the code marks the BEFORE entries, and the synthesis prompt reads the mark to
+ * discount the page's own flaws. Both take it from here.
  */
 export const PRE_EXISTING_DAMAGE_PREFIX = 'PRE-EXISTING:';
 
@@ -181,11 +185,12 @@ export const PRE_EXISTING_BLANK_SPACE_RUBRIC = [
 ];
 
 /**
- * The page's own blank panels a BEFORE inventory of an ads review lists as pre-existing flaws.
+ * Blank panels an inventory of an ads review lists as page damage.
  *
- * Listed under {@link PRE_EXISTING_DAMAGE_PREFIX}, they let the synthesis tell blank space the page
- * already had from residue ({@link PRE_EXISTING_BLANK_SPACE_RUBRIC}). An incorrect-blocking review
- * never lists them: there an empty media panel is the defect class itself.
+ * Marked {@link PRE_EXISTING_DAMAGE_PREFIX} in the BEFORE state, they let the synthesis tell blank
+ * space the page already had from residue ({@link PRE_EXISTING_BLANK_SPACE_RUBRIC}). An
+ * incorrect-blocking review never lists them: there an empty media panel is the defect class
+ * itself.
  */
 export const PRE_EXISTING_BLANK_PANELS =
     'empty or unloaded media and image panels that are not ad slots';

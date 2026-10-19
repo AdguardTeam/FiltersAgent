@@ -1,9 +1,7 @@
 import { RedirectOriginPolicy } from '../browser/redirect-origin-policy';
 import {
     applyRuleResultForModel,
-    baselineSymptomAbsentAnswer,
     environmentLimitationAnswer,
-    baselineSymptomAbsentRefusal,
     withRemainingCandidateAttempts,
 } from './apply-rule-model-result';
 import { NavigationFailureLedger } from './phase-navigation-failure-policy';
@@ -23,8 +21,12 @@ import * as v from 'valibot';
 import { withToolDeadline } from '../pi/session-tools';
 import { parseRevealSteps, symptomAbsenceLedgerKey } from './apply-rule-reveal-steps';
 import { candidatePlanDigest, parseDomChecks } from './apply-rule-dom-checks';
+import {
+    baselineSymptomAbsentAnswer,
+    baselineSymptomAbsentRefusal,
+} from './baseline-symptom-absent-answer';
 import type { SingleShotClient } from '../pi/single-shot-types';
-import { ToolRegistry } from '../agent/tool-registry';
+import { ToolRegistry, type ToolDefinition } from '../agent/tool-registry';
 import type { RepositoryLintCommand } from '../rules/repository-lint-command';
 import { createToolRegistry } from '../agent/tool-factory';
 import type { FinishFixValidationRejection } from '../types/terminal-rejection';
@@ -58,6 +60,7 @@ import {
 } from '../browser/navigation-failure';
 import {
     EnvironmentCapability,
+    EnvironmentDispositionStatus,
     EnvironmentLimitationCode,
     EnvironmentSelectionReservedCase,
 } from '../environment/environment-vocabulary';
@@ -118,7 +121,6 @@ import {
 import * as environmentExecution from '../environment/filtering-environment-execution-recorder';
 import type { RawIssue } from '../github/fetch-issue';
 import type { RuleGuidanceSource } from '../knowledge/rule-guidance';
-import type { ToolDefinition } from '../agent/tool-registry';
 import type { FixOutcome } from '../types/fix-outcome';
 import type { PreparedExtension } from '../local/prepared-extension';
 import { createLogger } from '../logger/logger';
@@ -130,7 +132,6 @@ import { ExtensionMode, type SymptomObservation } from '../types/fix-run-result'
 import {
     CandidateVisualVerdict,
     CandidateVisualReviewSchema,
-    type CandidateVisualReview,
 } from '../types/candidate-visual-review';
 import type { IssueFacts } from '../types/issue-facts';
 import { parseRuleApplication } from '../knowledge/instruction-application';
@@ -148,14 +149,21 @@ import {
     parseCandidateVisualReviewArtifactId,
 } from '../types/candidate-artifact-identity';
 import { createTrustedValidationContext } from '../validator/trusted-validation-context';
-import { ExperimentInconclusiveReason } from '../validator/ads-environment-experiment-result';
+import {
+    AdsEnvironmentExperimentVerdict,
+    ExperimentInconclusiveReason,
+} from '../validator/ads-environment-experiment-result';
 import {
     runAdsEnvironmentExperiment,
     type AdsEnvironmentPhaseObservationInput,
 } from '../validator/phase-orchestrator';
 import { extractBrowserLaunchSignal } from './browser-launch-signal';
 import { PhaseLabel } from '../types/validation';
-import { withCliExperimentVerdict } from './cli-candidate-experiment';
+import {
+    decidingCandidateVerdict,
+    readExperimentFields,
+    withExperimentVerdict,
+} from './candidate-experiment-verdict';
 import {
     reportedOnCurrentImportDigest,
     reporterImportUrlRefusal,
@@ -220,6 +228,7 @@ import {
     reportedDomainFromAllowedTargets,
     targetUrlMatchKey,
     type CandidateValidationOutcome,
+    type CandidateValidationReference,
     type PendingCandidateAttempt,
 } from './agent-runtime-candidate-context';
 import { incompleteCaptureRefusal, readScreenshotCapture } from './agent-runtime-page-capture';
@@ -673,26 +682,6 @@ const WITHHELD_PAGE_REPORT: Readonly<Record<WithheldPageObstruction, WithheldPag
         nextSession: "this runner's region is fixed, so another session rarely gets past it",
     },
 };
-
-/**
- * Trusted apply_rule response fields retained under their producing browser session.
- */
-interface CandidateValidationReference {
-    /**
-     * Exact browser session active when apply_rule returned.
-     */
-    sessionId: string;
-
-    /**
-     * Schema-valid runner-bound semantic review returned by apply_rule.
-     */
-    visualReview: CandidateVisualReview;
-
-    /**
-     * Recorder artifact identity of the persisted semantic review.
-     */
-    visualReviewArtifactId: string;
-}
 
 /**
  * Return items in deterministic key order without relying on a mutating array sort.
@@ -1650,6 +1639,11 @@ export class AgentRuntime {
         if (reference.visualReview.verdict !== CandidateVisualVerdict.Verified) {
             return refuse('the recorded visual review is not verified', {
                 verdict: reference.visualReview.verdict,
+            });
+        }
+        if (reference.experimentVerdict !== AdsEnvironmentExperimentVerdict.Verified) {
+            return refuse('the controlled experiment did not verify the candidate', {
+                experimentVerdict: reference.experimentVerdict,
             });
         }
         if (reference.visualReview.validationArtifactId !== validationArtifactId) {
@@ -3528,7 +3522,7 @@ export class AgentRuntime {
         });
         if (convergence.limitation) {
             this.filteringEnvironmentDisposition = {
-                status: 'capability_limited',
+                status: EnvironmentDispositionStatus.CapabilityLimited,
                 candidateDigest: null,
                 failure: convergence.limitation,
             };
@@ -3546,7 +3540,7 @@ export class AgentRuntime {
                 detail: 'The locked environment names no registered executor.',
             };
             this.filteringEnvironmentDisposition = {
-                status: 'capability_limited',
+                status: EnvironmentDispositionStatus.CapabilityLimited,
                 candidateDigest: null,
                 failure: limitation,
             };
@@ -3617,7 +3611,7 @@ export class AgentRuntime {
         this.filteringEnvironmentRecorder = recorder;
         if (!prepared.ready) {
             this.filteringEnvironmentDisposition = {
-                status: 'capability_limited',
+                status: EnvironmentDispositionStatus.CapabilityLimited,
                 candidateDigest: null,
                 failure: prepared.limitation,
             };
@@ -3625,7 +3619,7 @@ export class AgentRuntime {
             return prepared.limitation;
         }
         this.filteringEnvironmentDisposition = {
-            status: 'inconclusive',
+            status: EnvironmentDispositionStatus.Inconclusive,
             candidateDigest: null,
             failure: null,
         };
@@ -3916,7 +3910,7 @@ export class AgentRuntime {
                 // The disposition resets so a sticky failure cannot later re-enter through the
                 // preparation branch and demote the lock after all.
                 this.filteringEnvironmentDisposition = {
-                    status: 'inconclusive',
+                    status: EnvironmentDispositionStatus.Inconclusive,
                     candidateDigest: null,
                     failure: null,
                 };
@@ -3944,7 +3938,7 @@ export class AgentRuntime {
                 // the disposition stays clear, so the next candidate — an added rule for the same
                 // report — still runs its own experiment.
                 this.filteringEnvironmentDisposition = {
-                    status: 'inconclusive',
+                    status: EnvironmentDispositionStatus.Inconclusive,
                     candidateDigest: null,
                     failure: null,
                 };
@@ -3956,7 +3950,7 @@ export class AgentRuntime {
         }
         const result = observer?.result();
         if (result) {
-            return this.cliEvidenceRoute ? withCliExperimentVerdict(result, experiment) : result;
+            return withExperimentVerdict(result, experiment);
         }
         if (experiment.inconclusiveReason === ExperimentInconclusiveReason.PhaseNavigationFailed) {
             // The page stopped a phase, not the environment: the lock stays as it is.
@@ -3978,6 +3972,7 @@ export class AgentRuntime {
                 blockedHost: judgeableBlockedHost(candidateRule, state.targetUrl),
                 revealSteps: observer?.revealStepsProjection() ?? null,
                 revealStepsRequested: interactionPlan !== undefined,
+                unmatchedBaselineSelector: observer?.unmatchedBaselineSelector() ?? null,
                 overruledSelector: observer?.baselineVisionOverruledSelector() ?? null,
             });
         }
@@ -4055,17 +4050,20 @@ export class AgentRuntime {
         const triedPlans = this.candidatePlanDigests.get(ledgerKey) ?? new Set<string>();
         triedPlans.add(candidatePlanDigest(candidate.revealPlan, candidate.domChecks));
         this.candidatePlanDigests.set(ledgerKey, triedPlans);
-        const review =
-            typeof result.visualReview === 'object' && result.visualReview !== null
-                ? (result.visualReview as Record<string, unknown>)
-                : undefined;
+        const { review, experiment, failedChecks } = readExperimentFields(result);
         this.candidateValidationOutcomes.set(ledgerKey, {
             attemptNumber: candidate.attemptNumber,
             validationAttemptCount,
             ...(typeof result.validationArtifactId === 'string'
                 ? { validationArtifactId: result.validationArtifactId }
                 : {}),
-            ...(typeof review?.verdict === 'string' ? { visualVerdict: review.verdict } : {}),
+            ...(review
+                ? {
+                      visualVerdict: decidingCandidateVerdict(review.verdict, experiment),
+                      reviewVerdict: review.verdict,
+                  }
+                : {}),
+            ...(failedChecks ? { failedCandidateChecks: failedChecks } : {}),
             ...(typeof review?.rationale === 'string'
                 ? { visualRationale: review.rationale.slice(0, 1_000) }
                 : {}),
@@ -4528,6 +4526,7 @@ export class AgentRuntime {
                     sessionId: state.sessionId,
                     visualReview: parsedVisualReview.output,
                     visualReviewArtifactId: result.visualReviewArtifactId,
+                    experimentVerdict: readExperimentFields(result).experiment,
                 });
             }
             const phases = ['phaseA', 'phaseB', 'phaseC'].map((key) =>

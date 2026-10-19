@@ -15,6 +15,7 @@ import {
     EnvironmentLimitationStage,
     type ProvisionalEnvironmentDisposition,
 } from '../environment/filtering-environment';
+import { EnvironmentDispositionStatus } from '../environment/environment-vocabulary';
 import { NOT_OBSERVED_TEXT } from '../environment/environment-proofs';
 import { createLogger } from '../logger/logger';
 import { FixOutcomeKind } from '../types/fix-outcome';
@@ -60,12 +61,12 @@ import type { AgentRuntimeEnvironmentEvidence } from './agent-runtime-session-ev
 import { reportedSettingsEnvironment } from './reported-settings-environment';
 import { isTargetEnvironmentFallbackReason } from '../types/browser-fallback-origin';
 import {
+    resolveRunRuleGuidance,
     type FixCoreDependencies,
     type FixCoreIssueInput,
     type FixCoreOptions,
 } from './fix-core-inputs';
 import { declaredPlacementForRun } from '../knowledge/instruction-placement';
-import { resolveRunRuleGuidance } from './fix-core-inputs';
 import {
     acceptedCandidateDisposition,
     deriveAgenticVerificationStatus,
@@ -96,6 +97,7 @@ import {
 } from './agentic-run-evidence';
 import { serializeAgentExtensionProvenance } from './extension-provenance';
 import { completeFixResultAfterEnvironmentCleanup } from './fix-environment-lifecycle';
+import { reportEnvironmentProjectionRefusal } from './environment-projection-refusal-report';
 import { lintPublishedCandidate } from '../rules/repository-lint-command';
 
 /**
@@ -222,10 +224,7 @@ export async function runAgenticFixCore(
     } catch (error) {
         const err = error instanceof Error ? error : new Error(String(error));
         logger.error({ err }, 'the run executor set could not be resolved');
-        recorder.record(TraceEventType.Error, {
-            phase: 'agent_runtime',
-            message: err.message,
-        });
+        recorder.record(TraceEventType.Error, { phase: 'agent_runtime', message: err.message });
         const tracePath = persistTrace(recorder.end('failed'), options.artifactsDir);
         return makeCoreResult(
             resultContext,
@@ -760,7 +759,7 @@ export async function runAgenticFixCore(
             ? { ...failedResult, environmentSelection }
             : failedResult;
         failureDisposition = {
-            status: 'failed',
+            status: EnvironmentDispositionStatus.Failed,
             candidateDigest: null,
             failure: {
                 code: EnvironmentAdapterLimitationCode.PhaseProofUnavailable,
@@ -777,21 +776,20 @@ export async function runAgenticFixCore(
     try {
         let finalResult = provisionalResult;
         if (environmentLifecycle) {
+            const disposition =
+                failureDisposition ??
+                acceptedCandidateDisposition(provisionalResult) ??
+                environmentLifecycle.disposition;
             finalResult = await completeFixResultAfterEnvironmentCleanup(provisionalResult, {
                 ...environmentLifecycle,
-                disposition:
-                    failureDisposition ??
-                    acceptedCandidateDisposition(provisionalResult) ??
-                    environmentLifecycle.disposition,
-                onProjectionRefused: (refusal) => {
-                    recordPreflightDiagnostic('run', {
-                        note: 'environment_projection_refused',
-                        refusal,
-                        runStatus: provisionalResult.runStatus,
-                        candidatePatch: provisionalResult.candidatePatch !== null,
-                        sessions: provisionalResult.browserSessions?.length ?? 0,
-                    });
-                },
+                disposition,
+                onProjectionRefused: (refusal) =>
+                    reportEnvironmentProjectionRefusal(refusal, {
+                        recorder,
+                        artifactsDir: options.artifactsDir,
+                        provisionalResult,
+                        disposition,
+                    }),
             });
         }
         // The verdict was derived from the agent runtime's own sessions, but the evidence list

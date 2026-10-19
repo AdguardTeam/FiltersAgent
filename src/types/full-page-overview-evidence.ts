@@ -8,9 +8,19 @@ import * as v from 'valibot';
  */
 
 /**
+ * Longest artifact identifier the runner emits. It bounds how much of the synthesis context one
+ * cited identifier may take, so the context limit is derived from it.
+ */
+export const MAX_ARTIFACT_ID_CHARS = 256;
+
+/**
  * Non-empty artifact identifier emitted by the trusted runner.
  */
-export const ArtifactIdSchema = v.pipe(v.string(), v.minLength(1), v.maxLength(256));
+export const ArtifactIdSchema = v.pipe(
+    v.string(),
+    v.minLength(1),
+    v.maxLength(MAX_ARTIFACT_ID_CHARS),
+);
 
 /**
  * How one page state's full-page overview took part in the candidate review.

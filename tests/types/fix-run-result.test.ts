@@ -1428,6 +1428,17 @@ describe('FixRunResultSchema distribution lag', () => {
     });
 });
 
+describe('FixRunResultSchema projection refusal', () => {
+    it('records a projection refusal only on a run that carries no canonical execution', () => {
+        const refusal = { environmentProjectionRefusal: 'bindings_disagree' } as const;
+        expect(v.safeParse(FixRunResultSchema, resultWithSession(refusal)).success).toBe(true);
+
+        const projected = pendingPublicationResult();
+        expect(v.safeParse(FixRunResultSchema, projected).success).toBe(true);
+        expect(v.safeParse(FixRunResultSchema, { ...projected, ...refusal }).success).toBe(false);
+    });
+});
+
 describe('FixRunResultSchema source drift', () => {
     const PINNED = 'd'.repeat(40);
     const UPSTREAM = 'e'.repeat(40);

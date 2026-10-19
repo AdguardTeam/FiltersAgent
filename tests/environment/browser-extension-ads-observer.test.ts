@@ -13,6 +13,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ConsoleCoverage, type IBrowserSession } from '../../src/browser/browser-interfaces';
 import { TraceRecorder } from '../../src/tracer/trace-recorder';
 import { TraceEventType } from '../../src/types/trace';
+import { SymptomKind } from '../../src/validator/symptom-rubric';
 import { SingleShotResultKind, type SingleShotClient } from '../../src/pi/single-shot-types';
 
 /**
@@ -32,13 +33,11 @@ import type { FullPageVisualCaptureResult } from '../../src/analyzer/full-page-c
 import { PhaseLabel, type StructuralSnapshot } from '../../src/types/validation';
 import { ReporterSymptomPresence } from '../../src/types/reporter-symptom-presence';
 import { BrowserExtensionAdsObserver } from '../../src/environment/browser-extension-ads-observer';
-import { SymptomKind } from '../../src/validator/symptom-rubric';
 import { runAdsEnvironmentExperiment } from '../../src/validator/phase-orchestrator';
 import { AdsEnvironmentExperimentVerdict } from '../../src/validator/ads-environment-experiment-result';
 import { deriveCandidateNetworkScope } from '../../src/validator/candidate-network-scope';
 import {
     CandidateVisualReviewSchema,
-    CandidateVisualVerdict,
     deriveCandidateVisualIntegrityBasis,
     deriveCandidateVisualSymptomBasis,
     deriveCandidateVisualVerdict,
@@ -936,10 +935,10 @@ function filteringStateFor(phase: 'A' | 'B' | 'C') {
  */
 interface ExtensionExperimentOptions {
     /**
-     * Vision's per-phase presence of the reporter symptom; present before C and absent in C when
-     * omitted.
+     * Vision's presence of the reporter symptom in each baseline phase; present when omitted. The
+     * candidate phase has no single-image inventory: the paired review judges it.
      */
-    symptomPresence?: (phase: 'A' | 'B' | 'C') => 'present' | 'absent';
+    symptomPresence?: (phase: 'A' | 'B') => 'present' | 'absent';
 
     /**
      * The phase network logs; empty when omitted.
@@ -957,13 +956,17 @@ interface ExtensionExperimentOptions {
     probeSucceeded?: boolean;
 
     /**
-     * Matches of the candidate's selector the probe finds rendered in each phase, out of one; the
-     * one match renders in every phase when omitted.
+     * How many elements the structural probe matches in each phase; one when omitted.
+     */
+    targetCount?: (phase: 'A' | 'B' | 'C') => number;
+
+    /**
+     * Matches of the candidate's selector the probe finds rendered in each phase; one when omitted.
      */
     visibleMatches?: (phase: PhaseLabel) => number;
 
     /**
-     * Problem class the review judges; ads when omitted.
+     * The problem class the run judges; advertising when omitted.
      */
     symptomKind?: SymptomKind;
 
@@ -1006,6 +1009,11 @@ interface ExperimentSeams {
     probedSelectors: string[];
 
     /**
+     * Phase of every single-image inventory, in the order it ran.
+     */
+    inventoryPhases: string[];
+
+    /**
      * DOM checks the visual review received, when it ran.
      */
     reviewDomChecks?: readonly DomCheckRecord[];
@@ -1014,6 +1022,16 @@ interface ExperimentSeams {
      * The apply_rule answer the observer built in phase C.
      */
     applyRuleResult?: Record<string, unknown> | null;
+
+    /**
+     * Whether the paired candidate review ran.
+     */
+    reviewCalled?: boolean;
+
+    /**
+     * The hiding selector the observer reported as matching nothing on the baseline.
+     */
+    unmatchedBaselineSelector?: string | null;
 }
 
 /**
@@ -1031,8 +1049,7 @@ async function runExtensionExperiment(
     candidateRule: string,
     options: ExtensionExperimentOptions = {},
 ): Promise<Awaited<ReturnType<typeof runAdsEnvironmentExperiment>>> {
-    const symptomPresence =
-        options.symptomPresence ?? ((phase) => (phase === 'C' ? 'absent' : 'present'));
+    const symptomPresence = options.symptomPresence ?? (() => 'present');
     const networkLog = options.networkLog ?? (() => []);
     const modelOutput = options.modelOutput ?? CLEAN_UNCLEAR_OUTPUT;
     const overviewCaptured = options.overviewCaptured ?? true;
@@ -1122,11 +1139,15 @@ async function runExtensionExperiment(
                 options.seen?.probedSelectors.push(selector);
                 return {
                     probeSucceeded: options.probeSucceeded ?? true,
-                    targetCount: 1,
+                    targetCount: options.targetCount?.(input.phase) ?? 1,
                     targetVisibleCount: options.visibleMatches?.(input.phase) ?? 1,
                 } as StructuralSnapshot;
             },
             inspectFullPageVisualCapture: async (input, inventoryOptions) => {
+                options.seen?.inventoryPhases.push(input.phase);
+                if (input.phase === 'C') {
+                    throw new Error('The paired review judges the candidate phase.');
+                }
                 const artifactId = `inventory-${input.phase.toLowerCase()}`;
                 inventoryOptions.recorder.addArtifact({
                     id: artifactId,
@@ -1172,6 +1193,7 @@ async function runExtensionExperiment(
                 }) as unknown as ResolvedCandidateVisualEvidence,
             reviewCandidateVisually: async (_input, reviewOptions) => {
                 if (options.seen) {
+                    options.seen.reviewCalled = true;
                     options.seen.reviewDomChecks = reviewOptions.domChecks;
                 }
                 // The scope, verdict and bases come from the production derivations, so this
@@ -1330,6 +1352,7 @@ async function runExtensionExperiment(
     });
     if (options.seen) {
         options.seen.applyRuleResult = observer.result();
+        options.seen.unmatchedBaselineSelector = observer.unmatchedBaselineSelector();
     }
     return experiment;
 }
@@ -1379,42 +1402,55 @@ function scriptRequest(url: string, statusCode = 200): NetworkRequestEntry {
 }
 
 describe('an extension experiment over a breakage the named element renders through', () => {
+    /**
+     * The paired review once the wall inside the player is gone from the candidate phase.
+     */
+    const wallGone: CandidateVisualReviewModelOutput = {
+        ...CLEAN_UNCLEAR_OUTPUT,
+        pageIntegrity: 'intact',
+    };
+
+    /**
+     * The paired review while the candidate phase still shows the wall inside the player.
+     */
+    const wallStays: CandidateVisualReviewModelOutput = {
+        ...wallGone,
+        symptom: 'not_resolved',
+        remainingInstances: [
+            {
+                artifactId: 'shot-c',
+                landmark: 'Inside the player.',
+                description: 'The anti-adblock wall still covers the player.',
+            },
+        ],
+    };
+
     it.each([
-        {
-            candidateVision: ReporterSymptomPresence.Absent,
-            verdict: AdsEnvironmentExperimentVerdict.Verified,
-        },
-        {
-            candidateVision: ReporterSymptomPresence.Present,
-            verdict: AdsEnvironmentExperimentVerdict.Inconclusive,
-        },
+        { review: 'wall gone', modelOutput: wallGone, verified: true },
+        { review: 'wall stays', modelOutput: wallStays, verified: false },
     ])(
-        'holds the candidate to vision that separates it from the unfiltered page: $candidateVision',
-        async ({ candidateVision, verdict }) => {
+        'holds the candidate to the review, however the named element renders: $review',
+        async ({ modelOutput, verified }) => {
             // A wall inside a player the selector names: the player renders in every phase but
-            // the filtered baseline, so its geometry calls the candidate restored, and the review
-            // compares B and C only. Vision calling the unfiltered page clean and the candidate
-            // broken still keeps the candidate unverified.
-            const seen: ExperimentSeams = { probedSelectors: [] };
+            // the filtered baseline, so its geometry calls the candidate restored. The candidate
+            // phase has no inventory of its own; the paired review seeing the wall still there
+            // keeps the candidate unverified.
+            const seen: ExperimentSeams = { probedSelectors: [], inventoryPhases: [] };
             const experiment = await runExtensionExperiment('sarkisozleri.bbs.tr#@#.player', {
                 symptomKind: SymptomKind.Breakage,
-                symptomPresence: (phase) => {
-                    if (phase === PhaseLabel.A) {
-                        return ReporterSymptomPresence.Absent;
-                    }
-                    return phase === PhaseLabel.B
-                        ? ReporterSymptomPresence.Present
-                        : candidateVision;
-                },
+                symptomPresence: (phase) =>
+                    phase === PhaseLabel.A
+                        ? ReporterSymptomPresence.Absent
+                        : ReporterSymptomPresence.Present,
                 visibleMatches: (phase) => (phase === PhaseLabel.B ? 0 : 1),
-                modelOutput: { ...CLEAN_UNCLEAR_OUTPUT, pageIntegrity: 'intact' },
+                modelOutput,
                 seen,
             });
 
-            expect(seen.applyRuleResult).toMatchObject({
-                visualReview: { verdict: CandidateVisualVerdict.Verified },
+            expect(experiment.verdict === AdsEnvironmentExperimentVerdict.Verified).toBe(verified);
+            expect(phaseCapture(experiment, 'C')).toMatchObject({
+                reporterSymptomPresence: verified ? 'absent' : 'present',
             });
-            expect(experiment.verdict).toBe(verdict);
         },
     );
 });
@@ -1544,17 +1580,224 @@ describe('an extension experiment behind reveal steps', () => {
     });
 
     it('withholds the verdict when the candidate phase was not prepared like the baseline', async () => {
+        const seen: ExperimentSeams = { probedSelectors: [], inventoryPhases: [] };
         const experiment = await runExtensionExperiment(RULE, {
             modelOutput: intact,
             probeSucceeded: false,
             reveal: { plan: ageDialogRevealPlan(), scripts: { C: { targetMissing: true } } },
+            seen,
         });
 
         expect(experiment.verdict).not.toBe('verified');
         const candidatePhase = experiment.phases.find((phase) => phase.phase === 'C');
         expect(candidatePhase?.completion).toMatchObject({
             candidateValidation: { verified: false },
+            visualReview: { verdict: 'verified' },
         });
+        // The review alone would verify; the model must learn which check withdrew the proof.
+        expect(seen.applyRuleResult).toMatchObject({
+            failedCandidateChecks: ['reveal_steps_prepared_alike'],
+        });
+    });
+});
+
+/**
+ * The capture one phase completed with.
+ *
+ * @param experiment - The finished experiment.
+ * @param label - The phase to read.
+ * @returns The phase's only capture.
+ */
+function phaseCapture(
+    experiment: Awaited<ReturnType<typeof runExtensionExperiment>>,
+    label: 'A' | 'B' | 'C',
+) {
+    const completion = experiment.phases.find((phase) => phase.phase === label)?.completion;
+    return completion?.kind === 'observed' ? completion.captures?.[0] : undefined;
+}
+
+describe('an extension experiment judged by its paired review', () => {
+    const RULE = 'sarkisozleri.bbs.tr##.banner';
+    const intact: CandidateVisualReviewModelOutput = {
+        ...CLEAN_UNCLEAR_OUTPUT,
+        pageIntegrity: 'intact',
+    };
+
+    it('inventories only the baseline phases one image at a time', async () => {
+        // A lone after image has no before to compare and no DOM measurements: its "too small to
+        // tell" once outvoted the review that saw every tile clean.
+        const seen: ExperimentSeams = { probedSelectors: [], inventoryPhases: [] };
+        await runExtensionExperiment(RULE, { modelOutput: intact, seen });
+
+        expect(seen.inventoryPhases).toEqual(['A', 'B']);
+    });
+
+    it("reads the candidate phase's symptom and capture from the paired review", async () => {
+        const clean = await runExtensionExperiment(RULE, { modelOutput: intact });
+
+        expect(clean.verdict).toBe('verified');
+        expect(phaseCapture(clean, 'C')).toMatchObject({
+            visionVerified: true,
+            coverageComplete: true,
+            reporterSymptomPresence: 'absent',
+        });
+
+        const remaining = await runExtensionExperiment(RULE, {
+            modelOutput: {
+                ...intact,
+                symptom: 'not_resolved',
+                remainingInstances: [
+                    {
+                        artifactId: 'shot-c',
+                        landmark: 'Above the lyrics body.',
+                        description: 'The advertising banner is still shown.',
+                    },
+                ],
+            },
+        });
+
+        expect(remaining.verdict).not.toBe('verified');
+        expect(phaseCapture(remaining, 'C')).toMatchObject({ reporterSymptomPresence: 'present' });
+    });
+
+    it('names no failed check when the review itself could not decide', async () => {
+        // An undecided review says nothing about the symptom or the page; naming the checks it
+        // leaves open would tell the model the advertising stayed and the page broke.
+        const seen: ExperimentSeams = { probedSelectors: [], inventoryPhases: [] };
+        const undecided = await runExtensionExperiment(RULE, {
+            modelOutput: { ...CLEAN_UNCLEAR_OUTPUT, symptom: 'unclear' },
+            seen,
+        });
+
+        expect(undecided.verdict).toBe('inconclusive');
+        expect(seen.applyRuleResult).toMatchObject({
+            visualReview: { verdict: 'inconclusive' },
+            failedCandidateChecks: [],
+        });
+    });
+});
+
+/**
+ * How many elements a selector matches per phase when the filtered baseline does not render them.
+ *
+ * The selector finds nothing on the filtered baseline, while its inventory still reports the
+ * advertising: a vision reading copied from the reporter's screenshot once verified a rule that hid
+ * nothing.
+ *
+ * @param phase - The phase being probed.
+ * @returns No match in phase B, one elsewhere.
+ */
+function unmatchedOnBaseline(phase: 'A' | 'B' | 'C'): number {
+    return phase === 'B' ? 0 : 1;
+}
+
+describe('an extension experiment over a hiding selector the baseline does not match', () => {
+    const intact: CandidateVisualReviewModelOutput = {
+        ...CLEAN_UNCLEAR_OUTPUT,
+        pageIntegrity: 'intact',
+    };
+
+    it('ends at the baseline when the hiding selector matches nothing there', async () => {
+        const seen: ExperimentSeams = { probedSelectors: [], inventoryPhases: [] };
+        const experiment = await runExtensionExperiment('sarkisozleri.bbs.tr##.banner', {
+            modelOutput: intact,
+            targetCount: unmatchedOnBaseline,
+            seen,
+        });
+
+        expect(experiment).toMatchObject({
+            verdict: 'inconclusive',
+            inconclusiveReason: 'baseline_symptom_absent',
+        });
+        expect(experiment.phases.map((phase) => phase.phase)).toEqual(['A', 'B']);
+        expect(phaseCapture(experiment, 'B')).toMatchObject({ reporterSymptomPresence: 'absent' });
+        expect(seen.reviewCalled).toBeUndefined();
+        expect(seen.unmatchedBaselineSelector).toBe('.banner');
+    });
+
+    it('judges a selector the probe cannot measure as before', async () => {
+        const seen: ExperimentSeams = { probedSelectors: [], inventoryPhases: [] };
+        const experiment = await runExtensionExperiment(
+            'sarkisozleri.bbs.tr#?#div[class]:has(> span:contains(Download))',
+            {
+                modelOutput: intact,
+                probeSucceeded: false,
+                targetCount: unmatchedOnBaseline,
+                seen,
+            },
+        );
+
+        expect(experiment.verdict).toBe('verified');
+        expect(experiment.phases.map((phase) => phase.phase)).toEqual(['A', 'B', 'C']);
+        expect(seen.reviewCalled).toBe(true);
+        expect(seen.unmatchedBaselineSelector).toBeNull();
+    });
+
+    it('leaves an exception rule to the review', async () => {
+        const seen: ExperimentSeams = { probedSelectors: [], inventoryPhases: [] };
+        const experiment = await runExtensionExperiment('sarkisozleri.bbs.tr#@#.banner', {
+            modelOutput: intact,
+            targetCount: unmatchedOnBaseline,
+            seen,
+        });
+
+        expect(experiment.phases.map((phase) => phase.phase)).toEqual(['A', 'B', 'C']);
+        expect(seen.reviewCalled).toBe(true);
+        expect(seen.unmatchedBaselineSelector).toBeNull();
+    });
+    it.each([
+        {
+            case: 'a pseudo-element the page cannot query',
+            rule: 'sarkisozleri.bbs.tr#$#.ad-label::before { content: none !important; }',
+        },
+        {
+            case: 'a legacy pseudo-element',
+            rule: 'sarkisozleri.bbs.tr##.ad-label:after',
+        },
+        {
+            case: 'a legacy Extended CSS attribute',
+            rule: 'sarkisozleri.bbs.tr##div[-ext-has=".ad"]',
+        },
+    ])('judges a selector with $case as before', async ({ rule }) => {
+        // The page's querySelectorAll returns nothing for these without throwing, so an empty
+        // match says nothing about the rule.
+        const seen: ExperimentSeams = { probedSelectors: [], inventoryPhases: [] };
+        const experiment = await runExtensionExperiment(rule, {
+            modelOutput: intact,
+            targetCount: unmatchedOnBaseline,
+            seen,
+        });
+
+        expect(experiment.phases.map((phase) => phase.phase)).toEqual(['A', 'B', 'C']);
+        expect(seen.reviewCalled).toBe(true);
+        expect(seen.unmatchedBaselineSelector).toBeNull();
+    });
+
+    it('leaves an incorrect-blocking report to the review', async () => {
+        const seen: ExperimentSeams = { probedSelectors: [], inventoryPhases: [] };
+        const experiment = await runExtensionExperiment('sarkisozleri.bbs.tr##.banner', {
+            modelOutput: intact,
+            targetCount: unmatchedOnBaseline,
+            symptomKind: SymptomKind.Breakage,
+            seen,
+        });
+
+        expect(experiment.phases.map((phase) => phase.phase)).toEqual(['A', 'B', 'C']);
+        expect(seen.reviewCalled).toBe(true);
+        expect(seen.unmatchedBaselineSelector).toBeNull();
+    });
+
+    it('trusts no empty match on a baseline its reveal steps did not prepare', async () => {
+        const seen: ExperimentSeams = { probedSelectors: [], inventoryPhases: [] };
+        const experiment = await runExtensionExperiment('sarkisozleri.bbs.tr##.banner', {
+            modelOutput: intact,
+            targetCount: unmatchedOnBaseline,
+            reveal: { plan: ageDialogRevealPlan(), scripts: { B: { targetMissing: true } } },
+            seen,
+        });
+
+        expect(experiment.phases.map((phase) => phase.phase)).toEqual(['A', 'B', 'C']);
+        expect(seen.unmatchedBaselineSelector).toBeNull();
     });
 });
 
@@ -1571,7 +1814,7 @@ describe('an extension experiment carrying DOM checks', () => {
 
     it('measures the checks on the baseline and candidate pages the review compares', async () => {
         const evaluated: string[] = [];
-        const seen: ExperimentSeams = { probedSelectors: [] };
+        const seen: ExperimentSeams = { probedSelectors: [], inventoryPhases: [] };
         await runExtensionExperiment(RULE, {
             modelOutput: { ...CLEAN_UNCLEAR_OUTPUT, pageIntegrity: 'intact' },
             seen,
@@ -1615,7 +1858,7 @@ describe('an extension experiment carrying DOM checks', () => {
     });
 
     it('bounds an answer too large for the review', async () => {
-        const seen: ExperimentSeams = { probedSelectors: [] };
+        const seen: ExperimentSeams = { probedSelectors: [], inventoryPhases: [] };
         await runExtensionExperiment(RULE, {
             modelOutput: { ...CLEAN_UNCLEAR_OUTPUT, pageIntegrity: 'intact' },
             seen,
@@ -1638,7 +1881,7 @@ describe('an extension experiment carrying DOM checks', () => {
     });
 
     it('leaves the review without checks when apply_rule attached none', async () => {
-        const seen: ExperimentSeams = { probedSelectors: [] };
+        const seen: ExperimentSeams = { probedSelectors: [], inventoryPhases: [] };
         await runExtensionExperiment(RULE, { seen });
 
         expect(seen.reviewDomChecks).toBeUndefined();
@@ -1650,7 +1893,7 @@ describe('an extension experiment over a CSS injection candidate', () => {
     it("probes the rule's selector without its style block", async () => {
         // The probe used to receive `.banner { display: none !important; }`, which
         // querySelectorAll refuses, so CSS injection candidates carried no structural facts.
-        const seen: ExperimentSeams = { probedSelectors: [] };
+        const seen: ExperimentSeams = { probedSelectors: [], inventoryPhases: [] };
         await runExtensionExperiment(
             'sarkisozleri.bbs.tr#$#.banner { display: none !important; }',
             {
@@ -1667,7 +1910,7 @@ describe('an extension experiment over a candidate that names no element', () =>
     it('reports the target as not probed instead of visible', async () => {
         // A scriptlet leaves the probe measuring `body`; calling that the target would tell the
         // review and the model the target survived the candidate.
-        const seen: ExperimentSeams = { probedSelectors: [] };
+        const seen: ExperimentSeams = { probedSelectors: [], inventoryPhases: [] };
         await runExtensionExperiment(
             "sarkisozleri.bbs.tr#%#//scriptlet('set-constant', 'ads', 'false')",
             {
@@ -1864,7 +2107,7 @@ describe('an extension experiment on a page too tall for one full-page capture',
     });
 
     it('verifies a candidate whose baseline and candidate phases have no overview', async () => {
-        const seen: ExperimentSeams = { probedSelectors: [] };
+        const seen: ExperimentSeams = { probedSelectors: [], inventoryPhases: [] };
         const experiment = await runExtensionExperiment(
             '||increase-rev.cv3-ecf.workers.dev^$domain=sarkisozleri.bbs.tr',
             { overviewCaptured: false, seen },

@@ -15,6 +15,7 @@
 import { CandidateOperation } from '../environment/filtering-environment';
 import { EnvironmentSelectionState } from '../environment/environment-vocabulary';
 import { classifyObservedPageAccess } from '../environment/target-access';
+import { CandidateVisualVerdict } from '../types/candidate-visual-review';
 import { FixOutcomeKind, type FixOutcome } from '../types/fix-outcome';
 import { normalizeRule } from '../repo/rule-normalizer';
 import { ExtensionMode, type SymptomObservation } from '../types/fix-run-result';
@@ -26,7 +27,10 @@ import {
     candidateLedgerKey,
 } from './agent-runtime-candidate-context';
 import type { AgentRuntimeEnvironmentEvidence } from './agent-runtime-session-evidence';
-import { cliCandidateUnverifiedRejection } from './cli-candidate-experiment';
+import {
+    cliCandidateUnverifiedRejection,
+    experimentRefusalRejection,
+} from './candidate-experiment-verdict';
 import {
     judgeNoPatchSymptomMatrix,
     type TerminalSymptomPresenceEvidence,
@@ -370,7 +374,14 @@ export function validateTerminalOutcome(
     const validationOutcome = view.candidateValidationOutcome(ledgerKey);
     const validationArtifactId = validationOutcome?.validationArtifactId;
     const visionVerified =
-        validationArtifactId !== undefined && validationOutcome?.visualVerdict === 'verified';
+        validationArtifactId !== undefined &&
+        validationOutcome?.visualVerdict === CandidateVisualVerdict.Verified;
+    if (
+        validationOutcome?.reviewVerdict === CandidateVisualVerdict.Verified &&
+        validationOutcome.visualVerdict === CandidateVisualVerdict.Rejected
+    ) {
+        return experimentRefusalRejection(canonical, validationOutcome);
+    }
     if (!visionVerified) {
         const sameCandidateRetryAllowed = view.canRetryInconclusiveVisualReview(ledgerKey);
         let guidance: string[];
@@ -382,7 +393,7 @@ export function validateTerminalOutcome(
             ];
         } else {
             guidance = [
-                'Use the visualReview returned by apply_rule as the only candidate verification verdict.',
+                'Use the environmentExperiment returned by apply_rule as the only candidate verification verdict; visualReview says what the review saw.',
                 'Choose a semantically different candidate when the review rejected the rule, otherwise finish analysis_only.',
                 'Once no distinct candidate or attempt is left, on any report but incorrect blocking a rule the review rejected only for ad layout residue (adLayoutResidue present, symptom resolved or unclear, remainingInstances empty, pageIntegrity intact, observedDamage empty) finishes analysis_only as candidateForReview, the residue named in unverifiedReason; on an incorrect-blocking report residue means the exception brought ads back, and the rule is not carried.',
                 'Do not substitute a manual analyze_screenshot opinion for the runner-bound visualReview.',

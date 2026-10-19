@@ -32,7 +32,6 @@ import {
     PhaseLabel,
     type FactualValidationResult,
     type FullPageTileWindow,
-    type PhaseResult,
     type StructuralSnapshot,
 } from '../types/validation';
 import { resolveValidatedSelector } from '../validator/candidate-selector';
@@ -41,7 +40,6 @@ import {
     EnvironmentAdapterLimitationCode,
     EnvironmentLimitationStage,
     type EnvironmentArtifactReference,
-    type EnvironmentBrowserCapture,
     type ValidatorObservedPhaseCompletion,
     type ValidatorPhaseCompletion,
 } from './filtering-environment';
@@ -55,63 +53,20 @@ import {
     environmentArtifact,
     phaseCaptureFailed,
     persistFactualValidation,
-    phaseScreenshotIds,
     withExtensionRuleFacts,
 } from './extension-phase-records';
+import {
+    assembleObservedPhase,
+    tileCaptureComplete,
+    type ObservedExtensionPhase,
+} from './extension-phase-capture';
+import {
+    failedCandidateChecks,
+    reviewedPhase,
+    selectorMatchedNothing,
+    withoutBaselineSymptom,
+} from './candidate-phase-checks';
 import type { DomCheckMeasurement, DomCheckRecord } from '../types/dom-check';
-
-/**
- * Complete phase material retained until phase C can bind before/after evidence.
- */
-interface ObservedExtensionPhase {
-    /**
-     * Browser facts and artifact identities emitted by the shared phase runner.
-     */
-    result: PhaseResult;
-
-    /**
-     * Trusted structural snapshot for the candidate target.
-     */
-    structure: StructuralSnapshot;
-
-    /**
-     * Whether the probe measured a selector derived from the candidate rather than the whole
-     * document. A network candidate names no element, so its probe falls back to `body`, whose
-     * presence proves nothing about the content the reporter lost.
-     */
-    structureBoundToSelector: boolean;
-
-    /**
-     * Semantic presence of the reporter-defined symptom.
-     */
-    symptomPresence: ReporterSymptomPresence;
-
-    /**
-     * Whether the complete screenshot inventory was inspected.
-     */
-    visionVerified: boolean;
-
-    /**
-     * Persisted full-page visual inventory artifact.
-     */
-    inventoryArtifact: EnvironmentArtifactReference;
-
-    /**
-     * Canonical screenshot/HAR/DOM/vision references owned by this phase.
-     */
-    artifacts: EnvironmentArtifactReference[];
-
-    /**
-     * The phase's recorded requests, read back from its HAR artifact when the candidate is a host
-     * block the runner judges by them; empty otherwise.
-     */
-    network: NetworkRequestEntry[];
-
-    /**
-     * Compatibility capture projected from the canonical phase.
-     */
-    capture: EnvironmentBrowserCapture;
-}
 
 /**
  * The candidate target's presence in one phase, as the factual record states it.
@@ -180,6 +135,11 @@ export class BrowserExtensionAdsObserver {
      * What the DOM checks returned on the baseline page, kept until phase C pairs them.
      */
     private baselineDomChecks: DomCheckMeasurement[] = [];
+
+    /**
+     * The candidate's hiding selector when it matched nothing on the filtered baseline, else null.
+     */
+    private unmatchedSelector: string | null = null;
 
     constructor(private readonly options: BrowserExtensionAdsObserverOptions) {
         this.blockedHost = judgeableBlockedHost(
@@ -298,88 +258,42 @@ export class BrowserExtensionAdsObserver {
         if (input.phase === PhaseLabel.B) {
             this.baselineDomChecks = domChecks;
         }
-        const inventoryOptions: Parameters<typeof inspectFullPageVisualCapture>[0] = {
-            vision: this.options.vision,
-            reporterSymptom: this.options.reporterSymptom,
-            symptomKind: this.options.symptomKind ?? SymptomKind.Ads,
-            artifactsDir: this.options.artifactsDir,
-            recorder: this.options.recorder,
-            // The experiment's cancellation, so an expired apply_rule deadline cancels the batch's
-            // in-flight vision completion instead of paying out the rest of the images.
-            ...(input.signal === undefined ? {} : { signal: input.signal }),
-        };
-        const inventoryCapture: Parameters<typeof inspectFullPageVisualCapture>[1] = {
-            // Omitting the viewport screenshot fails the whole phase observation at the schema, not
-            // at the vision call; an overview the browser could not capture is simply absent.
-            artifactId: phaseResult.screenshotArtifactId,
-            fullPageArtifactId: phaseResult.fullPageScreenshotArtifactId,
-            tileCoverage: phaseResult.tileCoverage,
-        };
-        let visualInventory: Awaited<ReturnType<typeof inspectFullPageVisualCapture>>;
-        if (this.options.dependencies?.inspectFullPageVisualCapture) {
-            visualInventory = await this.options.dependencies.inspectFullPageVisualCapture(
-                input,
-                inventoryOptions,
-                inventoryCapture,
-            );
-        } else {
-            visualInventory = await inspectFullPageVisualCapture(
-                inventoryOptions,
-                inventoryCapture,
-            );
-        }
-        const inventoryArtifact = environmentArtifact(
-            this.options.recorder,
-            visualInventory.artifactId,
-            'vision',
-        );
-        const screenshots = phaseScreenshotIds(phaseResult).map((artifactId) =>
-            environmentArtifact(this.options.recorder, artifactId, 'screenshot'),
-        );
-        const har = environmentArtifact(this.options.recorder, phaseResult.harArtifactId, 'har');
-        const dom = environmentArtifact(this.options.recorder, phaseResult.domArtifactId, 'dom');
-        const network = this.blockedHost === undefined ? [] : this.readPhaseNetworkLog(input, har);
-        const interactionArtifact = this.interactionReplay?.artifactOf(input.phase);
-        const viewport = screenshots.find(
-            (artifact) => artifact.artifactId === phaseResult.screenshotArtifactId,
-        );
-        const fullPage = screenshots.find(
-            (artifact) => artifact.artifactId === phaseResult.fullPageScreenshotArtifactId,
-        );
-        const tileArtifacts =
-            phaseResult.tileCoverage?.tiles.map((tile) =>
-                environmentArtifact(this.options.recorder, tile.artifactId, 'screenshot'),
-            ) ?? [];
-        const observed: ObservedExtensionPhase = {
-            result: phaseResult,
-            structure,
-            structureBoundToSelector: selector.length > 0,
-            symptomPresence: visualInventory.inventory.reporterSymptomPresence,
-            visionVerified: visualInventory.coverageComplete,
-            inventoryArtifact,
-            artifacts: [
-                ...screenshots,
-                har,
-                dom,
-                inventoryArtifact,
-                ...(interactionArtifact ? [interactionArtifact] : []),
-            ],
-            network,
-            capture: {
-                visionVerified: visualInventory.coverageComplete,
-                viewportArtifactId: viewport?.artifactId ?? null,
-                viewport: viewport?.path ?? null,
-                fullPageOverviewArtifactId: fullPage?.artifactId ?? null,
-                fullPageOverview: fullPage?.path ?? null,
-                tileArtifactIds: tileArtifacts.map((artifact) => artifact.artifactId),
-                tiles: tileArtifacts.map((artifact) => artifact.path),
-                coverageComplete: visualInventory.coverageComplete,
-                reporterSymptomPresence: visualInventory.inventory.reporterSymptomPresence,
+        let observed = await assembleObservedPhase(
+            {
+                result: phaseResult,
+                structure,
+                structureBoundToSelector: selector.length > 0,
+                interactionArtifact: this.interactionReplay?.artifactOf(input.phase),
             },
-        };
+            {
+                recorder: this.options.recorder,
+                readNetworkLog:
+                    this.blockedHost === undefined
+                        ? null
+                        : (har) => this.readPhaseNetworkLog(input, har),
+                inspectCapture: (capture) => this.inspectPhaseCapture(input, capture),
+            },
+        );
+        // An empty match on a page the reveal steps never prepared says nothing about the rule.
+        if (
+            input.phase === PhaseLabel.B &&
+            (this.interactionReplay?.performedIn(PhaseLabel.B) ?? true) &&
+            selectorMatchedNothing(
+                this.options.candidateRule,
+                this.options.symptomKind ?? SymptomKind.Ads,
+                observed.structure,
+                observed.structureBoundToSelector,
+            )
+        ) {
+            // The rule has nothing to hide here, whatever the inventory read from the images.
+            this.unmatchedSelector = selector;
+            observed = withoutBaselineSymptom(observed);
+        }
         this.phases.set(input.phase, observed);
-        if (input.phase !== PhaseLabel.C) {
-            return this.phaseCompletion(input, observed, null, null);
+        // The baseline phases complete on their own inventory; the candidate phase has none and
+        // waits for the paired review.
+        if (observed.inventoryVision !== null) {
+            return this.phaseCompletion(input, observed, observed.inventoryVision, null, null);
         }
         return await this.candidateCompletion(
             input,
@@ -399,6 +313,15 @@ export class BrowserExtensionAdsObserver {
      */
     result(): Record<string, unknown> | null {
         return this.applyRuleResult ? structuredClone(this.applyRuleResult) : null;
+    }
+
+    /**
+     * Return the candidate's hiding selector when it matched nothing on the filtered baseline.
+     *
+     * @returns The selector, or null when the baseline measurement found it or did not decide.
+     */
+    unmatchedBaselineSelector(): string | null {
+        return this.unmatchedSelector;
     }
 
     /**
@@ -448,6 +371,36 @@ export class BrowserExtensionAdsObserver {
             return this.options.dependencies.readPhaseNetworkLog(input, har);
         }
         return JSON.parse(readFileSync(har.path, 'utf8')) as NetworkRequestEntry[];
+    }
+
+    /**
+     * Inspect one baseline phase's capture through the single-image inventory.
+     *
+     * @param input - The phase being observed.
+     * @param capture - The phase's viewport, overview and tile identities.
+     * @returns The phase's visual inventory.
+     */
+    private async inspectPhaseCapture(
+        input: AdsEnvironmentPhaseObservationInput,
+        capture: Parameters<typeof inspectFullPageVisualCapture>[1],
+    ): ReturnType<typeof inspectFullPageVisualCapture> {
+        const inventoryOptions: Parameters<typeof inspectFullPageVisualCapture>[0] = {
+            vision: this.options.vision,
+            reporterSymptom: this.options.reporterSymptom,
+            symptomKind: this.options.symptomKind ?? SymptomKind.Ads,
+            artifactsDir: this.options.artifactsDir,
+            recorder: this.options.recorder,
+            // The experiment's cancellation, so an expired apply_rule deadline cancels the batch's
+            // in-flight vision completion instead of paying out the rest of the images.
+            ...(input.signal === undefined ? {} : { signal: input.signal }),
+        };
+        return this.options.dependencies?.inspectFullPageVisualCapture
+            ? await this.options.dependencies.inspectFullPageVisualCapture(
+                  input,
+                  inventoryOptions,
+                  capture,
+              )
+            : await inspectFullPageVisualCapture(inventoryOptions, capture);
     }
 
     /**
@@ -506,6 +459,8 @@ export class BrowserExtensionAdsObserver {
      *
      * @param input - Adapter phase and proof.
      * @param observed - Browser and vision material for this phase.
+     * @param vision - The vision record deciding the phase: the inventory for A/B, the review for
+     *   C.
      * @param visualReview - Candidate visual review for C.
      * @param candidateValidation - Candidate binding for C.
      * @returns Complete common phase outcome.
@@ -513,6 +468,7 @@ export class BrowserExtensionAdsObserver {
     private phaseCompletion(
         input: AdsEnvironmentPhaseObservationInput,
         observed: ObservedExtensionPhase,
+        vision: ValidatorObservedPhaseCompletion['vision'],
         visualReview: CandidateVisualReview | null,
         candidateValidation: ValidatorObservedPhaseCompletion['candidateValidation'],
     ): ValidatorPhaseCompletion {
@@ -532,18 +488,6 @@ export class BrowserExtensionAdsObserver {
                     normalizeRule(this.options.candidateRule).kind === RuleKind.Cosmetic
                         ? SelectorSource.Rule
                         : SelectorSource.AdElementSelector,
-            };
-        }
-        let vision: ValidatorObservedPhaseCompletion['vision'];
-        if (visualReview === null) {
-            vision = {
-                artifactId: observed.inventoryArtifact.artifactId,
-                verdict: observed.visionVerified ? 'verified' : 'inconclusive',
-            };
-        } else {
-            vision = {
-                artifactId: candidateValidation!.visualReviewArtifact!.artifactId,
-                verdict: visualReview.verdict,
             };
         }
         return {
@@ -572,7 +516,7 @@ export class BrowserExtensionAdsObserver {
      * Build factual compatibility data and the semantic candidate binding for phase C.
      *
      * @param input - Adapter phase C proof and session.
-     * @param candidatePhase - Observed phase C material.
+     * @param candidatePhase - Observed phase C material, its symptom undecided until the review.
      * @param domChecks - The attached DOM checks with what they returned in B and C; empty for
      *   none.
      * @returns Complete phase C outcome.
@@ -659,8 +603,8 @@ export class BrowserExtensionAdsObserver {
                 ruleKind: normalizeRule(this.options.candidateRule).kind,
                 adElementStatus: factual.adElementStatus,
                 captureCoverage: {
-                    before: control.visionVerified,
-                    after: candidatePhase.visionVerified,
+                    before: tileCaptureComplete(control.result),
+                    after: tileCaptureComplete(candidatePhase.result),
                 },
             }),
             ...(domChecks.length > 0 ? { domChecks } : {}),
@@ -678,6 +622,18 @@ export class BrowserExtensionAdsObserver {
             visual.artifactId,
             'vision',
         );
+        const judged = reviewedPhase(candidatePhase, visual.review);
+        this.phases.set(PhaseLabel.C, judged);
+        const reviewVerified = visual.review.verdict === CandidateVisualVerdict.Verified;
+        const failedChecks = failedCandidateChecks({
+            navigationVerified: judged.result.error === undefined,
+            symptomPresent: this.symptomPresentInPhase(judged),
+            pageUsable: isCandidateVisualPageUsable(visual.review),
+            // Reveal steps that diverged left the two phases in different states, so whatever the
+            // captures show is explained by that difference rather than by the candidate. The
+            // divergence stays in the evidence; only the claim of proof is withdrawn.
+            preparedAlike: this.interactionReplay?.preparedAlike() ?? true,
+        });
         const screenshots = candidateScreenshotArtifacts(
             this.options.recorder,
             phaseBResult,
@@ -687,19 +643,12 @@ export class BrowserExtensionAdsObserver {
             validationArtifactId: validationArtifact.artifactId,
             candidateDigest: input.proof.candidateDigest,
             candidateRule: this.options.candidateRule,
-            verified:
-                visual.review.verdict === CandidateVisualVerdict.Verified &&
-                !this.symptomPresentInPhase(candidatePhase) &&
-                isCandidateVisualPageUsable(visual.review) &&
-                // Reveal steps that diverged left the two phases in different states, so whatever
-                // the captures show is explained by that difference rather than by the candidate.
-                // The divergence stays in the evidence; only the claim of proof is withdrawn.
-                (this.interactionReplay?.preparedAlike() ?? true),
+            verified: reviewVerified && failedChecks.length === 0,
             ...screenshots,
             validationArtifact,
             visualReviewArtifact,
         };
-        candidatePhase.artifacts.push(validationArtifact, visualReviewArtifact);
+        judged.artifacts.push(validationArtifact, visualReviewArtifact);
         this.applyRuleResult = {
             ...factual,
             evidenceMode: 'collect_only',
@@ -710,8 +659,18 @@ export class BrowserExtensionAdsObserver {
             validationArtifactId: validationArtifact.artifactId,
             visualReview: visual.review,
             visualReviewArtifactId: visual.artifactId,
+            // Only a verified review has its verdict withdrawn by a check. An undecided review
+            // leaves the symptom and the page open, and naming those checks would tell the model
+            // the symptom stayed and the page broke.
+            failedCandidateChecks: reviewVerified ? failedChecks : [],
             ...(this.interactionReplay ? { revealSteps: this.interactionReplay.projection() } : {}),
         };
-        return this.phaseCompletion(input, candidatePhase, visual.review, candidateValidation);
+        return this.phaseCompletion(
+            input,
+            judged,
+            { artifactId: visualReviewArtifact.artifactId, verdict: visual.review.verdict },
+            visual.review,
+            candidateValidation,
+        );
     }
 }

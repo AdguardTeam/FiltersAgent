@@ -223,6 +223,16 @@ export class InteractionReplay {
     }
 
     /**
+     * Decide whether one phase performed every step of the plan.
+     *
+     * @param phase - Phase whose replay is asked about.
+     * @returns True when the phase replayed the plan to completion.
+     */
+    performedIn(phase: EnvironmentPhase): boolean {
+        return this.records.get(phase)?.status === SafeInteractionRecordStatus.Completed;
+    }
+
+    /**
      * Decide whether the baseline and candidate phases reached the same prepared page.
      *
      * Both must have performed every step, and the candidate's sequence must match the baseline's

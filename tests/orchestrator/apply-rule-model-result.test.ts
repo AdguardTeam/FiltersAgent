@@ -1,10 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
     applyRuleResultForModel,
-    baselineSymptomAbsentAnswer,
     environmentLimitationAnswer,
 } from '../../src/orchestrator/apply-rule-model-result';
-import { SelectorSource } from '../../src/types/overruled-selector';
 import { AdsEnvironmentExperimentVerdict } from '../../src/validator/ads-environment-experiment-result';
 import { CandidateRefusalKind } from '../../src/orchestrator/candidate-refusals';
 import { MAX_TOOL_RESULT_BYTES } from '../../src/pi/tool-result-envelope';
@@ -26,14 +24,21 @@ describe('applyRuleResultForModel', () => {
             validationArtifactId: 'validation-0123456789ab-execution-0123456789abcdef',
             visualReview: REVIEW,
             visualReviewArtifactId: 'visual-review-0123456789ab',
+            failedCandidateChecks: [],
+            environmentExperiment: AdsEnvironmentExperimentVerdict.Inconclusive,
         };
 
         const projected = applyRuleResultForModel(result);
         const serialized = JSON.stringify(projected);
 
         expect(Buffer.byteLength(serialized, 'utf8')).toBeLessThanOrEqual(MAX_TOOL_RESULT_BYTES);
-        // The decision leads the object, so even a reader of its head meets the verdict.
-        expect(Object.keys(projected)[0]).toBe('visualReview');
+        // The decision leads the object, so even a reader of its head meets the verdict: the
+        // experiment's own first, then the checks that decided it, then the review.
+        expect(Object.keys(projected).slice(0, 3)).toEqual([
+            'environmentExperiment',
+            'failedCandidateChecks',
+            'visualReview',
+        ]);
         expect(projected.visualReview).toEqual(REVIEW);
         expect(projected.omittedEvidence).toMatchObject({ keys: ['structureFacts'] });
         expect((projected.omittedEvidence as { note: string }).note).toContain(
@@ -43,6 +48,7 @@ describe('applyRuleResultForModel', () => {
 
     it('passes a result that fits through with nothing left out', () => {
         const result = {
+            environmentExperiment: AdsEnvironmentExperimentVerdict.Inconclusive,
             phaseB: { url: 'https://example.com/' },
             visualReview: REVIEW,
             validationArtifactId: 'validation-0123456789ab',
@@ -91,27 +97,5 @@ describe('environmentLimitationAnswer', () => {
         const answer = environmentLimitationAnswer({ ...earlier }, earlier);
 
         expect(answer).toMatchObject({ repeatedFailure: true, retryable: false });
-    });
-});
-
-describe('baselineSymptomAbsentAnswer', () => {
-    it.each([
-        { source: SelectorSource.Rule, dropAdvised: false },
-        { source: SelectorSource.AdElementSelector, dropAdvised: true },
-    ])('advises dropping adElementSelector only when the model passed it: $source', (row) => {
-        const answer = baselineSymptomAbsentAnswer({
-            verdict: AdsEnvironmentExperimentVerdict.Inconclusive,
-            phases: ['A', 'B'],
-            seen: 1,
-            blockedHost: undefined,
-            revealSteps: null,
-            revealStepsRequested: false,
-            overruledSelector: { selector: '.player', source: row.source },
-        });
-
-        // Telling the model to drop a selector it never passed repeats the same experiment.
-        const guidance = (answer.guidance as string[]).join(' ');
-        expect(guidance.includes('without adElementSelector')).toBe(row.dropAdvised);
-        expect(guidance).toContain('.player');
     });
 });

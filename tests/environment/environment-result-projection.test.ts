@@ -8,6 +8,8 @@ import type {
 } from '../../src/environment/filtering-environment';
 import { BlockerVerificationMethod } from '../../src/environment/environment-proofs';
 import { projectEnvironmentResult } from '../../src/environment/environment-result-projection';
+import { ExtensionLaunchFamily } from '../../src/environment/extension-launch';
+import { SIGNED_XPI_BUILD_MARKER } from '../../src/environment/firefox-phase-evidence';
 
 const baselineDigest = 'd'.repeat(64);
 const candidateDigest = 'c'.repeat(64);
@@ -353,6 +355,46 @@ function execution(
     });
 }
 
+/**
+ * Reshape an extension execution into what a Firefox signed-XPI run records: the adapter reads no
+ * product version, the phase proofs carry the signed-XPI marker, and the provenance names the
+ * force-installed XPI rather than an unpacked directory.
+ *
+ * @param input - Extension execution fixture to reshape in place.
+ * @param productVersion - The product version the run's context reports.
+ * @returns The reshaped execution.
+ */
+function firefoxShaped(
+    input: FilteringEnvironmentExecution,
+    productVersion: string | null,
+): FilteringEnvironmentExecution {
+    const context = {
+        ...input.actualContext,
+        product: 'uBlock0@raymondhill.net',
+        browser: 'Playwright Firefox',
+        productVersion,
+    };
+    input.actualContext = context;
+    for (const item of input.phases) {
+        item.proof.actualContext = { ...context };
+        const extension = item.proof.extension;
+        if (extension) {
+            extension.packageVersion = SIGNED_XPI_BUILD_MARKER;
+            extension.manifestVersion = SIGNED_XPI_BUILD_MARKER;
+            extension.activeRulesetListKeys = null;
+            extension.stealthEnabled = null;
+            extension.provenance = {
+                source: 'instruction',
+                launchFamily: ExtensionLaunchFamily.Firefox,
+                extensionId: 'uBlock0@raymondhill.net',
+                xpiPath: '/tmp/cache/ublock-origin.firefox.signed.xpi',
+                extensionSourceSha256: 'e'.repeat(64),
+            };
+        }
+    }
+    return input;
+}
+
 describe('projectEnvironmentResult', () => {
     it('selects the latest matching verified A/B/C experiment and binds canonical artifacts', () => {
         const older = ['A', 'B', 'C'].map((value) =>
@@ -596,6 +638,44 @@ describe('projectEnvironmentResult', () => {
             beforeFullPage: '/artifacts/full-B.png',
             afterFullPage: '/artifacts/full-C.png',
         });
+    });
+
+    it.each([
+        ['a verified', { status: 'verified', candidateDigest, failure: null }, true],
+        [
+            'an inconclusive',
+            { status: 'inconclusive', candidateDigest: null, failure: null },
+            false,
+        ],
+    ] as const)(
+        'binds %s Firefox signed-XPI experiment, which reports no product version',
+        (_name, disposition, verified) => {
+            const phases = [
+                phase('A'),
+                phase('B'),
+                phase('C', 'experiment-1', { candidateVerified: verified }),
+            ];
+            const projected = projectEnvironmentResult(
+                firefoxShaped(execution(phases, disposition), null),
+            );
+
+            expect(projected?.browserSessions).toHaveLength(3);
+            expect(projected?.candidateValidationEvidence !== undefined).toBe(verified);
+        },
+    );
+
+    it('refuses a Firefox signed-XPI experiment whose context claims a product version', () => {
+        expect(projectEnvironmentResult(firefoxShaped(execution(), '1.62.0'))).toBeNull();
+    });
+
+    it('refuses a Chromium experiment whose context names another build version', () => {
+        const input = execution();
+        input.actualContext.productVersion = '5.5.2.4';
+        for (const item of input.phases) {
+            item.proof.actualContext = { ...input.actualContext };
+        }
+
+        expect(projectEnvironmentResult(input)).toBeNull();
     });
 
     it('rejects a CLI experiment whose proof version diverges from the actual context', () => {

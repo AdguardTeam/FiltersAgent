@@ -3,7 +3,8 @@ import { ReporterSymptomPresence } from '../types/reporter-symptom-presence';
 
 /**
  * What one phase shows of a breakage symptom: the probe of the candidate's selector and vision's
- * single-state reading.
+ * reading of the phase — the single-snapshot inventory for the baselines A and B, the paired
+ * before/after review for the candidate phase C.
  */
 export interface BreakageSymptomObservation {
     /**
@@ -18,7 +19,8 @@ export interface BreakageSymptomObservation {
     structureBoundToSelector: boolean;
 
     /**
-     * Vision's reading of the reporter-defined symptom in the phase.
+     * Vision's reading of the reporter-defined symptom in the phase: the inventory's for A and B,
+     * the paired review's for C.
      */
     symptomPresence: ReporterSymptomPresence;
 }
@@ -26,15 +28,17 @@ export interface BreakageSymptomObservation {
 /**
  * Decide whether a phase shows a breakage symptom when the probe measured the named element.
  *
- * A breakage symptom is the absence of content, and single-state vision judges it badly: it
- * recognises the element the reporter named and reports the symptom present in every state, intact
- * or not. There the probe's geometry is the objective answer — hidden means broken, visible means
- * restored.
+ * A breakage symptom is the absence of content, and single-snapshot vision judges it badly: the
+ * inventory that reads the baselines recognises the element the reporter named and reports the
+ * symptom present in every state, intact or not. There the probe's geometry is the objective answer
+ * — hidden means broken, visible means restored — and it decides the candidate phase too, whose
+ * reading comes from the paired review instead.
  *
  * Geometry answers only whether the named element renders, though. An anti-adblock wall drawn
  * inside a player iframe leaves the iframe as visible as on the healthy page, so the geometry calls
  * the baseline clean while vision sees the wall. Vision's failure mode never separates the phases,
- * so when it calls the unfiltered control clean and this phase broken, it saw something the probe
+ * so when the control's inventory calls the unfiltered page clean and this phase's reading — its
+ * own inventory for B, the paired review for C — calls it broken, vision saw something the probe
  * cannot measure, and the symptom is present. This only ever turns a clean reading into a broken
  * one: it lets a baseline be judged, and it keeps a candidate unverified when vision still sees the
  * breakage in its phase, however the element renders there; it never verifies one.
