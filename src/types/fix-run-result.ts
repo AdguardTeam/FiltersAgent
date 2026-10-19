@@ -1468,13 +1468,6 @@ export type VerifiedCandidateScreenshotPaths = v.InferOutput<
 >;
 
 /**
- * Exact aligned viewport/full-page screenshots and bound review for one rejected candidate.
- */
-export type RejectedCandidateScreenshotPaths = v.InferOutput<
-    typeof RejectedCandidateScreenshotPathsSchema
->;
-
-/**
  * Files persisted while investigating and validating the issue.
  */
 export type FixRunArtifactPaths = v.InferOutput<typeof FixRunArtifactPathsSchema>;

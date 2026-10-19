@@ -31,7 +31,6 @@ import {
 } from './candidate-validation-selection';
 import {
     RuleApplicationFactSchema,
-    ValidationViewportPositionSchema,
     type PhaseResult,
     type RuleApplicationFact,
 } from '../types/validation';
@@ -99,9 +98,8 @@ function parseRuleApplications(phase: Record<string, unknown>): RuleApplicationF
 /**
  * Check that one phase ledger is an exact, duplicate-free partition of trusted input rules.
  *
- * `ruleApplications` retains the exact input order and explicitly accounts for safely unsupported
- * rules; `appliedRules` must name exactly its applied entries, in whatever order the producing
- * route ran them (`appliedRulesMatch`).
+ * `ruleApplications` retains the exact input order; `appliedRules` must name exactly its applied
+ * entries, in whatever order the producing route ran them (`appliedRulesMatch`).
  *
  * @param phase - Untrusted factual phase record.
  * @param expectedRules - Exact trusted rules supplied to the phase.
@@ -355,42 +353,10 @@ export function candidatePatchVerificationRefusal(
         return 'phase C changed the baseline rule applications of phase B';
     }
 
-    const controlViewportId = phaseC.sameDocumentControlScreenshotArtifactId;
-    const controlFullPageId = phaseC.sameDocumentControlFullPageScreenshotArtifactId;
-    const hasAnySameDocumentControl =
-        typeof controlViewportId === 'string' || typeof controlFullPageId === 'string';
-    let beforeViewportId = phaseB.screenshotArtifactId;
-    let beforeFullPageId = phaseB.fullPageScreenshotArtifactId;
-    if (hasAnySameDocumentControl) {
-        const parsedControlViewport = v.safeParse(
-            ValidationViewportPositionSchema,
-            phaseC.sameDocumentControlViewport,
-        );
-        const parsedCandidateViewport = v.safeParse(
-            ValidationViewportPositionSchema,
-            phaseC.candidateViewport,
-        );
-        if (
-            phaseC.sameDocumentControlError ||
-            typeof controlViewportId !== 'string' ||
-            controlViewportId.length === 0 ||
-            typeof controlFullPageId !== 'string' ||
-            controlFullPageId.length === 0 ||
-            !parsedControlViewport.success ||
-            !parsedCandidateViewport.success ||
-            Math.abs(parsedControlViewport.output.x - parsedCandidateViewport.output.x) > 1 ||
-            Math.abs(parsedControlViewport.output.y - parsedCandidateViewport.output.y) > 1
-        ) {
-            return 'the same-document control capture is incomplete or misaligned';
-        }
-        beforeViewportId = controlViewportId;
-        beforeFullPageId = controlFullPageId;
-    }
-
     if (
-        review.beforeViewportArtifactId !== beforeViewportId ||
+        review.beforeViewportArtifactId !== phaseB.screenshotArtifactId ||
         review.afterViewportArtifactId !== phaseC.screenshotArtifactId ||
-        review.beforeFullPageArtifactId !== (beforeFullPageId ?? null) ||
+        review.beforeFullPageArtifactId !== (phaseB.fullPageScreenshotArtifactId ?? null) ||
         review.afterFullPageArtifactId !== (phaseC.fullPageScreenshotArtifactId ?? null)
     ) {
         return 'the visual review screenshots are not the phase artifacts';

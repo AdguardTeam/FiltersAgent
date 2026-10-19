@@ -19,7 +19,6 @@ import {
     type CandidatePatch,
     type FixRunArtifactPaths,
     type FixRunResult,
-    type RejectedCandidateScreenshotPaths,
     type VerifiedCandidateScreenshotPaths,
 } from '../types/fix-run-result';
 import { InfrastructureFailureReason } from '../types/infrastructure-failure-reason';
@@ -119,19 +118,6 @@ export interface FixRunResultAssembly {
     selectedValidation: CandidateValidationSelection | undefined;
 
     /**
-     * Representative evidence for a candidate the review refused, when the core selected one.
-     */
-    rejectedCandidateScreenshots: RejectedCandidateScreenshotPaths | undefined;
-
-    /**
-     * Whether the result's visual review comes from the verified selection rather than the rejected
-     * representative.
-     *
-     * The core decides it and the assembly only obeys.
-     */
-    visualReviewFromVerifiedCandidate: boolean;
-
-    /**
      * Persisted trace path.
      */
     tracePath: string;
@@ -199,13 +185,12 @@ function assembleArtifactPaths(assembly: FixRunResultAssembly): FixRunArtifactPa
         artifacts,
         candidatePatch,
         candidateVerified,
-        rejectedCandidateScreenshots,
         selectedValidation,
         verifiedScreenshots,
     } = assembly;
-    const visualReviewArtifactPath = assembly.visualReviewFromVerifiedCandidate
+    const visualReviewArtifactPath = candidateVerified
         ? selectedValidation?.visualReviewArtifactPath
-        : rejectedCandidateScreenshots?.visualReviewArtifactPath;
+        : undefined;
     return {
         screenshots: artifacts
             .filter((artifact) => RESULT_SCREENSHOT_ARTIFACT_TYPES.includes(artifact.type))
@@ -229,22 +214,19 @@ function assembleArtifactPaths(assembly: FixRunResultAssembly): FixRunArtifactPa
         ...(candidatePatch && candidateVerified && verifiedScreenshots
             ? { verifiedCandidateScreenshots: verifiedScreenshots }
             : {}),
-        ...(rejectedCandidateScreenshots ? { rejectedCandidateScreenshots } : {}),
     };
 }
 
 /**
  * Choose the visual review the serialized result carries.
  *
- * @param assembly - The run's evidence and the core's choice of source.
- * @returns The verified or rejected review, or undefined when the run produced neither.
+ * @param assembly - The run's evidence.
+ * @returns The verified candidate's review, or undefined when no candidate was verified.
  */
 function assembleCandidateVisualReview(
     assembly: FixRunResultAssembly,
 ): CandidateVisualReview | undefined {
-    return assembly.visualReviewFromVerifiedCandidate
-        ? assembly.selectedValidation?.visualReview
-        : assembly.rejectedCandidateScreenshots?.visualReview;
+    return assembly.candidateVerified ? assembly.selectedValidation?.visualReview : undefined;
 }
 
 /**

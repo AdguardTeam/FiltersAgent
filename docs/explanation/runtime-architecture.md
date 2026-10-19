@@ -241,9 +241,11 @@ mismatched ownership, manifest, or visibility state. There is no cleanup CLI.
   their model-facing guidance. A tool name is declared once in `ToolName` and the guidance map is
   total over it, so a new tool or a typo is a compile error; `tool-factory.ts` and
   `tool-registry.ts` build the per-mode surfaces from them.
-- `src/validator/` — `rule-applicator.ts` (pattern and selector extraction, rule-kind dispatch),
+- `src/validator/` — `candidate-selector.ts` (the selector a candidate's evidence is bound to),
   `anti-adblock-check.ts` (anti-adblock wall detection through `evaluate_js`) and
-  `phase-orchestrator.ts` (three-phase A/B/C validation returning `FactualValidationResult`); the
+  `phase-orchestrator.ts` (the A/B/C experiment over blocker-established filtering states),
+  `phase-capture.ts` (the capture of one phase) and `structural-snapshot.ts` (the target and
+  landmark structure probe); the blocker, never the validator, applies the rules. The
   `apply_rule` tool is registered in `src/agent/tool-factory.ts`.
 - `src/analyzer/site-analyzer.ts` — `SiteAnalyzer`, the findings accumulator the `report_finding`
   tool fills; `src/types/site-analysis.ts` holds its Valibot schemas.

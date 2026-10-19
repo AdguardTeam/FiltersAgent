@@ -51,7 +51,7 @@ export interface CandidateValidationSelection {
     visualReviewArtifactPath?: string;
 
     /**
-     * Phase C same-document control viewport screenshot identifier, when present.
+     * Phase B viewport screenshot identifier, when present.
      */
     beforeScreenshotArtifactId?: string;
 
@@ -208,21 +208,12 @@ export function selectCandidateValidation(
             }
             const screenshotArtifactId = phaseC?.screenshotArtifactId;
             const fullPageScreenshotArtifactId = phaseC?.fullPageScreenshotArtifactId;
-            const controlScreenshotArtifactId = phaseC?.sameDocumentControlScreenshotArtifactId;
-            const controlFullPageScreenshotArtifactId =
-                phaseC?.sameDocumentControlFullPageScreenshotArtifactId;
-            const hasSameDocumentControlScreenshot =
-                typeof controlScreenshotArtifactId === 'string' ||
-                typeof controlFullPageScreenshotArtifactId === 'string';
-            const beforeScreenshotArtifactIds = hasSameDocumentControlScreenshot
-                ? [controlScreenshotArtifactId, controlFullPageScreenshotArtifactId]
-                : [phaseB?.screenshotArtifactId, phaseB?.fullPageScreenshotArtifactId];
-            const beforeViewportArtifactId = hasSameDocumentControlScreenshot
-                ? controlScreenshotArtifactId
-                : phaseB?.screenshotArtifactId;
-            const beforeFullPageArtifactId = hasSameDocumentControlScreenshot
-                ? controlFullPageScreenshotArtifactId
-                : phaseB?.fullPageScreenshotArtifactId;
+            const beforeViewportArtifactId = phaseB?.screenshotArtifactId;
+            const beforeFullPageArtifactId = phaseB?.fullPageScreenshotArtifactId;
+            const beforeScreenshotArtifactIds = [
+                beforeViewportArtifactId,
+                beforeFullPageArtifactId,
+            ];
             let visualReviewArtifact: ArtifactRef | undefined;
             for (let reviewIndex = artifacts.length - 1; reviewIndex >= 0; reviewIndex -= 1) {
                 const candidate = artifacts[reviewIndex];

@@ -13,7 +13,6 @@ import {
     FactualValidationResultSchema,
     type FactualValidationResult,
     type FullPageTileCoverage,
-    type PhaseResult,
 } from '../types/validation';
 import type { CandidateVisualDocumentSize } from './candidate-visual-evidence';
 import { mapCandidateOverviews } from '../types/candidate-screenshot-paths';
@@ -400,61 +399,10 @@ function parseFactualValidation(
 }
 
 /**
- * Determine whether Phase C contains every field needed for a same-document pair.
- *
- * @param phaseC - Parsed Phase C factual result.
- * @returns Whether both screenshot IDs and both viewport coordinates are present.
- */
-function hasCompleteSameDocumentPair(phaseC: PhaseResult): boolean {
-    return (
-        typeof phaseC.sameDocumentControlScreenshotArtifactId === 'string' &&
-        phaseC.sameDocumentControlScreenshotArtifactId.length > 0 &&
-        typeof phaseC.sameDocumentControlFullPageScreenshotArtifactId === 'string' &&
-        phaseC.sameDocumentControlFullPageScreenshotArtifactId.length > 0 &&
-        phaseC.sameDocumentControlViewport !== undefined &&
-        phaseC.candidateViewport !== undefined
-    );
-}
-
-/**
- * Determine whether Phase C contains any same-document capture field.
- *
- * @param phaseC - Parsed Phase C factual result.
- * @returns Whether the runner attempted to bind a same-document control pair.
- */
-function hasAnySameDocumentEvidence(phaseC: PhaseResult): boolean {
-    return (
-        phaseC.sameDocumentControlScreenshotArtifactId !== undefined ||
-        phaseC.sameDocumentControlFullPageScreenshotArtifactId !== undefined ||
-        phaseC.sameDocumentControlTileCoverage !== undefined ||
-        phaseC.sameDocumentControlViewport !== undefined ||
-        phaseC.candidateViewport !== undefined ||
-        phaseC.sameDocumentControlError !== undefined
-    );
-}
-
-/**
- * Assert that a complete Phase C same-document capture is aligned and error-free.
- *
- * @param phaseC - Parsed Phase C factual result.
- */
-function assertAlignedSameDocumentPair(phaseC: PhaseResult): void {
-    if (phaseC.sameDocumentControlError !== undefined) {
-        throw new Error('Factual validation contains a same-document control error.');
-    }
-    const before = phaseC.sameDocumentControlViewport;
-    const after = phaseC.candidateViewport;
-    if (!before || !after || Math.abs(before.x - after.x) > 1 || Math.abs(before.y - after.y) > 1) {
-        throw new Error('Factual validation has no aligned same-document viewport pair.');
-    }
-}
-
-/**
  * Resolve the latest runner-owned factual validation and its visual before/after evidence.
  *
- * This function performs artifact identity, containment, type, completeness, and alignment checks
- * only. It deliberately makes no semantic judgment about whether the candidate fixed or damaged the
- * page.
+ * This function performs artifact identity, containment, type, and completeness checks only. It
+ * deliberately makes no semantic judgment about whether the candidate fixed or damaged the page.
  *
  * @param options - Runner artifact root, registry, and selected validation artifact ID.
  * @returns Parsed factual data and canonical screenshot references: both viewports and the
@@ -494,20 +442,8 @@ export function resolveCandidateVisualEvidence(
     const factualValidation = parseFactualValidation(validationPath, options.validationArtifactId);
     const phaseB = factualValidation.phaseB;
     const phaseC = factualValidation.phaseC;
-    const useSameDocumentPair = hasCompleteSameDocumentPair(phaseC);
-    if (hasAnySameDocumentEvidence(phaseC) && !useSameDocumentPair) {
-        throw new Error('Factual validation contains a partial same-document evidence pair.');
-    }
-    if (useSameDocumentPair) {
-        assertAlignedSameDocumentPair(phaseC);
-    }
-
-    const beforeViewportId = useSameDocumentPair
-        ? phaseC.sameDocumentControlScreenshotArtifactId
-        : phaseB.screenshotArtifactId;
-    const beforeFullPageId = useSameDocumentPair
-        ? phaseC.sameDocumentControlFullPageScreenshotArtifactId
-        : phaseB.fullPageScreenshotArtifactId;
+    const beforeViewportId = phaseB.screenshotArtifactId;
+    const beforeFullPageId = phaseB.fullPageScreenshotArtifactId;
     const afterViewportId = phaseC.screenshotArtifactId;
     const afterFullPageId = phaseC.fullPageScreenshotArtifactId;
     if (!beforeViewportId || !afterViewportId) {
@@ -526,7 +462,7 @@ export function resolveCandidateVisualEvidence(
         resolveScreenshot(artifacts, options.artifactsDir, artifactId, role);
 
     const beforeTileCoverage = resolveTileCoverage(
-        useSameDocumentPair ? phaseC.sameDocumentControlTileCoverage : phaseB.tileCoverage,
+        phaseB.tileCoverage,
         artifacts,
         options.artifactsDir,
     );

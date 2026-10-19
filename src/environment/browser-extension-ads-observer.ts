@@ -13,12 +13,12 @@ import {
 } from '../validator/candidate-network-verification';
 import type { NetworkRequestEntry } from '../browser/browser-interfaces';
 import { normalizeRule } from '../repo/rule-normalizer';
+import { runPhase } from '../validator/phase-capture';
+import type { AdsEnvironmentPhaseObservationInput } from '../validator/phase-orchestrator';
 import {
     presenceFromStructuralSnapshot,
     probeStructuralSnapshot,
-    runPhase,
-    type AdsEnvironmentPhaseObservationInput,
-} from '../validator/phase-orchestrator';
+} from '../validator/structural-snapshot';
 import type { SingleShotClient } from '../pi/single-shot-types';
 import type { TraceRecorder } from '../tracer/trace-recorder';
 import {
@@ -35,7 +35,7 @@ import {
     type PhaseResult,
     type StructuralSnapshot,
 } from '../types/validation';
-import { resolveValidatedSelector } from '../validator/rule-applicator';
+import { resolveValidatedSelector } from '../validator/candidate-selector';
 import type { TrustedValidationContext } from '../validator/trusted-validation-context';
 import { deriveCandidateArtifactExecutionSuffix } from '../types/candidate-artifact-identity';
 import {
@@ -348,7 +348,6 @@ export class BrowserExtensionAdsObserver {
             artifactsDir: this.options.artifactsDir,
             phase: input.phase,
             url: this.options.trustedValidationContext.reportedUrl,
-            rules: [],
             trustedPageEvaluator: await createTrustedPageEvaluator(page),
             ...(selector ? { adElementSelector: selector } : {}),
             ...(input.phase === PhaseLabel.C && rememberedWindow

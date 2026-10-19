@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import * as v from 'valibot';
 import {
     AdElementPresenceSchema,
-    ElementGeometrySchema,
     FactualValidationResultSchema,
     PhaseLabelSchema,
     PhaseResultSchema,
@@ -75,22 +74,14 @@ describe('validation schemas', () => {
     it('parses raw phase evidence without a page-safety verdict', () => {
         const result = v.parse(PhaseResultSchema, {
             ...phase('A'),
-            ruleApplications: [
-                {
-                    rule: 'example.com#$#body { overflow: auto !important; }',
-                    status: 'skipped',
-                    reason: 'Unsafe CSS injection.',
-                },
-            ],
             contentIntact: false,
         });
 
         expect(result.phase).toBe('A');
-        expect(result.ruleApplications?.[0]).toMatchObject({ status: 'skipped' });
         expect(result).not.toHaveProperty('contentIntact');
     });
 
-    it('parses raw structure and layout facts', () => {
+    it('parses raw structure facts', () => {
         const before = structuralSnapshot();
         const after = {
             ...before,
@@ -115,11 +106,6 @@ describe('validation schemas', () => {
                 phaseC: 'visible',
             },
             structureFacts: { before, after },
-            layoutFacts: {
-                selector: '.reserved-slot',
-                before: { found: true, width: 1280, height: 320 },
-                after: { found: true, width: 1280, height: 52 },
-            },
             structuralValidation: { status: 'regressed' },
             layoutValidation: { effect: 'height_reduced' },
             contentIntact: false,
@@ -127,7 +113,6 @@ describe('validation schemas', () => {
         });
 
         expect(result.structureFacts?.after.targetMaximumHeight).toBe(52);
-        expect(result.layoutFacts?.after.height).toBe(52);
         expect(result).not.toHaveProperty('structuralValidation');
         expect(result).not.toHaveProperty('layoutValidation');
         expect(result).not.toHaveProperty('contentIntact');
@@ -144,20 +129,12 @@ describe('validation schemas', () => {
         ).toThrow();
     });
 
-    it('validates raw labels, presence, geometry, and structure values', () => {
+    it('validates raw labels, presence, and structure values', () => {
         expect(v.parse(PhaseLabelSchema, 'B')).toBe('B');
         expect(v.parse(AdElementPresenceSchema, 'visible')).toBe('visible');
-        expect(v.parse(ElementGeometrySchema, { found: true, width: 100, height: 52 })).toEqual({
-            found: true,
-            width: 100,
-            height: 52,
-        });
         expect(v.parse(StructuralSnapshotSchema, structuralSnapshot()).probeSucceeded).toBe(true);
 
         expect(() => v.parse(PhaseLabelSchema, 'D')).toThrow();
         expect(() => v.parse(AdElementPresenceSchema, 'maybe')).toThrow();
-        expect(() =>
-            v.parse(ElementGeometrySchema, { found: true, width: -1, height: 52 }),
-        ).toThrow();
     });
 });

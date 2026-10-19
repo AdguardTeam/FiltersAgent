@@ -103,14 +103,7 @@ function factualValidation() {
         },
         phaseA: phase('A', 'phase-a-viewport', 'phase-a-full-page'),
         phaseB: phase('B', 'phase-b-viewport', 'phase-b-full-page'),
-        phaseC: {
-            ...phase('C', 'phase-c-viewport', 'phase-c-full-page'),
-            sameDocumentControlScreenshotArtifactId: 'control-viewport',
-            sameDocumentControlFullPageScreenshotArtifactId: 'control-full-page',
-            sameDocumentControlTileCoverage: tileCoverage('control-tile'),
-            sameDocumentControlViewport: { x: 0, y: 120 },
-            candidateViewport: { x: 0.5, y: 120.5 },
-        },
+        phaseC: phase('C', 'phase-c-viewport', 'phase-c-full-page'),
         validatedSelector: '.ad',
         adElementStatus: {
             selector: '.ad',
@@ -148,13 +141,13 @@ function addFileArtifact(
 }
 
 function addScreenshotEvidence(recorder: TraceRecorder, directory: string): void {
-    for (const id of ['phase-b-viewport', 'phase-c-viewport', 'control-viewport']) {
+    for (const id of ['phase-b-viewport', 'phase-c-viewport']) {
         addFileArtifact(recorder, directory, id, 'screenshot');
     }
-    for (const id of ['phase-b-full-page', 'phase-c-full-page', 'control-full-page']) {
+    for (const id of ['phase-b-full-page', 'phase-c-full-page']) {
         addFileArtifact(recorder, directory, id, 'screenshot-full-page');
     }
-    for (const id of ['a-tile', 'b-tile', 'c-tile', 'control-tile']) {
+    for (const id of ['a-tile', 'b-tile', 'c-tile']) {
         addFileArtifact(recorder, directory, id, 'screenshot-tile');
     }
 }
@@ -187,8 +180,8 @@ afterEach(() => {
 });
 
 describe('resolveCandidateVisualEvidence', () => {
-    it('resolves the aligned same-document viewport and full-page pair', () => {
-        const artifactsDir = temporaryDirectory('candidate-evidence-same-document-');
+    it('pairs the phase B baseline with the phase C candidate capture', () => {
+        const artifactsDir = temporaryDirectory('candidate-evidence-pair-');
         const recorder = createRecorder();
         const executionSuffix = 'f'.repeat(16);
         addScreenshotEvidence(recorder, artifactsDir);
@@ -207,12 +200,12 @@ describe('resolveCandidateVisualEvidence', () => {
         });
 
         expect(result.beforeViewport).toEqual({
-            id: 'control-viewport',
-            path: realpathSync(join(artifactsDir, 'control-viewport.png')),
+            id: 'phase-b-viewport',
+            path: realpathSync(join(artifactsDir, 'phase-b-viewport.png')),
         });
         expect(result.beforeFullPage).toEqual({
-            id: 'control-full-page',
-            path: realpathSync(join(artifactsDir, 'control-full-page.png')),
+            id: 'phase-b-full-page',
+            path: realpathSync(join(artifactsDir, 'phase-b-full-page.png')),
         });
         expect(result.afterViewport).toEqual({
             id: 'phase-c-viewport',
@@ -226,8 +219,8 @@ describe('resolveCandidateVisualEvidence', () => {
         expect(result.afterCoverageComplete).toBe(true);
         expect(result.beforeTiles).toEqual([
             {
-                id: 'control-tile',
-                path: realpathSync(join(artifactsDir, 'control-tile.png')),
+                id: 'b-tile',
+                path: realpathSync(join(artifactsDir, 'b-tile.png')),
                 index: 0,
                 x: 0,
                 y: 0,
@@ -255,7 +248,7 @@ describe('resolveCandidateVisualEvidence', () => {
             window: { fromY: 100, toY: 900 },
             tiles: [
                 {
-                    artifactId: 'control-tile',
+                    artifactId: 'b-tile',
                     index: 0,
                     x: 0,
                     y: 0,
@@ -265,11 +258,7 @@ describe('resolveCandidateVisualEvidence', () => {
                 },
             ],
         };
-        validation.phaseB.tileCoverage = {
-            ...windowedCoverage,
-            tiles: windowedCoverage.tiles.map((tile) => ({ ...tile, artifactId: 'b-tile' })),
-        };
-        validation.phaseC.sameDocumentControlTileCoverage = windowedCoverage;
+        validation.phaseB.tileCoverage = windowedCoverage;
         validation.phaseC.tileCoverage = {
             ...windowedCoverage,
             tiles: windowedCoverage.tiles.map((tile) => ({ ...tile, artifactId: 'c-tile' })),
@@ -303,7 +292,7 @@ describe('resolveCandidateVisualEvidence', () => {
             window: { fromY: 500, toY: 900 },
             tiles: [
                 {
-                    artifactId: 'control-tile',
+                    artifactId: 'b-tile',
                     index: 0,
                     x: 0,
                     y: 0,
@@ -313,11 +302,7 @@ describe('resolveCandidateVisualEvidence', () => {
                 },
             ],
         };
-        validation.phaseB.tileCoverage = {
-            ...gappedCoverage,
-            tiles: gappedCoverage.tiles.map((tile) => ({ ...tile, artifactId: 'b-tile' })),
-        };
-        validation.phaseC.sameDocumentControlTileCoverage = gappedCoverage;
+        validation.phaseB.tileCoverage = gappedCoverage;
         validation.phaseC.tileCoverage = {
             ...gappedCoverage,
             tiles: gappedCoverage.tiles.map((tile) => ({ ...tile, artifactId: 'c-tile' })),
@@ -332,53 +317,6 @@ describe('resolveCandidateVisualEvidence', () => {
 
         expect(result.beforeCoverageComplete).toBe(false);
         expect(result.afterCoverageComplete).toBe(false);
-    });
-
-    it('falls back to Phase B when the complete same-document pair is unavailable', () => {
-        const artifactsDir = temporaryDirectory('candidate-evidence-phase-b-');
-        const recorder = createRecorder();
-        addScreenshotEvidence(recorder, artifactsDir);
-        const validation = factualValidation();
-        Reflect.deleteProperty(validation.phaseC, 'sameDocumentControlScreenshotArtifactId');
-        Reflect.deleteProperty(
-            validation.phaseC,
-            'sameDocumentControlFullPageScreenshotArtifactId',
-        );
-        Reflect.deleteProperty(validation.phaseC, 'sameDocumentControlViewport');
-        Reflect.deleteProperty(validation.phaseC, 'candidateViewport');
-        Reflect.deleteProperty(validation.phaseC, 'sameDocumentControlTileCoverage');
-        addValidationArtifact(recorder, artifactsDir, '123456abcdef', validation);
-
-        const result = resolveCandidateVisualEvidence({
-            artifactsDir,
-            recorder,
-            validationArtifactId: 'validation-123456abcdef',
-        });
-
-        expect(result.beforeViewport.id).toBe('phase-b-viewport');
-        expect(result.beforeFullPage?.id).toBe('phase-b-full-page');
-        expect(result.afterViewport.id).toBe('phase-c-viewport');
-        expect(result.afterFullPage?.id).toBe('phase-c-full-page');
-    });
-
-    it('rejects a partial same-document pair instead of silently using another baseline', () => {
-        const artifactsDir = temporaryDirectory('candidate-evidence-partial-control-');
-        const recorder = createRecorder();
-        addScreenshotEvidence(recorder, artifactsDir);
-        const validation = factualValidation();
-        Reflect.deleteProperty(
-            validation.phaseC,
-            'sameDocumentControlFullPageScreenshotArtifactId',
-        );
-        addValidationArtifact(recorder, artifactsDir, '123456abcdef', validation);
-
-        expect(() =>
-            resolveCandidateVisualEvidence({
-                artifactsDir,
-                recorder,
-                validationArtifactId: 'validation-123456abcdef',
-            }),
-        ).toThrow(/partial same-document/u);
     });
 
     it('rejects evidence without a registered full-page candidate screenshot', () => {
@@ -430,13 +368,13 @@ describe('resolveCandidateVisualEvidence', () => {
         addScreenshotEvidence(safeRecorder, artifactsDir);
         const escapedPath = join(outsideDir, 'escaped.png');
         writeFileSync(escapedPath, Buffer.from('escaped'));
-        const control = safeRecorder
+        const baseline = safeRecorder
             .getArtifacts()
-            .find((artifact) => artifact.id === 'control-viewport');
-        if (!control) {
-            throw new Error('Test setup failed to register control screenshot.');
+            .find((artifact) => artifact.id === 'phase-b-viewport');
+        if (!baseline) {
+            throw new Error('Test setup failed to register baseline screenshot.');
         }
-        control.path = escapedPath;
+        baseline.path = escapedPath;
         addValidationArtifact(safeRecorder, artifactsDir, '333333333333', factualValidation());
 
         expect(() =>
@@ -477,36 +415,5 @@ describe('resolveCandidateVisualEvidence', () => {
                 validationArtifactId: 'validation-333333333333',
             }),
         ).toThrow(/malformed/u);
-    });
-
-    it('rejects a same-document pair with an error or misaligned viewport coordinates', () => {
-        const artifactsDir = temporaryDirectory('candidate-evidence-unaligned-');
-        const recorder = createRecorder();
-        addScreenshotEvidence(recorder, artifactsDir);
-        const validation = factualValidation();
-        validation.phaseC.candidateViewport = { x: 0, y: 122 };
-        addValidationArtifact(recorder, artifactsDir, '123456abcdef', validation);
-
-        expect(() =>
-            resolveCandidateVisualEvidence({
-                artifactsDir,
-                recorder,
-                validationArtifactId: 'validation-123456abcdef',
-            }),
-        ).toThrow(/aligned/u);
-
-        const errorRecorder = createRecorder();
-        addScreenshotEvidence(errorRecorder, artifactsDir);
-        const errored = factualValidation();
-        Object.assign(errored.phaseC, { sameDocumentControlError: 'capture failed' });
-        addValidationArtifact(errorRecorder, artifactsDir, '222222222222', errored);
-
-        expect(() =>
-            resolveCandidateVisualEvidence({
-                artifactsDir,
-                recorder: errorRecorder,
-                validationArtifactId: 'validation-222222222222',
-            }),
-        ).toThrow(/same-document control error/u);
     });
 });

@@ -99,7 +99,6 @@ function supersededEnvironmentScreenshotPaths(provisionalResult: object): Set<st
     );
     const binding = compatibility.candidateValidationEvidence;
     const verified = compatibility.artifactPaths?.verifiedCandidateScreenshots;
-    const rejected = compatibility.artifactPaths?.rejectedCandidateScreenshots;
     return new Set([
         ...sessionPaths,
         ...(binding
@@ -111,7 +110,6 @@ function supersededEnvironmentScreenshotPaths(provisionalResult: object): Set<st
               })
             : []),
         ...(verified ? candidateScreenshotPathList(verified) : []),
-        ...(rejected ? candidateScreenshotPathList(rejected) : []),
     ]);
 }
 

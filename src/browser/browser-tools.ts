@@ -6,7 +6,6 @@ import type { TraceRecorder } from '../tracer/trace-recorder';
 import { redactNetworkLog } from './har-redactor';
 import { summarizeNetworkLog } from './network-log-inventory';
 import { ConsentStrategy, type ReproProfile } from '../types/repro-profile';
-import type { ValidationViewportPosition } from '../types/validation';
 import { createTrustedPageEvaluator } from './trusted-page-evaluator';
 import { AD_SLOT_INSPECTION_EXPRESSION } from './ad-slot-inspector';
 import { AdSlotScanResultSchema, type AdSlotScanResult } from '../types/ad-slot-inspection';
@@ -29,6 +28,7 @@ import {
     stabilizePageForCapture,
     readStableViewportPosition,
     viewportPositionMatches,
+    type ViewportPosition,
     boundedDuration,
     boundedTargetValue,
     roundedGeometry,
@@ -589,7 +589,7 @@ export function createBrowserToolHandlers(config: BrowserToolConfig): BrowserToo
         async screenshot(args: Record<string, unknown>) {
             const page = session.getPage();
             let viewportBuffer: Buffer | undefined;
-            let viewportPosition: ValidationViewportPosition | undefined;
+            let viewportPosition: ViewportPosition | undefined;
             for (let attempt = 0; attempt < 3; attempt++) {
                 const before = await readStableViewportPosition(page);
                 if (!before) {

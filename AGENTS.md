@@ -154,6 +154,10 @@ The project ships as a container GitHub Action and runs locally as a CLI tool.
 - `--no-sandbox` is opt-in through `NO_SANDBOX`; never detect CI to turn it on.
 - The strict-route browser's `TMPDIR` stays a short flat `/tmp` directory, never the route root:
   Chromium crashes at startup when its socket path passes the 108-byte `sun_path` limit.
+- Only a blocker applies filter rules: the browser extension or a plugged-in blocker module
+  establishes each phase's filtering state, and a validation phase only captures the page in it.
+  Do not emulate rules in the browser (`page.route`, `page.addStyleTag`): the emulation proves
+  what Playwright does, not what the blocker does.
 - Never rely on the page console: the stealth Chromium passes no page console message to the run.
   Read what a page reports from the page itself, and let each engine's `ConsoleCoverage` say what
   `get_console_log` can see.

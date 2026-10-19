@@ -1,0 +1,319 @@
+import { describe, expect, it, vi } from 'vitest';
+import { runPhase } from '../../src/validator/phase-capture';
+import { mockPage } from './phase-fixtures';
+import type { BrowserToolHandlers } from '../../src/browser/browser-tools';
+import type { PageStateInspection } from '../../src/types/page-state-inspection';
+import type { TraceRecorder } from '../../src/tracer/trace-recorder';
+import type { Page } from 'playwright-core';
+import { runInNewContext } from 'node:vm';
+import type { TrustedPageEvaluator } from '../../src/browser/trusted-page-evaluator';
+
+/**
+ * Create a minimal mock TraceRecorder.
+ */
+function mockRecorder(): TraceRecorder {
+    return {
+        record: vi.fn(),
+        addArtifact: vi.fn(),
+        recordToolCall: vi.fn(),
+        recordLlmTurn: vi.fn(),
+    } as unknown as TraceRecorder;
+}
+
+/**
+ * Adapt legacy browser-tool test responses to the trusted evaluator interface.
+ */
+function trustedEvaluatorFromHandlers(handlers: BrowserToolHandlers): TrustedPageEvaluator {
+    return {
+        evaluate: async (expression: string): Promise<unknown> => {
+            const response = await handlers.evaluate_js({ expression });
+            if (
+                response === null ||
+                typeof response !== 'object' ||
+                !Object.prototype.hasOwnProperty.call(response, 'result')
+            ) {
+                throw new Error('Malformed explicit test evaluator response.');
+            }
+            return (response as Record<string, unknown>).result;
+        },
+    };
+}
+
+/**
+ * The empty page-state snapshot the inspect_page_state handler stub returns; this suite never
+ * exercises the probe itself.
+ */
+const EMPTY_PAGE_STATE: PageStateInspection = {
+    cookies: [],
+    localStorage: {},
+    sessionStorage: {},
+    frames: [],
+    counts: {
+        cookies: { total: 0, returned: 0 },
+        localStorage: { total: 0, returned: 0 },
+        sessionStorage: { total: 0, returned: 0 },
+        frames: { total: 0, returned: 0 },
+    },
+    truncated: false,
+};
+
+/**
+ * Create mock BrowserToolHandlers with controllable return values.
+ */
+function mockHandlers(
+    overrides: Partial<{
+        openPageResult: Record<string, unknown>;
+        screenshotResult: Record<string, unknown>;
+        getDomResult: Record<string, unknown>;
+        getNetworkLogResult: Record<string, unknown>;
+        evaluateJsResult: Record<string, unknown>;
+        evaluateJsImpl: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
+    }> = {},
+): BrowserToolHandlers {
+    const evaluate_js =
+        overrides.evaluateJsImpl ??
+        vi.fn().mockResolvedValue(overrides.evaluateJsResult ?? { result: false });
+
+    return {
+        open_page: vi.fn().mockResolvedValue(
+            overrides.openPageResult ?? {
+                url: 'https://example.com',
+                title: 'Example',
+                statusCode: 200,
+            },
+        ),
+        screenshot: vi.fn().mockResolvedValue(
+            overrides.screenshotResult ?? {
+                artifactId: 'screenshot-uuid',
+                fullPageArtifactId: 'screenshot-full-page-uuid',
+                format: 'png',
+                viewport: { width: 1920, height: 1080 },
+                viewportPosition: { x: 0, y: 0 },
+            },
+        ),
+        get_dom: vi.fn().mockResolvedValue(
+            overrides.getDomResult ?? {
+                artifactId: 'dom-uuid',
+                htmlLength: 5000,
+                textPreview: 'Example page content',
+            },
+        ),
+        inspect_ad_slots: vi.fn().mockResolvedValue({
+            scope: 'main_frame_light_dom',
+            candidateCount: 0,
+            returnedCount: 0,
+            truncated: false,
+            slots: [],
+            artifactId: 'slots-uuid',
+        }),
+        get_network_log: vi.fn().mockResolvedValue(
+            overrides.getNetworkLogResult ?? {
+                artifactId: 'har-uuid',
+                requestCount: 42,
+                summary: '42 requests',
+            },
+        ),
+        reset_network_log: vi.fn().mockResolvedValue({ reset: true }),
+        get_console_log: vi.fn().mockResolvedValue({ messages: [] }),
+        inspect_page_state: vi.fn().mockResolvedValue(EMPTY_PAGE_STATE),
+        evaluate_js,
+    };
+}
+
+describe('runPhase', () => {
+    it('returns PhaseResult with error when open_page fails', async () => {
+        const handlers = mockHandlers({
+            openPageResult: { error: 'net::ERR_CONNECTION_TIMED_OUT' },
+        });
+        const page = mockPage();
+        const artifactsDir = '/tmp/test-artifacts';
+
+        const result = await runPhase({
+            handlers,
+            page,
+            artifactsDir,
+            phase: 'A',
+            url: 'https://example.com',
+            trustedPageEvaluator: trustedEvaluatorFromHandlers(handlers),
+            adElementSelector: undefined,
+            recorder: mockRecorder(),
+        });
+
+        expect(result.error).toBeDefined();
+        expect(result.phase).toBe('A');
+    });
+
+    it('bounds tile capture to the measured symptom window when a selector is localized', async () => {
+        const handlers = mockHandlers();
+        const screenshotArgs: Record<string, unknown>[] = [];
+        vi.mocked(handlers.screenshot).mockImplementation(async (args) => {
+            screenshotArgs.push(args as Record<string, unknown>);
+            return {
+                artifactId: 'shot',
+                fullPageArtifactId: 'shot-full',
+                viewportPosition: { x: 0, y: 0 },
+            } as never;
+        });
+        vi.mocked(handlers.evaluate_js).mockImplementation(async (args) => {
+            const expression = String((args as Record<string, unknown>).expression ?? '');
+            if (expression.includes('window.scrollY')) {
+                return { result: { found: true, top: 2_000, bottom: 2_600 } } as never;
+            }
+            return { result: null } as never;
+        });
+        const page = {
+            ...mockPage(),
+            viewportSize: vi.fn().mockReturnValue({ width: 1_000, height: 1_000 }),
+        } as unknown as Page;
+
+        await runPhase({
+            handlers,
+            page,
+            artifactsDir: '/tmp/test-artifacts',
+            phase: 'B',
+            url: 'https://example.com',
+            trustedPageEvaluator: trustedEvaluatorFromHandlers(handlers),
+            adElementSelector: '.ad-banner',
+            captureVisualTiles: true,
+            recorder: mockRecorder(),
+        });
+
+        // One viewport above and below the element: top 2000..2600 with a 1000px margin.
+        expect(screenshotArgs).toEqual([
+            {
+                captureTiles: true,
+                tileWindow: { fromY: 1_000, toY: 3_600 },
+            },
+        ]);
+    });
+
+    /**
+     * Run one tile-capturing phase on a page whose selector matches the given document spans,
+     * measuring them with the real in-page probe, and return the window the capture was asked for.
+     */
+    async function capturedTileWindow(
+        matches: { top: number; bottom: number }[],
+        viewportHeight: number,
+    ): Promise<{ fromY: number; toY: number } | undefined> {
+        const handlers = mockHandlers();
+        const screenshotArgs: Record<string, unknown>[] = [];
+        vi.mocked(handlers.screenshot).mockImplementation(async (args) => {
+            screenshotArgs.push(args as Record<string, unknown>);
+            return {
+                artifactId: 'shot',
+                fullPageArtifactId: 'shot-full',
+                viewportPosition: { x: 0, y: 0 },
+            } as never;
+        });
+        const scrollY = 500;
+        const elements = matches.map(({ top, bottom }) => ({
+            getBoundingClientRect: () => ({
+                top: top - scrollY,
+                bottom: bottom - scrollY,
+                width: bottom > top ? 300 : 0,
+                height: bottom - top,
+            }),
+        }));
+        const evaluator: TrustedPageEvaluator = {
+            evaluate: async (expression: string): Promise<unknown> =>
+                runInNewContext(expression, {
+                    document: {
+                        querySelector: () => elements[0] ?? null,
+                        querySelectorAll: () => elements,
+                    },
+                    window: { scrollY },
+                }),
+        };
+        const page = {
+            ...mockPage(),
+            viewportSize: vi.fn().mockReturnValue({ width: 1_920, height: viewportHeight }),
+        } as unknown as Page;
+
+        await runPhase({
+            handlers,
+            page,
+            artifactsDir: '/tmp/test-artifacts',
+            phase: 'B',
+            url: 'https://example.com',
+            trustedPageEvaluator: evaluator,
+            adElementSelector: '.ad-slot',
+            captureVisualTiles: true,
+            recorder: mockRecorder(),
+        });
+
+        expect(screenshotArgs).toHaveLength(1);
+        return screenshotArgs[0].tileWindow as { fromY: number; toY: number } | undefined;
+    }
+
+    it('bounds tile capture around every instance a multi-instance selector matches', async () => {
+        // A selector that hides several slots must get original-resolution tiles at each of them;
+        // judged from the downscaled overview, the lower slots leave the review unclear.
+        const instances = [
+            { top: 122, bottom: 322 },
+            { top: 2_900, bottom: 3_200 },
+            { top: 5_400, bottom: 5_650 },
+        ];
+
+        const window = await capturedTileWindow(
+            [...instances, { top: 4_000, bottom: 4_000 }],
+            1_080,
+        );
+
+        expect(window).toBeDefined();
+        for (const instance of instances) {
+            expect(window!.fromY).toBeLessThanOrEqual(instance.top);
+            expect(window!.toY).toBeGreaterThanOrEqual(instance.bottom);
+        }
+    });
+
+    it('returns successful PhaseResult with artifacts', async () => {
+        const handlers = mockHandlers();
+        const page = mockPage();
+        const artifactsDir = '/tmp/test-artifacts';
+
+        const result = await runPhase({
+            handlers,
+            page,
+            artifactsDir,
+            phase: 'B',
+            url: 'https://example.com',
+            trustedPageEvaluator: trustedEvaluatorFromHandlers(handlers),
+            adElementSelector: '.ad-banner',
+            recorder: mockRecorder(),
+        });
+
+        expect(result.phase).toBe('B');
+        expect(result.screenshotArtifactId).toBeDefined();
+        expect(result.fullPageScreenshotArtifactId).toBe('screenshot-full-page-uuid');
+        expect(result.harArtifactId).toBeDefined();
+        expect(result.domArtifactId).toBeDefined();
+        expect(result.url).toBe('https://example.com');
+        expect(result.error).toBeUndefined();
+    });
+
+    it('resets the network log before navigation', async () => {
+        const handlers = mockHandlers();
+        const calls: string[] = [];
+        vi.mocked(handlers.reset_network_log).mockImplementation(async () => {
+            calls.push('reset');
+            return { reset: true };
+        });
+        vi.mocked(handlers.open_page).mockImplementation(async () => {
+            calls.push('open');
+            return { url: 'https://example.com', statusCode: 200 };
+        });
+
+        await runPhase({
+            handlers,
+            page: mockPage(),
+            artifactsDir: '/tmp/test-artifacts',
+            phase: 'A',
+            url: 'https://example.com',
+            trustedPageEvaluator: trustedEvaluatorFromHandlers(handlers),
+            recorder: mockRecorder(),
+        });
+
+        expect(handlers.reset_network_log).toHaveBeenCalledOnce();
+        expect(calls).toEqual(['reset', 'open']);
+    });
+});

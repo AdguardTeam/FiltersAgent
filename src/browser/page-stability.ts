@@ -1,11 +1,25 @@
 import type { IBrowserSession } from './browser-interfaces';
-import type { ValidationViewportPosition } from '../types/validation';
 import { createTrustedPageEvaluator } from './trusted-page-evaluator';
 import { TargetMatchedBy } from '../environment/safe-interaction';
 
 /**
  * Page stability probing and target scrolling used before evidence capture.
  */
+/**
+ * Settled browser scroll position a viewport screenshot was captured at.
+ */
+export interface ViewportPosition {
+    /**
+     * Horizontal scroll offset in CSS pixels, never negative.
+     */
+    x: number;
+
+    /**
+     * Vertical scroll offset in CSS pixels, never negative.
+     */
+    y: number;
+}
+
 /**
  * Bounded target used to reveal lazy content before a browser capture.
  */
@@ -326,7 +340,7 @@ const VIEWPORT_STABILITY_PROBE = `
  */
 export async function readStableViewportPosition(
     page: ReturnType<IBrowserSession['getPage']>,
-): Promise<ValidationViewportPosition | null> {
+): Promise<ViewportPosition | null> {
     try {
         const evaluator = await createTrustedPageEvaluator(page);
         const result = await evaluator.evaluate(VIEWPORT_STABILITY_PROBE);
@@ -359,8 +373,8 @@ export async function readStableViewportPosition(
  * @returns True when both coordinates remain within one pixel.
  */
 export function viewportPositionMatches(
-    before: ValidationViewportPosition,
-    after: ValidationViewportPosition,
+    before: ViewportPosition,
+    after: ViewportPosition,
 ): boolean {
     return Math.abs(before.x - after.x) <= 1 && Math.abs(before.y - after.y) <= 1;
 }

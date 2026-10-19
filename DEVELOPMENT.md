@@ -317,6 +317,8 @@ pnpm exec vitest run \
   tests/environment/environment-result-projection.test.ts \
   tests/browser/browser-session.test.ts \
   tests/validator/phase-orchestrator.test.ts \
+  tests/validator/phase-capture.test.ts \
+  tests/validator/structural-snapshot.test.ts \
   tests/orchestrator/agent-runtime.test.ts \
   tests/orchestrator/fix-core.test.ts \
   tests/types/fix-run-result.test.ts

@@ -71,23 +71,6 @@ export type AdElementPresence = (typeof AdElementPresence)[keyof typeof AdElemen
 export const AdElementPresenceSchema = v.picklist(AD_ELEMENT_PRESENCE_VALUES);
 
 /**
- * Measured browser geometry for one target element.
- */
-export const ElementGeometrySchema = v.object({
-    found: v.boolean(),
-    width: v.pipe(v.number(), v.minValue(0)),
-    height: v.pipe(v.number(), v.minValue(0)),
-});
-
-/**
- * Deterministic browser scroll position used to align a same-document screenshot pair.
- */
-export const ValidationViewportPositionSchema = v.object({
-    x: v.pipe(v.number(), v.minValue(0)),
-    y: v.pipe(v.number(), v.minValue(0)),
-});
-
-/**
  * One original-resolution screenshot tile covering a bounded document rectangle.
  */
 export const FullPageTileSchema = v.object({
@@ -138,19 +121,12 @@ export const FullPageTileCoverageSchema = v.object({
 });
 
 /**
- * One runner-owned fact accounting for a rule supplied to a validation phase.
+ * One runner-owned fact that the blocker applied a rule supplied to a validation phase.
  */
-export const RuleApplicationFactSchema = v.variant('status', [
-    v.object({
-        rule: v.string(),
-        status: v.literal('applied'),
-    }),
-    v.object({
-        rule: v.string(),
-        status: v.literal('skipped'),
-        reason: v.pipe(v.string(), v.minLength(1), v.maxLength(500)),
-    }),
-]);
+export const RuleApplicationFactSchema = v.object({
+    rule: v.string(),
+    status: v.literal('applied'),
+});
 
 /**
  * Schema for a single phase result within a validation run.
@@ -160,12 +136,6 @@ export const PhaseResultSchema = v.object({
     screenshotArtifactId: v.string(),
     fullPageScreenshotArtifactId: v.optional(v.string()),
     tileCoverage: v.optional(FullPageTileCoverageSchema),
-    sameDocumentControlScreenshotArtifactId: v.optional(v.string()),
-    sameDocumentControlFullPageScreenshotArtifactId: v.optional(v.string()),
-    sameDocumentControlTileCoverage: v.optional(FullPageTileCoverageSchema),
-    sameDocumentControlViewport: v.optional(ValidationViewportPositionSchema),
-    candidateViewport: v.optional(ValidationViewportPositionSchema),
-    sameDocumentControlError: v.optional(v.string()),
     harArtifactId: v.string(),
     domArtifactId: v.string(),
     url: v.string(),
@@ -211,7 +181,8 @@ export const MeaningfulGeometrySchema = v.object({
 });
 
 /**
- * Stable per-element geometry used to bind layout comparisons across candidate toggles.
+ * Stable per-element geometry of a target, reported to the model in the candidate's structure
+ * facts.
  */
 export const StructuralTargetMeasurementSchema = v.object({
     key: v.pipe(v.string(), v.minLength(1)),
@@ -252,22 +223,11 @@ export const StructuralSnapshotSchema = v.object({
 });
 
 /**
- * Raw same-document structure snapshots collected before and after a candidate.
+ * Raw structure snapshots collected before and after a candidate.
  */
 export const CandidateStructureFactsSchema = v.object({
     before: StructuralSnapshotSchema,
     after: StructuralSnapshotSchema,
-    afterArtifacts: v.optional(StructuralSnapshotSchema),
-    restoredControl: v.optional(StructuralSnapshotSchema),
-});
-
-/**
- * Raw target geometry collected before and after a candidate CSS rule.
- */
-export const CandidateLayoutFactsSchema = v.object({
-    selector: v.string(),
-    before: ElementGeometrySchema,
-    after: ElementGeometrySchema,
 });
 
 /**
@@ -280,16 +240,15 @@ export const TrustedValidationEvidenceSchema = v.object({
 });
 
 /**
- * Schema for the factual three-phase validation result returned by `runValidation` and the
- * `apply_rule` tool. Contains no verdict — the LLM determines the verdict after inspecting the
- * returned artifact IDs and summary.
+ * Schema for the factual three-phase validation result returned by the `apply_rule` tool. Contains
+ * no verdict — the LLM determines the verdict after inspecting the returned artifact IDs and
+ * summary.
  */
 export const FactualValidationResultSchema = v.object({
     trustedValidationContext: TrustedValidationEvidenceSchema,
     phaseA: PhaseResultSchema,
     phaseB: PhaseResultSchema,
     phaseC: PhaseResultSchema,
-    layoutFacts: v.optional(CandidateLayoutFactsSchema),
     validatedSelector: v.string(),
     adElementStatus: AdElementStatusSchema,
     structureFacts: v.optional(CandidateStructureFactsSchema),
@@ -299,8 +258,6 @@ export const FactualValidationResultSchema = v.object({
 
 export type PhaseLabel = v.InferOutput<typeof PhaseLabelSchema>;
 export type PhaseResult = v.InferOutput<typeof PhaseResultSchema>;
-export type ElementGeometry = v.InferOutput<typeof ElementGeometrySchema>;
-export type ValidationViewportPosition = v.InferOutput<typeof ValidationViewportPositionSchema>;
 export type FullPageTileCoverage = v.InferOutput<typeof FullPageTileCoverageSchema>;
 export type RuleApplicationFact = v.InferOutput<typeof RuleApplicationFactSchema>;
 export type StructuralSnapshot = v.InferOutput<typeof StructuralSnapshotSchema>;

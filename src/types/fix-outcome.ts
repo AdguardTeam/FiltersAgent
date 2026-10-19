@@ -2,7 +2,6 @@ import * as v from 'valibot';
 import { RuleProposalSchema } from './rule-proposal';
 import { PolicyDecisionKind, PolicyDecisionSchema } from './policy';
 import { NO_PATCH_RUN_STATUSES } from './fix-run-result';
-import { CANDIDATE_VALIDATION_ARTIFACT_ID_PATTERN } from './candidate-artifact-identity';
 import { CandidateForReviewSchema } from './candidate-for-review';
 
 /**
@@ -139,15 +138,6 @@ const PolicyBlockedOutcomeSchema = v.object({
 });
 
 /**
- * The validation artifact of the candidate `apply_rule` rejected, named on an analysis-only
- * outcome.
- */
-const RejectedCandidateValidationArtifactIdSchema = v.pipe(
-    v.string(),
-    v.regex(CANDIDATE_VALIDATION_ARTIFACT_ID_PATTERN),
-);
-
-/**
  * How a resolve-without-patch run stands: why the issue needs no repository change.
  */
 const ResolveWithoutPatchRunStatusSchema = v.picklist(NO_PATCH_RUN_STATUSES);
@@ -168,7 +158,6 @@ const AnalysisOnlyOutcomeSchema = v.object({
     reasoning: v.string(),
     summary: SummarySchema,
     candidateForReview: v.optional(CandidateForReviewSchema),
-    rejectedCandidateValidationArtifactId: v.optional(RejectedCandidateValidationArtifactIdSchema),
 });
 
 /**
@@ -230,9 +219,6 @@ export const FixOutcomeParametersSchema = v.object({
     ),
     candidateForReview: v.optional(
         v.pipe(CandidateForReviewSchema, v.description('analysis_only only.')),
-    ),
-    rejectedCandidateValidationArtifactId: v.optional(
-        v.pipe(RejectedCandidateValidationArtifactIdSchema, v.description('analysis_only only.')),
     ),
 });
 

@@ -49,7 +49,6 @@ import {
     resolveCandidateVerdict,
 } from './candidate-verdict';
 import { selectCandidateValidation } from './candidate-validation-selection';
-import { selectRepresentativeRejectedCandidateScreenshots } from './rejected-validation-evidence';
 import { assembleFixRunResult } from './fix-result-assembly';
 import { collectMissingInformation, logMissingInformation } from './fix-run-missing-information';
 import { AgentRuntime } from './agent-runtime';
@@ -637,24 +636,6 @@ export async function runAgenticFixCore(
             runStatus,
             noPatchEvidenceComplete,
         );
-        const preferredRejectedValidationArtifactId =
-            outcome.outcome === FixOutcomeKind.AnalysisOnly
-                ? outcome.rejectedCandidateValidationArtifactId
-                : undefined;
-        let rejectedCandidateScreenshots: ReturnType<
-            typeof selectRepresentativeRejectedCandidateScreenshots
-        >;
-        if (
-            browserState.usable &&
-            !candidateVerified &&
-            (outcome.outcome === FixOutcomeKind.AnalysisOnly || proposedCandidate !== null)
-        ) {
-            rejectedCandidateScreenshots = selectRepresentativeRejectedCandidateScreenshots(
-                artifacts,
-                trustedValidationContext,
-                preferredRejectedValidationArtifactId,
-            );
-        }
         const settingsProofPath = settingsEvidence
             ? persistAgentSettingsProof(settingsEvidence, options.artifactsDir, recorder)
             : undefined;
@@ -704,8 +685,6 @@ export async function runAgenticFixCore(
             candidateVerified,
             verifiedScreenshots,
             selectedValidation,
-            rejectedCandidateScreenshots,
-            visualReviewFromVerifiedCandidate: candidateVerified,
             tracePath,
             missingInformation: missingInformation.entries,
             browserLogPath: activeSession

@@ -35,11 +35,11 @@ function extensionRuleFacts(rules: readonly string[]): RuleApplicationFact[] {
 }
 
 /**
- * Replace injection-oriented rule fields with adapter-owned Extension execution facts.
+ * Record the rules the Extension engine applied in a phase as its rule facts.
  *
- * @param result - Phase facts captured without browser-side rule injection.
+ * @param result - Phase facts the capture produced, which apply no rules themselves.
  * @param rules - Rules whose execution is proven by the adapter state.
- * @returns Compatibility phase result for existing candidate consumers.
+ * @returns Phase result naming the applied rules for the candidate verdict.
  */
 export function withExtensionRuleFacts(result: PhaseResult, rules: readonly string[]): PhaseResult {
     return {
