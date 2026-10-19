@@ -256,12 +256,12 @@ function bindCandidateEvidence(result: FixRunResult): FixRunResult {
                 path: screenshots.after,
             },
             beforeFullPage: {
-                artifactId: boundReview.beforeFullPageArtifactId,
-                path: screenshots.beforeFullPage,
+                artifactId: boundReview.beforeFullPageArtifactId!,
+                path: screenshots.beforeFullPage!,
             },
             afterFullPage: {
-                artifactId: boundReview.afterFullPageArtifactId,
-                path: screenshots.afterFullPage,
+                artifactId: boundReview.afterFullPageArtifactId!,
+                path: screenshots.afterFullPage!,
             },
         },
         artifactPaths: {

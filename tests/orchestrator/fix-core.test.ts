@@ -1063,15 +1063,15 @@ function candidateBindingFixture(baseline: 'read_back' | 'declared' = 'read_back
         visualReviewArtifactPath: binding.visualReviewArtifact.path,
         beforeScreenshotArtifactId: binding.beforeViewport.artifactId,
         afterScreenshotArtifactId: binding.afterViewport.artifactId,
-        beforeFullPageScreenshotArtifactId: binding.beforeFullPage.artifactId,
-        afterFullPageScreenshotArtifactId: binding.afterFullPage.artifactId,
+        beforeFullPageScreenshotArtifactId: binding.beforeFullPage!.artifactId,
+        afterFullPageScreenshotArtifactId: binding.afterFullPage!.artifactId,
         beforeScreenshotArtifactIds: [
             binding.beforeViewport.artifactId,
-            binding.beforeFullPage.artifactId,
+            binding.beforeFullPage!.artifactId,
         ],
         afterScreenshotArtifactIds: [
             binding.afterViewport.artifactId,
-            binding.afterFullPage.artifactId,
+            binding.afterFullPage!.artifactId,
         ],
     };
     return { binding, selection, screenshots };

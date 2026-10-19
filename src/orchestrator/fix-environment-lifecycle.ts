@@ -3,6 +3,7 @@
  * lifecycle handle the core hands back, and the projection that folds the cleanup receipt into the
  * result without letting a superseded environment's artifacts survive into it.
  */
+import { candidateScreenshotPathList } from '../types/candidate-screenshot-paths';
 import {
     type FilteringEnvironmentAdapter,
     type FilteringEnvironmentExecution,
@@ -97,26 +98,20 @@ function supersededEnvironmentScreenshotPaths(provisionalResult: object): Set<st
         ),
     );
     const binding = compatibility.candidateValidationEvidence;
-    const candidatePaths: string[] = [];
-    if (binding) {
-        candidatePaths.push(
-            binding.beforeViewport.path,
-            binding.afterViewport.path,
-            binding.beforeFullPage.path,
-            binding.afterFullPage.path,
-        );
-    }
     const verified = compatibility.artifactPaths?.verifiedCandidateScreenshots;
     const rejected = compatibility.artifactPaths?.rejectedCandidateScreenshots;
     return new Set([
         ...sessionPaths,
-        ...candidatePaths,
-        ...(verified
-            ? [verified.before, verified.after, verified.beforeFullPage, verified.afterFullPage]
+        ...(binding
+            ? candidateScreenshotPathList({
+                  before: binding.beforeViewport.path,
+                  after: binding.afterViewport.path,
+                  beforeFullPage: binding.beforeFullPage?.path,
+                  afterFullPage: binding.afterFullPage?.path,
+              })
             : []),
-        ...(rejected
-            ? [rejected.before, rejected.after, rejected.beforeFullPage, rejected.afterFullPage]
-            : []),
+        ...(verified ? candidateScreenshotPathList(verified) : []),
+        ...(rejected ? candidateScreenshotPathList(rejected) : []),
     ]);
 }
 

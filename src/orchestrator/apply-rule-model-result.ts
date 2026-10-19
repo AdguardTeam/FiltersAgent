@@ -15,6 +15,7 @@
  */
 import { ToolName } from '../agent/tool-names';
 import type { ToolHandler } from '../agent/tool-registry';
+import type { EnvironmentAdapterLimitation } from '../environment/filtering-environment';
 
 /**
  * Budget of the projected result, below the tool-result limit so the envelope never replaces it.
@@ -126,4 +127,40 @@ export function withRemainingCandidateAttempts(
         ...(await handler(args)),
         remainingCandidateAttempts: remainingAttempts(),
     });
+}
+
+/**
+ * Answer an `apply_rule` call that the filtering environment's limitation stopped.
+ *
+ * When the limitation is the one an earlier call already ended on, this call opened no phase, and
+ * the answer says so: a repeat that reads like a fresh failure invites the model to try again. A
+ * different limitation, or one the environment produced anew, is answered as a fresh failure.
+ *
+ * @param limitation - The limitation that stopped the call.
+ * @param earlier - The limitation an earlier call ended on, or null when none did.
+ * @returns The model-facing answer.
+ */
+export function environmentLimitationAnswer(
+    limitation: EnvironmentAdapterLimitation,
+    earlier: EnvironmentAdapterLimitation | null,
+): Record<string, unknown> {
+    const repeated =
+        earlier !== null &&
+        earlier.code === limitation.code &&
+        earlier.detail === limitation.detail;
+    return {
+        validationSkipped: true,
+        errorKind: 'environment_capability_limited',
+        retryable: false,
+        limitation,
+        ...(repeated
+            ? {
+                  repeatedFailure: true,
+                  error:
+                      'This call ran no experiment: the limitation an earlier apply_rule call ' +
+                      'ended on came back unchanged, and the filtering environment was not ' +
+                      'retried.',
+              }
+            : {}),
+    };
 }

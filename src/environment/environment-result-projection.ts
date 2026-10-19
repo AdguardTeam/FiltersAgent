@@ -7,6 +7,7 @@ import type {
 } from '../types/fix-run-result';
 import { ExtensionMode } from '../types/fix-run-result';
 import type { CandidateVisualReview } from '../types/candidate-visual-review';
+import { mapCandidateOverviews } from '../types/candidate-screenshot-paths';
 import type {
     EnvironmentArtifactReference,
     EnvironmentPhaseEvidence,
@@ -40,12 +41,7 @@ type ResolvedCandidateValidation = NonNullable<
     Required<
         Pick<
             NonNullable<ValidatorObservedPhaseCompletion['candidateValidation']>,
-            | 'validationArtifact'
-            | 'visualReviewArtifact'
-            | 'beforeViewport'
-            | 'afterViewport'
-            | 'beforeFullPage'
-            | 'afterFullPage'
+            'validationArtifact' | 'visualReviewArtifact' | 'beforeViewport' | 'afterViewport'
         >
     >;
 
@@ -335,17 +331,17 @@ function resolveCandidateMaterial(
         !validation.validationArtifact ||
         !validation.visualReviewArtifact ||
         !validation.beforeViewport ||
-        !validation.afterViewport ||
-        !validation.beforeFullPage ||
-        !validation.afterFullPage
+        !validation.afterViewport
     ) {
         return null;
     }
+    // An overview is absent where the browser captured none; the tiles carry that proof.
+    const { beforeFullPage, afterFullPage } = validation;
     const screenshots = [
         validation.beforeViewport,
         validation.afterViewport,
-        validation.beforeFullPage,
-        validation.afterFullPage,
+        ...(beforeFullPage ? [beforeFullPage] : []),
+        ...(afterFullPage ? [afterFullPage] : []),
     ];
     if (
         validation.validationArtifactId !== validation.validationArtifact.artifactId ||
@@ -353,16 +349,18 @@ function resolveCandidateMaterial(
             validation.screenshotArtifactIds,
             screenshots.map((artifact) => artifact.artifactId),
         ) ||
-        new Set(validation.screenshotArtifactIds).size !== 4 ||
+        new Set(validation.screenshotArtifactIds).size !== screenshots.length ||
         review.validationArtifactId !== validation.validationArtifactId ||
         review.beforeViewportArtifactId !== validation.beforeViewport.artifactId ||
         review.afterViewportArtifactId !== validation.afterViewport.artifactId ||
-        review.beforeFullPageArtifactId !== validation.beforeFullPage.artifactId ||
-        review.afterFullPageArtifactId !== validation.afterFullPage.artifactId ||
+        review.beforeFullPageArtifactId !== (beforeFullPage?.artifactId ?? null) ||
+        review.afterFullPageArtifactId !== (afterFullPage?.artifactId ?? null) ||
         !artifactBelongsToPhase(artifacts, validation.beforeViewport, baseline, 'screenshot') ||
-        !artifactBelongsToPhase(artifacts, validation.beforeFullPage, baseline, 'screenshot') ||
+        (beforeFullPage &&
+            !artifactBelongsToPhase(artifacts, beforeFullPage, baseline, 'screenshot')) ||
         !artifactBelongsToPhase(artifacts, validation.afterViewport, candidate, 'screenshot') ||
-        !artifactBelongsToPhase(artifacts, validation.afterFullPage, candidate, 'screenshot') ||
+        (afterFullPage &&
+            !artifactBelongsToPhase(artifacts, afterFullPage, candidate, 'screenshot')) ||
         !artifactBelongsToPhase(
             artifacts,
             validation.validationArtifact,
@@ -409,8 +407,7 @@ function projectCandidateBinding(
             visualReviewArtifact: projectArtifact(validation.visualReviewArtifact),
             beforeViewport: projectArtifact(validation.beforeViewport),
             afterViewport: projectArtifact(validation.afterViewport),
-            beforeFullPage: projectArtifact(validation.beforeFullPage),
-            afterFullPage: projectArtifact(validation.afterFullPage),
+            ...mapCandidateOverviews(validation, projectArtifact),
         };
     }
     return {
@@ -422,8 +419,7 @@ function projectCandidateBinding(
         visualReviewArtifact: projectArtifact(validation.visualReviewArtifact),
         beforeViewport: projectArtifact(validation.beforeViewport),
         afterViewport: projectArtifact(validation.afterViewport),
-        beforeFullPage: projectArtifact(validation.beforeFullPage),
-        afterFullPage: projectArtifact(validation.afterFullPage),
+        ...mapCandidateOverviews(validation, projectArtifact),
     };
 }
 
@@ -703,8 +699,7 @@ export function projectEnvironmentExecution(
         artifactPaths.verifiedCandidateScreenshots = {
             before: candidateValidationEvidence.beforeViewport.path,
             after: candidateValidationEvidence.afterViewport.path,
-            beforeFullPage: candidateValidationEvidence.beforeFullPage.path,
-            afterFullPage: candidateValidationEvidence.afterFullPage.path,
+            ...mapCandidateOverviews(candidateValidationEvidence, (artifact) => artifact.path),
         };
     }
     if (!candidateMaterial?.validation.verified && candidateMaterial?.validation.candidateRule) {
@@ -714,8 +709,7 @@ export function projectEnvironmentExecution(
         artifactPaths.rejectedCandidateScreenshots = {
             before: candidateMaterial.validation.beforeViewport.path,
             after: candidateMaterial.validation.afterViewport.path,
-            beforeFullPage: candidateMaterial.validation.beforeFullPage.path,
-            afterFullPage: candidateMaterial.validation.afterFullPage.path,
+            ...mapCandidateOverviews(candidateMaterial.validation, (artifact) => artifact.path),
             validationArtifactId: candidateMaterial.validation.validationArtifactId,
             candidateRule: candidateMaterial.validation.candidateRule,
             rejectionReasons: rejectedCandidate?.reasonCodes ?? [

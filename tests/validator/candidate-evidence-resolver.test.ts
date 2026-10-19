@@ -356,9 +356,9 @@ describe('resolveCandidateVisualEvidence', () => {
         });
 
         expect(result.beforeViewport.id).toBe('phase-b-viewport');
-        expect(result.beforeFullPage.id).toBe('phase-b-full-page');
+        expect(result.beforeFullPage?.id).toBe('phase-b-full-page');
         expect(result.afterViewport.id).toBe('phase-c-viewport');
-        expect(result.afterFullPage.id).toBe('phase-c-full-page');
+        expect(result.afterFullPage?.id).toBe('phase-c-full-page');
     });
 
     it('rejects a partial same-document pair instead of silently using another baseline', () => {

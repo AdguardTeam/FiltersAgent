@@ -15,6 +15,7 @@ import {
     CandidateVisualIntegrityBasis,
     CandidateVisualSymptomBasis,
 } from '../types/candidate-visual-review';
+import { FullPageOverviewMode } from '../types/full-page-overview-evidence';
 import type {
     CandidateNetworkVerification,
     PhaseHostRequests,
@@ -259,10 +260,11 @@ const MAX_OVERVIEW_OMISSION_REASON_CHARS = 400;
 /**
  * Say what the vision review actually looked at across the page.
  *
- * A review whose full-page overview was withheld as unreadable saw only the tile window, however
- * complete that window's own coverage proof is. Reporting `complete` there would tell a maintainer
- * the whole page was inspected, so the line says what was inspected instead and carries the plan's
- * reason — which names the inspected document range — beside it.
+ * A review whose full-page overview was withheld as unreadable, or never captured on a page too
+ * tall to read in one image, saw only the tile window, however complete that window's own coverage
+ * proof is. Reporting `complete` there would tell a maintainer the whole page was inspected, so the
+ * line says what was inspected instead and carries the plan's reason — which names the inspected
+ * document range — beside it.
  *
  * @param review - Runner-bound visual review being rendered.
  * @returns The coverage value rendered after the label.
@@ -272,7 +274,9 @@ function renderFullPageCoverage(
 ): string {
     const evidence = review.fullPageOverviewEvidence;
     const illegible = [evidence?.before, evidence?.after].filter(
-        (side) => side?.mode === 'omitted_illegible',
+        (side) =>
+            side?.mode === FullPageOverviewMode.OmittedIllegible ||
+            side?.mode === FullPageOverviewMode.UnavailableIllegible,
     );
     if (illegible.length === 0) {
         return `\`${review.coverageComplete ? 'complete' : 'incomplete'}\``;

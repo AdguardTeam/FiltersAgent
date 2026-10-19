@@ -61,12 +61,14 @@ export interface CandidateValidationSelection {
     afterScreenshotArtifactId?: string;
 
     /**
-     * Before full-page screenshot identifier selected for visual review.
+     * Before full-page screenshot identifier selected for visual review, absent when the browser
+     * captured none.
      */
     beforeFullPageScreenshotArtifactId?: string;
 
     /**
-     * After full-page screenshot identifier selected for visual review.
+     * After full-page screenshot identifier selected for visual review, absent when the browser
+     * captured none.
      */
     afterFullPageScreenshotArtifactId?: string;
 
@@ -309,38 +311,44 @@ export function verifiedCandidateScreenshotPaths(
         !candidateVerified ||
         !selection?.beforeScreenshotArtifactId ||
         !selection.afterScreenshotArtifactId ||
-        !selection.beforeFullPageScreenshotArtifactId ||
-        !selection.afterFullPageScreenshotArtifactId ||
         selection.beforeScreenshotArtifactId === selection.afterScreenshotArtifactId
     ) {
         return undefined;
     }
-    const before = artifacts.find(
-        (artifact) =>
-            artifact.type === 'screenshot' && artifact.id === selection.beforeScreenshotArtifactId,
-    );
-    const after = artifacts.find(
-        (artifact) =>
-            artifact.type === 'screenshot' && artifact.id === selection.afterScreenshotArtifactId,
-    );
-    const beforeFullPage = artifacts.find(
-        (artifact) =>
-            artifact.type === 'screenshot-full-page' &&
-            artifact.id === selection.beforeFullPageScreenshotArtifactId,
-    );
-    const afterFullPage = artifacts.find(
-        (artifact) =>
-            artifact.type === 'screenshot-full-page' &&
-            artifact.id === selection.afterFullPageScreenshotArtifactId,
-    );
-    return before && after && beforeFullPage && afterFullPage
-        ? {
-              before: before.path,
-              after: after.path,
-              beforeFullPage: beforeFullPage.path,
-              afterFullPage: afterFullPage.path,
-          }
+    /**
+     * Find one registered screenshot of the expected kind.
+     *
+     * @param artifactId - Screenshot identity the selection names.
+     * @param type - Artifact type it must be registered with.
+     * @returns The registered artifact, if any.
+     */
+    const registered = (artifactId: string, type: string) =>
+        artifacts.find((artifact) => artifact.type === type && artifact.id === artifactId);
+    const before = registered(selection.beforeScreenshotArtifactId, 'screenshot');
+    const after = registered(selection.afterScreenshotArtifactId, 'screenshot');
+    // An overview the browser never captured is absent; one the selection names must exist.
+    const beforeFullPageId = selection.beforeFullPageScreenshotArtifactId;
+    const afterFullPageId = selection.afterFullPageScreenshotArtifactId;
+    const beforeFullPage = beforeFullPageId
+        ? registered(beforeFullPageId, 'screenshot-full-page')
         : undefined;
+    const afterFullPage = afterFullPageId
+        ? registered(afterFullPageId, 'screenshot-full-page')
+        : undefined;
+    if (
+        !before ||
+        !after ||
+        (beforeFullPageId !== undefined && !beforeFullPage) ||
+        (afterFullPageId !== undefined && !afterFullPage)
+    ) {
+        return undefined;
+    }
+    return {
+        before: before.path,
+        after: after.path,
+        ...(beforeFullPage ? { beforeFullPage: beforeFullPage.path } : {}),
+        ...(afterFullPage ? { afterFullPage: afterFullPage.path } : {}),
+    };
 }
 
 /**

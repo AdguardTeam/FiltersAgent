@@ -193,7 +193,6 @@ export function findCompleteReporterSymptomCapture(
             capture.coverageComplete &&
             capture.reporterSymptomPresence === presence &&
             capture.viewport?.path &&
-            capture.fullPageOverview?.path &&
             capture.tiles.length > 0 &&
             capture.tiles.every((tile) => tile.path !== null)
         ) {
@@ -275,7 +274,7 @@ export function serializeConfigurationSpecificEnvironmentMatrix(
             profileKind: matrix.reporter.selectedSettingsProfileKind!,
             reporterSymptomPresence: ReporterSymptomPresence.Present,
             viewportArtifactId: matrix.reporterCapture.viewport!.artifactId,
-            fullPageOverviewArtifactId: matrix.reporterCapture.fullPageOverview!.artifactId,
+            fullPageOverviewArtifactId: matrix.reporterCapture.fullPageOverview?.artifactId ?? null,
             tileArtifactIds: matrix.reporterCapture.tiles.map((tile) => tile.artifactId),
         },
         controlled: {
@@ -283,7 +282,8 @@ export function serializeConfigurationSpecificEnvironmentMatrix(
             profileKind: SettingsProfileKind.DefaultsPlusRequired,
             reporterSymptomPresence: ReporterSymptomPresence.Absent,
             viewportArtifactId: matrix.controlledCapture.viewport!.artifactId,
-            fullPageOverviewArtifactId: matrix.controlledCapture.fullPageOverview!.artifactId,
+            fullPageOverviewArtifactId:
+                matrix.controlledCapture.fullPageOverview?.artifactId ?? null,
             tileArtifactIds: matrix.controlledCapture.tiles.map((tile) => tile.artifactId),
         },
     };
@@ -312,7 +312,7 @@ export function serializeAgentBrowserSessions(
                 tile.path === null ? [] : [{ artifactId: tile.artifactId, path: tile.path }],
             );
             const pathsComplete =
-                fullPageOverview !== null && tiles.length === capture.tiles.length;
+                capture.fullPageOverview?.path !== null && tiles.length === capture.tiles.length;
             return {
                 visionVerified: capture.visionVerified && pathsComplete,
                 viewportArtifactId: viewport?.artifactId ?? null,
@@ -424,12 +424,12 @@ export function describeVerifiedCandidateBindingFailure(
               ],
               [
                   'beforeFullPage',
-                  binding.beforeFullPage.artifactId,
+                  binding.beforeFullPage?.artifactId,
                   selection.beforeFullPageScreenshotArtifactId,
               ],
               [
                   'afterFullPage',
-                  binding.afterFullPage.artifactId,
+                  binding.afterFullPage?.artifactId,
                   selection.afterFullPageScreenshotArtifactId,
               ],
           ]
@@ -439,12 +439,12 @@ export function describeVerifiedCandidateBindingFailure(
             failures.push(`${name} artifactId differs`);
         }
     }
-    const pathPairs: Array<[string, string, string | undefined]> = screenshots
+    const pathPairs: Array<[string, string | undefined, string | undefined]> = screenshots
         ? [
               ['beforeViewport', binding.beforeViewport.path, screenshots.before],
               ['afterViewport', binding.afterViewport.path, screenshots.after],
-              ['beforeFullPage', binding.beforeFullPage.path, screenshots.beforeFullPage],
-              ['afterFullPage', binding.afterFullPage.path, screenshots.afterFullPage],
+              ['beforeFullPage', binding.beforeFullPage?.path, screenshots.beforeFullPage],
+              ['afterFullPage', binding.afterFullPage?.path, screenshots.afterFullPage],
           ]
         : [];
     for (const [name, bound, expected] of pathPairs) {
@@ -504,12 +504,12 @@ export function serializeVerifiedCandidateBinding(
         JSON.stringify(binding.visualReview) !== JSON.stringify(selection.visualReview) ||
         binding.beforeViewport.artifactId !== selection.beforeScreenshotArtifactId ||
         binding.afterViewport.artifactId !== selection.afterScreenshotArtifactId ||
-        binding.beforeFullPage.artifactId !== selection.beforeFullPageScreenshotArtifactId ||
-        binding.afterFullPage.artifactId !== selection.afterFullPageScreenshotArtifactId ||
+        binding.beforeFullPage?.artifactId !== selection.beforeFullPageScreenshotArtifactId ||
+        binding.afterFullPage?.artifactId !== selection.afterFullPageScreenshotArtifactId ||
         binding.beforeViewport.path !== screenshots.before ||
         binding.afterViewport.path !== screenshots.after ||
-        binding.beforeFullPage.path !== screenshots.beforeFullPage ||
-        binding.afterFullPage.path !== screenshots.afterFullPage
+        binding.beforeFullPage?.path !== screenshots.beforeFullPage ||
+        binding.afterFullPage?.path !== screenshots.afterFullPage
     ) {
         return undefined;
     }

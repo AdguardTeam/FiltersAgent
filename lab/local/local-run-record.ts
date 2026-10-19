@@ -8,6 +8,10 @@
 import { readFileSync } from 'node:fs';
 import type { AdGuardExtensionSettingsProfile } from '../../src/browser/adguard-extension-settings';
 import { ExtensionMode, type FixRunResult } from '../../src/types/fix-run-result';
+import {
+    candidateScreenshotPathList,
+    optionalPathList,
+} from '../../src/types/candidate-screenshot-paths';
 import { ActivationProof } from '../../src/types/activation-proof';
 import { CheckoutSource } from '../../src/types/checkout-source';
 import { ExtensionEnvironmentKind } from '../../src/types/extension-environment-kind';
@@ -354,17 +358,15 @@ export function buildLocalRunRecord(
 ): LocalRunRecord {
     const verified = result.artifactPaths.verifiedCandidateScreenshots;
     const rejected = result.artifactPaths.rejectedCandidateScreenshots;
-    const rejectedScreenshots = rejected
-        ? [rejected.before, rejected.after, rejected.beforeFullPage, rejected.afterFullPage]
-        : [];
+    const rejectedScreenshots = rejected ? candidateScreenshotPathList(rejected) : [];
     const rejectedPairs: NonNullable<LocalRunRecord['evidence']['rejectedPairs']> = [];
     if (rejected) {
         rejectedPairs.push({
             reason: rejected.rejectionReasons.join(', '),
             beforeScreenshots: [rejected.before],
             afterScreenshots: [rejected.after],
-            beforeFullPageScreenshots: [rejected.beforeFullPage],
-            afterFullPageScreenshots: [rejected.afterFullPage],
+            beforeFullPageScreenshots: optionalPathList(rejected.beforeFullPage),
+            afterFullPageScreenshots: optionalPathList(rejected.afterFullPage),
         });
     }
     const copiedIssueScreenshots = copiedIssueScreenshotPaths(executions);
@@ -436,8 +438,8 @@ export function buildLocalRunRecord(
             ),
             beforeScreenshots: verified ? [verified.before] : [],
             afterScreenshots: verified ? [verified.after] : [],
-            beforeFullPageScreenshots: verified ? [verified.beforeFullPage] : [],
-            afterFullPageScreenshots: verified ? [verified.afterFullPage] : [],
+            beforeFullPageScreenshots: optionalPathList(verified?.beforeFullPage),
+            afterFullPageScreenshots: optionalPathList(verified?.afterFullPage),
             rejectedScreenshots,
             rejectedPairs,
         },

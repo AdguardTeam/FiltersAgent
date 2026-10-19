@@ -116,14 +116,14 @@ export interface AgentRuntimeCandidateValidationBinding {
     afterViewport: AgentRuntimeCandidateArtifactEvidence;
 
     /**
-     * Before-state full-page screenshot inspected by the review.
+     * Before-state full-page screenshot inspected by the review, absent when none was captured.
      */
-    beforeFullPage: AgentRuntimeCandidateArtifactEvidence;
+    beforeFullPage?: AgentRuntimeCandidateArtifactEvidence;
 
     /**
-     * After-state full-page screenshot inspected by the review.
+     * After-state full-page screenshot inspected by the review, absent when none was captured.
      */
-    afterFullPage: AgentRuntimeCandidateArtifactEvidence;
+    afterFullPage?: AgentRuntimeCandidateArtifactEvidence;
 }
 
 /**
@@ -131,7 +131,8 @@ export interface AgentRuntimeCandidateValidationBinding {
  */
 export interface AgentRuntimePageCaptureEvidence {
     /**
-     * Whether vision inspected the full-page overview and every tile from this exact capture.
+     * Whether vision inspected every tile, and the overview when it could be read, from this exact
+     * capture.
      */
     visionVerified: boolean;
 
@@ -141,7 +142,8 @@ export interface AgentRuntimePageCaptureEvidence {
     viewport: AgentRuntimeScreenshotEvidence | null;
 
     /**
-     * Full-page overview captured by the same screenshot call.
+     * Full-page overview captured by the same screenshot call, or null when the browser captured
+     * none.
      */
     fullPageOverview: AgentRuntimeScreenshotEvidence | null;
 
@@ -225,7 +227,7 @@ export interface AgentRuntimeEnvironmentEvidence {
     navigationVerified: boolean;
 
     /**
-     * Whether vision inspected a complete full-page overview and every captured tile.
+     * Whether vision inspected every captured tile, and the overview when one could be read.
      */
     fullVisionVerified: boolean;
 

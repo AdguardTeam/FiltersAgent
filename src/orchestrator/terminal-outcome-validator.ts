@@ -311,7 +311,8 @@ export function validateTerminalOutcome(
             return {
                 error:
                     'Every report-only decision requires a navigated full-page capture whose ' +
-                    'overview and every original-resolution tile were inspected by vision. ' +
+                    'every original-resolution tile, and the overview when the browser captured ' +
+                    'one that vision can read, were inspected by vision. ' +
                     `Incomplete requirements: ${retryDetail}.`,
                 errorKind: 'report_only_full_vision_required',
                 retryable: true,

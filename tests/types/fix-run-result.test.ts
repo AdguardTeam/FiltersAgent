@@ -1033,6 +1033,32 @@ describe('FixRunResultSchema browser session evidence', () => {
     });
 });
 
+describe('FixRunResultSchema on a page too tall for one full-page capture', () => {
+    // The browser cannot capture an overview of a very tall document; the tiles carry the proof,
+    // so a run on such a page still publishes what it verified.
+    it('accepts a vision-verified capture the browser took no overview of', () => {
+        const result = resultWithSession();
+        const capture = result.browserSessions![0].captures[0];
+        capture.fullPageOverviewArtifactId = null;
+        capture.fullPageOverview = null;
+
+        expect(v.safeParse(FixRunResultSchema, result).success).toBe(true);
+    });
+
+    it('accepts a verified candidate whose before and after states have no overview', () => {
+        const result = resultWithCandidateBinding();
+        result.candidateVisualReview!.beforeFullPageArtifactId = null;
+        result.candidateVisualReview!.afterFullPageArtifactId = null;
+        delete result.candidateValidationEvidence!.beforeFullPage;
+        delete result.candidateValidationEvidence!.afterFullPage;
+        const { before, after } = result.artifactPaths.verifiedCandidateScreenshots!;
+        result.artifactPaths.verifiedCandidateScreenshots = { before, after };
+        result.artifactPaths.screenshots = [before, after];
+
+        expect(v.safeParse(FixRunResultSchema, result).success).toBe(true);
+    });
+});
+
 describe('FixRunResultSchema missing information block', () => {
     /**
      * Build one schema-valid capped missing-information record list.

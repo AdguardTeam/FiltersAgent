@@ -78,7 +78,8 @@ export interface CandidateVisualDocumentSize {
 }
 
 /**
- * Four aligned screenshots supplied to the semantic candidate review.
+ * Aligned screenshots supplied to the semantic candidate review: both viewports and the full-page
+ * overviews the browser captured, with the original-resolution tiles.
  */
 export interface CandidateVisualEvidence {
     /**
@@ -92,14 +93,14 @@ export interface CandidateVisualEvidence {
     afterViewport: CandidateVisualEvidenceImage;
 
     /**
-     * Full page before the candidate rule was applied.
+     * Full page before the candidate rule was applied, absent when the browser captured none.
      */
-    beforeFullPage: CandidateVisualEvidenceImage;
+    beforeFullPage?: CandidateVisualEvidenceImage;
 
     /**
-     * Full page after the candidate rule was applied.
+     * Full page after the candidate rule was applied, absent when the browser captured none.
      */
-    afterFullPage: CandidateVisualEvidenceImage;
+    afterFullPage?: CandidateVisualEvidenceImage;
 
     /**
      * Overlapping original-resolution tiles covering the before document.

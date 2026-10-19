@@ -275,8 +275,9 @@ export function registerLifecycleTools(
                 name: 'inspect_full_page_capture',
                 description:
                     'Inspect the latest screenshot(captureTiles=true) from the active browser ' +
-                    'session. The runner sends its full-page overview and ordered original-' +
-                    'resolution tiles to the dedicated vision model in bounded batches, ' +
+                    'session. The runner sends its ordered original-resolution tiles, and the ' +
+                    'full-page overview when the browser captured one that vision can read, to ' +
+                    'the dedicated vision model in bounded batches, ' +
                     'returns one compact typed inventory, and reports exact artifact IDs for ' +
                     'any batch that needs a focused analyze_screenshot retry.',
                 parameters: registeredParameters(ToolName.InspectFullPageCapture),

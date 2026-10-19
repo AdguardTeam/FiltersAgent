@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { applyRuleResultForModel } from '../../src/orchestrator/apply-rule-model-result';
+import {
+    applyRuleResultForModel,
+    environmentLimitationAnswer,
+} from '../../src/orchestrator/apply-rule-model-result';
 import { CandidateRefusalKind } from '../../src/orchestrator/candidate-refusals';
 import { MAX_TOOL_RESULT_BYTES } from '../../src/pi/tool-result-envelope';
 
@@ -56,5 +59,34 @@ describe('applyRuleResultForModel', () => {
         };
 
         expect(applyRuleResultForModel(refusal)).toEqual(refusal);
+    });
+});
+
+describe('environmentLimitationAnswer', () => {
+    // A repeat that reads like a fresh failure invites the model to try again, and a fresh failure
+    // marked as a repeat tells it nothing changed when something did.
+    const earlier = {
+        code: 'phase_proof_unavailable',
+        stage: 'phase',
+        detail: 'The controlled browser observation did not complete.',
+    } as const;
+
+    it.each([
+        { change: 'another code', limitation: { ...earlier, code: 'phase_open_failed' as const } },
+        {
+            change: 'the same code with another detail',
+            limitation: { ...earlier, detail: 'The validation deadline stopped the observation.' },
+        },
+    ])('answers $change as a fresh failure', ({ limitation }) => {
+        const answer = environmentLimitationAnswer(limitation, earlier);
+
+        expect(answer).toMatchObject({ errorKind: 'environment_capability_limited', limitation });
+        expect(answer).not.toHaveProperty('repeatedFailure');
+    });
+
+    it('marks the limitation an earlier call ended on as a repeat', () => {
+        const answer = environmentLimitationAnswer({ ...earlier }, earlier);
+
+        expect(answer).toMatchObject({ repeatedFailure: true, retryable: false });
     });
 });

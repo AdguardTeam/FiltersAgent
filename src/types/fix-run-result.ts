@@ -539,7 +539,8 @@ export const AgentConfigurationProfileReferenceSchema = v.strictObject({
     profileKind: AgentSettingsProfileKindSchema,
     reporterSymptomPresence: v.picklist(SYMPTOM_PRESENCE_VALUES),
     viewportArtifactId: v.pipe(v.string(), v.minLength(1)),
-    fullPageOverviewArtifactId: v.pipe(v.string(), v.minLength(1)),
+    // Null when the browser captured no overview; the tiles carry the coverage proof.
+    fullPageOverviewArtifactId: v.nullable(v.pipe(v.string(), v.minLength(1))),
     tileArtifactIds: v.pipe(v.array(v.pipe(v.string(), v.minLength(1))), v.minLength(1)),
 });
 
@@ -596,8 +597,9 @@ export const AgentCandidateValidationEvidenceSchema = v.pipe(
         visualReviewArtifact: AgentCandidateArtifactEvidenceSchema,
         beforeViewport: AgentCandidateArtifactEvidenceSchema,
         afterViewport: AgentCandidateArtifactEvidenceSchema,
-        beforeFullPage: AgentCandidateArtifactEvidenceSchema,
-        afterFullPage: AgentCandidateArtifactEvidenceSchema,
+        // Absent where the browser captured no overview; the tiles carry that state's proof.
+        beforeFullPage: v.optional(AgentCandidateArtifactEvidenceSchema),
+        afterFullPage: v.optional(AgentCandidateArtifactEvidenceSchema),
     }),
     v.check(
         (evidence) =>
@@ -614,16 +616,16 @@ export const AgentCandidateValidationEvidenceSchema = v.pipe(
 export const VerifiedCandidateScreenshotPathsSchema = v.object({
     before: v.pipe(v.string(), v.minLength(1)),
     after: v.pipe(v.string(), v.minLength(1)),
-    beforeFullPage: v.pipe(v.string(), v.minLength(1)),
-    afterFullPage: v.pipe(v.string(), v.minLength(1)),
+    beforeFullPage: v.optional(v.pipe(v.string(), v.minLength(1))),
+    afterFullPage: v.optional(v.pipe(v.string(), v.minLength(1))),
 });
 
 export const RejectedCandidateScreenshotPathsSchema = v.pipe(
     v.object({
         before: v.pipe(v.string(), v.minLength(1)),
         after: v.pipe(v.string(), v.minLength(1)),
-        beforeFullPage: v.pipe(v.string(), v.minLength(1)),
-        afterFullPage: v.pipe(v.string(), v.minLength(1)),
+        beforeFullPage: v.optional(v.pipe(v.string(), v.minLength(1))),
+        afterFullPage: v.optional(v.pipe(v.string(), v.minLength(1))),
         validationArtifactId: v.pipe(v.string(), v.regex(CANDIDATE_VALIDATION_ARTIFACT_ID_PATTERN)),
         candidateRule: v.pipe(
             v.string(),
@@ -678,7 +680,6 @@ function hasClassifiedCapture(
             capture.coverageComplete &&
             capture.reporterSymptomPresence === presence &&
             capture.viewport !== null &&
-            capture.fullPageOverview !== null &&
             capture.viewportArtifactId === reference.viewportArtifactId &&
             capture.fullPageOverviewArtifactId === reference.fullPageOverviewArtifactId &&
             capture.tileArtifactIds.length === reference.tileArtifactIds.length &&
@@ -783,9 +784,9 @@ function environmentProjectionFailureMessage(issue: RejectedResultIssue): string
 /**
  * Name the exact reason a candidate validation binding failed its cross-field invariant.
  *
- * The invariant is a long conjunction over four artifact pairs, the bound session, and the executor
- * proof. Reporting only that it failed leaves the reader with a whole run of evidence and no way to
- * tell which field disagreed, so the message carries the failed field names.
+ * The invariant is a long conjunction over the bound screenshots, the bound session, and the
+ * executor proof. Reporting only that it failed leaves the reader with a whole run of evidence and
+ * no way to tell which field disagreed, so the message carries the failed field names.
  *
  * @param issue - Valibot issue carrying the rejected result.
  * @returns Human-readable message naming every disagreeing field.
@@ -1031,8 +1032,8 @@ const FixRunResultInvariantsSchema = v.pipe(
         const boundPairs = [
             binding.beforeViewport,
             binding.afterViewport,
-            binding.beforeFullPage,
-            binding.afterFullPage,
+            ...(binding.beforeFullPage ? [binding.beforeFullPage] : []),
+            ...(binding.afterFullPage ? [binding.afterFullPage] : []),
         ];
         const candidateRuleHash = result.candidatePatch
             ? createHash('sha256').update(result.candidatePatch.rule).digest('hex')
@@ -1069,12 +1070,12 @@ const FixRunResultInvariantsSchema = v.pipe(
             screenshots !== undefined &&
             binding.beforeViewport.artifactId === review.beforeViewportArtifactId &&
             binding.afterViewport.artifactId === review.afterViewportArtifactId &&
-            binding.beforeFullPage.artifactId === review.beforeFullPageArtifactId &&
-            binding.afterFullPage.artifactId === review.afterFullPageArtifactId &&
+            (binding.beforeFullPage?.artifactId ?? null) === review.beforeFullPageArtifactId &&
+            (binding.afterFullPage?.artifactId ?? null) === review.afterFullPageArtifactId &&
             binding.beforeViewport.path === screenshots.before &&
             binding.afterViewport.path === screenshots.after &&
-            binding.beforeFullPage.path === screenshots.beforeFullPage &&
-            binding.afterFullPage.path === screenshots.afterFullPage &&
+            binding.beforeFullPage?.path === screenshots.beforeFullPage &&
+            binding.afterFullPage?.path === screenshots.afterFullPage &&
             boundPairs.every((pair) => result.artifactPaths.screenshots.includes(pair.path)) &&
             new Set(boundPairs.map((pair) => pair.artifactId)).size === boundPairs.length &&
             new Set(boundPairs.map((pair) => pair.path)).size === boundPairs.length &&
@@ -1146,15 +1147,14 @@ const FixRunResultInvariantsSchema = v.pipe(
                                 (capture.fullPageOverviewArtifactId === null) &&
                             capture.tileArtifactIds.length === capture.tiles.length,
                     ) &&
+                    // The overview is context the browser cannot always capture; the tiles
+                    // carry the coverage proof.
                     verifiedCaptures.every(
-                        (capture) =>
-                            capture.coverageComplete &&
-                            capture.fullPageOverview !== null &&
-                            capture.tiles.length > 0,
+                        (capture) => capture.coverageComplete && capture.tiles.length > 0,
                     )
                 );
             }),
-        'Vision-verified sessions require a complete inspected full-page capture and tiles.',
+        'Vision-verified sessions require a complete inspected tile capture.',
     ),
     v.check(
         (result) => noPatchVerdictIsSessionBound(result),

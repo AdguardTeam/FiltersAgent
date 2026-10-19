@@ -394,6 +394,45 @@ describe('projectEnvironmentResult', () => {
         });
     });
 
+    it('binds a verified candidate whose baseline and candidate phases have no overview', () => {
+        // The browser cannot capture an overview of a very tall document; the tiles carry the
+        // proof, so the verified candidate publishes both viewports and no overview.
+        const phases = (['A', 'B', 'C'] as const).map((value) => {
+            const evidence = phase(value);
+            if (evidence.completion.kind !== 'observed') {
+                throw new Error('the fixture phase is observed');
+            }
+            const completion = evidence.completion;
+            completion.artifacts = completion.artifacts.filter(
+                (artifact) => !artifact.artifactId.startsWith('full-'),
+            );
+            for (const capture of completion.captures ?? []) {
+                capture.fullPageOverviewArtifactId = null;
+                capture.fullPageOverview = null;
+            }
+            if (completion.candidateValidation && completion.visualReview) {
+                delete completion.candidateValidation.beforeFullPage;
+                delete completion.candidateValidation.afterFullPage;
+                completion.candidateValidation.screenshotArtifactIds = ['viewport-B', 'viewport-C'];
+                completion.visualReview.beforeFullPageArtifactId = null;
+                completion.visualReview.afterFullPageArtifactId = null;
+            }
+            return evidence;
+        });
+
+        const projected = projectEnvironmentResult(execution(phases));
+
+        expect(projected?.candidateValidationEvidence).toMatchObject({
+            beforeViewport: { artifactId: 'viewport-B' },
+            afterViewport: { artifactId: 'viewport-C' },
+        });
+        expect(projected?.candidateValidationEvidence).not.toHaveProperty('beforeFullPage');
+        expect(projected?.artifactPaths.verifiedCandidateScreenshots).toEqual({
+            before: '/artifacts/viewport-B.png',
+            after: '/artifacts/viewport-C.png',
+        });
+    });
+
     it('keeps the accepted candidate when a later experiment ended inconclusive', () => {
         // Run 237885 (2026-08-10): the verified candidate experiment was followed by two
         // honest baseline_symptom_absent attempts for another reported element. The finalize

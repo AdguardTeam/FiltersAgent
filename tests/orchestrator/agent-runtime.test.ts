@@ -1308,8 +1308,8 @@ describe('AgentRuntime', () => {
                             candidateRuleHash,
                             beforeViewportArtifactId: options.evidence.beforeViewport.id,
                             afterViewportArtifactId: options.evidence.afterViewport.id,
-                            beforeFullPageArtifactId: options.evidence.beforeFullPage.id,
-                            afterFullPageArtifactId: options.evidence.afterFullPage.id,
+                            beforeFullPageArtifactId: options.evidence.beforeFullPage?.id ?? null,
+                            afterFullPageArtifactId: options.evidence.afterFullPage?.id ?? null,
                             model: 'vision-model',
                             rationale: verified
                                 ? 'The advertisement disappeared without page damage.'
@@ -3326,6 +3326,58 @@ describe('AgentRuntime', () => {
             expect(observeEnvironmentPhase.mock.calls.length).toBeGreaterThan(
                 callsAfterTwoExperiments,
             );
+        } finally {
+            cleanupFixture();
+        }
+    });
+
+    it('answers a repeated apply_rule after an environment failure as that failure, unrun', async () => {
+        // money.pl: the baseline phase failed its observation, and the second identical call got
+        // the same sticky limitation without any phase running, in an answer that read as a fresh
+        // failure — so the agent spent a turn retrying.
+        const observeEnvironmentPhase = vi.fn(
+            async (
+                input: AdsEnvironmentPhaseObservationInput,
+            ): Promise<ValidatorPhaseCompletion> => {
+                if (input.phase === 'B') {
+                    throw new Error('the baseline capture could not be inspected');
+                }
+                return {
+                    kind: 'observed',
+                    sessionId: input.proof.sessionId,
+                    targetUrl: 'https://nettg.pl/',
+                    targetObservation: { symptomPresent: true, pageUsable: true },
+                    navigationVerified: true,
+                    artifacts: [],
+                    vision: null,
+                    candidateValidation: null,
+                    rejectedCandidates: [],
+                };
+            },
+        );
+        const { runtime, cleanupFixture } =
+            await baselineSymptomAbsentHarness(observeEnvironmentPhase);
+        try {
+            const candidateRule = 'nettg.pl##.money-ecommerce-container';
+
+            const first = await runtime.registry.dispatch('apply_rule', { candidateRule });
+            expect(first).toMatchObject({
+                errorKind: 'environment_capability_limited',
+                retryable: false,
+                limitation: { code: 'phase_proof_unavailable' },
+            });
+            expect(first).not.toHaveProperty('repeatedFailure');
+            const observedPhases = observeEnvironmentPhase.mock.calls.length;
+
+            const second = await runtime.registry.dispatch('apply_rule', { candidateRule });
+
+            expect(second).toMatchObject({
+                errorKind: 'environment_capability_limited',
+                retryable: false,
+                repeatedFailure: true,
+                limitation: (first as { limitation: unknown }).limitation,
+            });
+            expect(observeEnvironmentPhase.mock.calls.length).toBe(observedPhases);
         } finally {
             cleanupFixture();
         }

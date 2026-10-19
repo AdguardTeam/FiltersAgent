@@ -309,8 +309,8 @@ function evidenceArtifactIds(options: CandidateVisualVerifierOptions): string[] 
     return [
         options.evidence.beforeViewport.id,
         options.evidence.afterViewport.id,
-        options.evidence.beforeFullPage.id,
-        options.evidence.afterFullPage.id,
+        ...(options.evidence.beforeFullPage ? [options.evidence.beforeFullPage.id] : []),
+        ...(options.evidence.afterFullPage ? [options.evidence.afterFullPage.id] : []),
         ...options.evidence.beforeTiles.map((tile) => tile.id),
         ...options.evidence.afterTiles.map((tile) => tile.id),
     ];

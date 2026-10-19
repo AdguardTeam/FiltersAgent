@@ -9,10 +9,8 @@
  * imported back.
  */
 import type { TraceRecorder } from '../tracer/trace-recorder';
-import type {
-    CandidateVisualFullPageOverviewEvidence,
-    CandidateVisualInstance,
-} from '../types/candidate-visual-review';
+import type { CandidateVisualInstance } from '../types/candidate-visual-review';
+import type { CandidateVisualFullPageOverviewEvidence } from '../types/full-page-overview-evidence';
 import type { CaptureState } from '../types/validation';
 
 /**

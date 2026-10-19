@@ -335,6 +335,82 @@ describe('FilteringEnvironmentExecutionRecorder', () => {
         expect(() => recorder.completePhase(token, candidate)).toThrow(/artifact|boundary/u);
     });
 
+    it('records a candidate binding whose baseline and candidate phases have no overview', () => {
+        // The browser cannot capture an overview of a very tall document; the tiles carry the
+        // proof, so the binding names both viewports and no overview.
+        const recorder = new FilteringEnvironmentExecutionRecorder('run-6', host());
+        recorder.registerAdapter(state);
+        for (const phase of ['A', 'B'] as const) {
+            const token = recorder.beginPhase({
+                runId: 'run-6',
+                experimentId: 'experiment-tall',
+                phase,
+            });
+            recorder.bindPhaseLease(token, lease(phase), state);
+            recorder.completePhase(token, completion(`session-${phase}`));
+        }
+        const token = recorder.beginPhase({
+            runId: 'run-6',
+            experimentId: 'experiment-tall',
+            phase: 'C',
+        });
+        recorder.bindPhaseLease(token, lease('C'), state);
+        const validationArtifactId = `validation-${FIXTURE_CANDIDATE_DIGEST.slice(0, 12)}`;
+        const candidate = completion('session-C');
+        candidate.artifacts.push(
+            { artifactId: validationArtifactId, kind: 'validation', path: 'validation.json' },
+            { artifactId: 'vision-C', kind: 'vision', path: 'vision.json' },
+        );
+        const beforeViewport = {
+            artifactId: 'session-B-viewport',
+            kind: 'screenshot' as const,
+            path: 'viewport.png',
+        };
+        candidate.vision = { artifactId: 'vision-C', verdict: 'verified' };
+        candidate.candidateValidation = {
+            validationArtifactId,
+            candidateDigest: FIXTURE_CANDIDATE_DIGEST,
+            verified: true,
+            screenshotArtifactIds: ['session-B-viewport', 'session-C-viewport'],
+            validationArtifact: candidate.artifacts[1],
+            visualReviewArtifact: candidate.artifacts[2],
+            beforeViewport,
+            afterViewport: candidate.artifacts[0],
+        };
+        candidate.visualReview = {
+            verdict: 'verified',
+            symptom: 'resolved',
+            symptomScope: 'The reported advertisement.',
+            adLayoutResidue: 'absent',
+            coverageComplete: true,
+            beforeInstances: [
+                {
+                    artifactId: 'session-B-viewport',
+                    landmark: 'Article body',
+                    description: 'The advertisement is visible.',
+                },
+            ],
+            remainingInstances: [],
+            pageIntegrity: 'intact',
+            validationArtifactId,
+            candidateRuleHash: FIXTURE_CANDIDATE_DIGEST,
+            beforeViewportArtifactId: 'session-B-viewport',
+            afterViewportArtifactId: 'session-C-viewport',
+            beforeFullPageArtifactId: null,
+            afterFullPageArtifactId: null,
+            model: 'vision-model',
+            rationale: 'The advertisement disappeared without visible page damage.',
+            observedDamage: [],
+        };
+
+        const evidence = recorder.completePhase(token, candidate);
+
+        expect(evidence.completion).toMatchObject({
+            kind: 'observed',
+            candidateValidation: { verified: true, beforeViewport, afterViewport: {} },
+        });
+    });
+
     it('cannot finalize before cleanup and emits one immutable canonical execution afterward', () => {
         const recorder = new FilteringEnvironmentExecutionRecorder('run-6', host());
         recorder.registerAdapter(state);

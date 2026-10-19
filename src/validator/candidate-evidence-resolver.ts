@@ -16,6 +16,7 @@ import {
     type PhaseResult,
 } from '../types/validation';
 import type { CandidateVisualDocumentSize } from './candidate-visual-evidence';
+import { mapCandidateOverviews } from '../types/candidate-screenshot-paths';
 
 /**
  * Inputs used to resolve browser evidence for one candidate review.
@@ -133,9 +134,10 @@ export interface CandidateVisualEvidence {
     beforeViewport: ResolvedCandidateScreenshot;
 
     /**
-     * Full-page screenshot captured before applying the candidate.
+     * Full-page screenshot captured before applying the candidate, absent when the browser captured
+     * none; the tiles carry the coverage proof.
      */
-    beforeFullPage: ResolvedCandidateScreenshot;
+    beforeFullPage?: ResolvedCandidateScreenshot;
 
     /**
      * Viewport screenshot captured after applying the candidate.
@@ -143,9 +145,10 @@ export interface CandidateVisualEvidence {
     afterViewport: ResolvedCandidateScreenshot;
 
     /**
-     * Full-page screenshot captured after applying the candidate.
+     * Full-page screenshot captured after applying the candidate, absent when the browser captured
+     * none.
      */
-    afterFullPage: ResolvedCandidateScreenshot;
+    afterFullPage?: ResolvedCandidateScreenshot;
 
     /**
      * Original-resolution tiles covering the before document.
@@ -454,7 +457,8 @@ function assertAlignedSameDocumentPair(phaseC: PhaseResult): void {
  * page.
  *
  * @param options - Runner artifact root, registry, and selected validation artifact ID.
- * @returns Parsed factual data and four canonical screenshot references.
+ * @returns Parsed factual data and canonical screenshot references: both viewports and the
+ *   full-page overviews the browser captured.
  */
 export function resolveCandidateVisualEvidence(
     options: ResolveCandidateVisualEvidenceOptions,
@@ -506,11 +510,20 @@ export function resolveCandidateVisualEvidence(
         : phaseB.fullPageScreenshotArtifactId;
     const afterViewportId = phaseC.screenshotArtifactId;
     const afterFullPageId = phaseC.fullPageScreenshotArtifactId;
-    if (!beforeViewportId || !beforeFullPageId || !afterViewportId || !afterFullPageId) {
+    if (!beforeViewportId || !afterViewportId) {
         throw new Error(
-            `Factual validation has incomplete viewport or full-page evidence: ${options.validationArtifactId}`,
+            `Factual validation has incomplete viewport evidence: ${options.validationArtifactId}`,
         );
     }
+    /**
+     * Resolve one registered screenshot of this validation.
+     *
+     * @param artifactId - Screenshot identity the factual record names.
+     * @param role - Media role the artifact must be registered with.
+     * @returns The bound screenshot.
+     */
+    const screenshot = (artifactId: string, role: Parameters<typeof resolveScreenshot>[3]) =>
+        resolveScreenshot(artifacts, options.artifactsDir, artifactId, role);
 
     const beforeTileCoverage = resolveTileCoverage(
         useSameDocumentPair ? phaseC.sameDocumentControlTileCoverage : phaseB.tileCoverage,
@@ -525,29 +538,12 @@ export function resolveCandidateVisualEvidence(
 
     return {
         factualValidation,
-        beforeViewport: resolveScreenshot(
-            artifacts,
-            options.artifactsDir,
-            beforeViewportId,
-            'screenshot',
-        ),
-        beforeFullPage: resolveScreenshot(
-            artifacts,
-            options.artifactsDir,
-            beforeFullPageId,
-            'screenshot-full-page',
-        ),
-        afterViewport: resolveScreenshot(
-            artifacts,
-            options.artifactsDir,
-            afterViewportId,
-            'screenshot',
-        ),
-        afterFullPage: resolveScreenshot(
-            artifacts,
-            options.artifactsDir,
-            afterFullPageId,
-            'screenshot-full-page',
+        beforeViewport: screenshot(beforeViewportId, 'screenshot'),
+        afterViewport: screenshot(afterViewportId, 'screenshot'),
+        // An overview the browser never captured stays absent; the tiles carry that proof.
+        ...mapCandidateOverviews(
+            { beforeFullPage: beforeFullPageId, afterFullPage: afterFullPageId },
+            (artifactId) => screenshot(artifactId, 'screenshot-full-page'),
         ),
         beforeTiles: beforeTileCoverage.tiles,
         afterTiles: afterTileCoverage.tiles,

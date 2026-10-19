@@ -153,6 +153,16 @@ The format is based on [Keep a Changelog], and this project adheres to
   no HTTPS: preparation now sends an HTTPS request to the issue's site through
   the CLI, and a run whose request does not go through the filter ends
   capability-limited with `https_filtering_unproven`.
+- Fixed `apply_rule` never giving a verdict on pages too tall for one
+  full-page screenshot, about 17,500 px and taller in Chromium: the
+  original-resolution tiles now prove such a page, the trace records the
+  browser's error for the missing screenshot, and a full-page screenshot over
+  the 5 MB vision limit on such a page no longer blocks the review.
+- Fixed `inspect_full_page_capture` refusing a complete tile capture as
+  incomplete when the browser could not take the full-page screenshot.
+- Fixed a repeated `apply_rule` after a filtering environment failure reading
+  like a new failure: the answer now says it repeats the earlier failure and
+  ran no experiment.
 
 ## [1.0.1] - 2026-10-15
 

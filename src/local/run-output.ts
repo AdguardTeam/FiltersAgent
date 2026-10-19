@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import * as v from 'valibot';
+import { candidateScreenshotPathList, optionalPathList } from '../types/candidate-screenshot-paths';
 import { RunUsageSummarySchema, type RunUsageSummary } from '../types/usage-summary';
 import { createRunUsageCollector } from '../pi/usage-collector';
 import { AgentRunArtifactsSchema, type AgentRunArtifacts } from '../types/agent-run-artifacts';
@@ -142,9 +143,7 @@ export const LocalRunRecordSchema: v.GenericSchema<LocalRunRecord> = v.pipe(
     }),
     v.check((record) => {
         const verified = record.result.artifactPaths.verifiedCandidateScreenshots;
-        const expected = verified
-            ? [verified.before, verified.after, verified.beforeFullPage, verified.afterFullPage]
-            : [];
+        const expected = verified ? candidateScreenshotPathList(verified) : [];
         const actual = [
             ...record.evidence.beforeScreenshots,
             ...record.evidence.afterScreenshots,
@@ -158,9 +157,7 @@ export const LocalRunRecordSchema: v.GenericSchema<LocalRunRecord> = v.pipe(
     }, 'Local report visual evidence must match the runner-bound candidate screenshot paths.'),
     v.check((record) => {
         const rejected = record.result.artifactPaths.rejectedCandidateScreenshots;
-        const expectedScreenshots = rejected
-            ? [rejected.before, rejected.after, rejected.beforeFullPage, rejected.afterFullPage]
-            : [];
+        const expectedScreenshots = rejected ? candidateScreenshotPathList(rejected) : [];
         const pairs = record.evidence.rejectedPairs ?? [];
         if (
             record.evidence.rejectedScreenshots.length !== expectedScreenshots.length ||
@@ -183,12 +180,12 @@ export const LocalRunRecordSchema: v.GenericSchema<LocalRunRecord> = v.pipe(
             pair.beforeScreenshots[0] === rejected.before &&
             pair.afterScreenshots.length === 1 &&
             pair.afterScreenshots[0] === rejected.after &&
-            pair.beforeFullPageScreenshots.length === 1 &&
-            pair.beforeFullPageScreenshots[0] === rejected.beforeFullPage &&
-            pair.afterFullPageScreenshots.length === 1 &&
-            pair.afterFullPageScreenshots[0] === rejected.afterFullPage
+            JSON.stringify(pair.beforeFullPageScreenshots) ===
+                JSON.stringify(optionalPathList(rejected.beforeFullPage)) &&
+            JSON.stringify(pair.afterFullPageScreenshots) ===
+                JSON.stringify(optionalPathList(rejected.afterFullPage))
         );
-    }, 'Local report rejected visual evidence must match the runner-bound four-image pair.'),
+    }, 'Local report rejected visual evidence must match the runner-bound candidate pair.'),
 );
 
 /**

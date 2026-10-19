@@ -1,13 +1,14 @@
 import { createHash } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Page } from 'playwright-core';
 import * as v from 'valibot';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ConsoleCoverage, type IBrowserSession } from '../../src/browser/browser-interfaces';
-import type { TraceRecorder } from '../../src/tracer/trace-recorder';
-import type { SingleShotClient } from '../../src/pi/single-shot-types';
+import { TraceRecorder } from '../../src/tracer/trace-recorder';
+import { TraceEventType } from '../../src/types/trace';
+import { SingleShotResultKind, type SingleShotClient } from '../../src/pi/single-shot-types';
 
 /**
  * A SingleShotClient stub; this suite injects dependency seams for every vision consumer.
@@ -741,6 +742,11 @@ interface ExtensionExperimentOptions {
      * omitted.
      */
     seen?: ExperimentSeams;
+
+    /**
+     * Whether the browser captured a full-page overview in every phase; it did when omitted.
+     */
+    overviewCaptured?: boolean;
 }
 
 /**
@@ -782,6 +788,7 @@ async function runExtensionExperiment(
         options.symptomPresence ?? ((phase) => (phase === 'C' ? 'absent' : 'present'));
     const networkLog = options.networkLog ?? (() => []);
     const modelOutput = options.modelOutput ?? CLEAN_UNCLEAR_OUTPUT;
+    const overviewCaptured = options.overviewCaptured ?? true;
     const artifactsDir = mkdtempSync(join(tmpdir(), 'ads-observer-experiment-'));
     roots.push(artifactsDir);
     const recorder = recorderStub();
@@ -822,7 +829,8 @@ async function runExtensionExperiment(
             runPhase: async (input, phaseConfig) => {
                 await phaseConfig.interact?.();
                 const suffix = input.phase.toLowerCase();
-                for (const kind of ['shot', 'full', 'tile', 'har', 'dom']) {
+                const kinds = ['shot', ...(overviewCaptured ? ['full'] : []), 'tile', 'har', 'dom'];
+                for (const kind of kinds) {
                     recorder.addArtifact({
                         id: `${kind}-${suffix}`,
                         path: join(artifactsDir, `${kind}-${suffix}.bin`),
@@ -834,7 +842,7 @@ async function runExtensionExperiment(
                     phase: input.phase,
                     url: REPORTED_URL,
                     screenshotArtifactId: `shot-${suffix}`,
-                    fullPageScreenshotArtifactId: `full-${suffix}`,
+                    ...(overviewCaptured ? { fullPageScreenshotArtifactId: `full-${suffix}` } : {}),
                     tileCoverage: {
                         complete: true,
                         documentWidth: 1_000,
@@ -896,8 +904,18 @@ async function runExtensionExperiment(
                 ({
                     beforeViewport: { id: 'shot-b', path: join(artifactsDir, 'shot-b.bin') },
                     afterViewport: { id: 'shot-c', path: join(artifactsDir, 'shot-c.bin') },
-                    beforeFullPage: { id: 'full-b', path: join(artifactsDir, 'full-b.bin') },
-                    afterFullPage: { id: 'full-c', path: join(artifactsDir, 'full-c.bin') },
+                    ...(overviewCaptured
+                        ? {
+                              beforeFullPage: {
+                                  id: 'full-b',
+                                  path: join(artifactsDir, 'full-b.bin'),
+                              },
+                              afterFullPage: {
+                                  id: 'full-c',
+                                  path: join(artifactsDir, 'full-c.bin'),
+                              },
+                          }
+                        : {}),
                     beforeTiles: [],
                     afterTiles: [],
                     beforeCoverageComplete: true,
@@ -931,8 +949,8 @@ async function runExtensionExperiment(
                     candidateRuleHash: candidateDigest,
                     beforeViewportArtifactId: 'shot-b',
                     afterViewportArtifactId: 'shot-c',
-                    beforeFullPageArtifactId: 'full-b',
-                    afterFullPageArtifactId: 'full-c',
+                    beforeFullPageArtifactId: reviewOptions.evidence.beforeFullPage?.id ?? null,
+                    afterFullPageArtifactId: reviewOptions.evidence.afterFullPage?.id ?? null,
                     model: 'vision-stub',
                 });
                 const artifactId = 'visual-review-candidate';
@@ -1369,6 +1387,206 @@ describe('an extension experiment over a candidate that names no element', () =>
 
         expect(seen.applyRuleResult).toMatchObject({
             adElementStatus: { phaseB: 'not_probed', phaseC: 'not_probed' },
+        });
+    });
+});
+
+describe('an extension experiment on a page too tall for one full-page capture', () => {
+    // money.pl and pb.pl: Chromium refused the filtered baseline's full-page capture of a page about
+    // 17,500 px tall, the tiles of the same state were complete, and the phase died at the capture
+    // schema before any vision call, so a candidate equal to the maintainer's fix got no verdict.
+    const DOCUMENT_HEIGHT = 17_811;
+    const VIEWPORT_HEIGHT = 1_080;
+
+    /**
+     * Observe one baseline phase whose browser captured no overview, through the real inventory.
+     *
+     * @param tilesComplete - Whether the tile capture covered its window.
+     * @param documentHeight - Height of the captured document.
+     * @returns The phase completion and the run trace.
+     */
+    async function observeWithoutOverview(
+        tilesComplete: boolean,
+        documentHeight = DOCUMENT_HEIGHT,
+    ) {
+        const artifactsDir = mkdtempSync(join(tmpdir(), 'ads-observer-no-overview-'));
+        roots.push(artifactsDir);
+        const recorder = new TraceRecorder({ runId: 'no-overview', issueNumber: 1, mode: 'fix' });
+        const register = (id: string, type: string) => {
+            const path = join(artifactsDir, `${id}.png`);
+            writeFileSync(path, Buffer.from(`png:${id}`));
+            recorder.addArtifact({ id, path, type, bytes: 8 });
+        };
+        const tileIds = tilesComplete ? ['tile-0', 'tile-1'] : [];
+        const structured = vi.fn(async () => ({
+            kind: SingleShotResultKind.Parsed,
+            value: {
+                coverageObserved: true,
+                reporterSymptomPresence: 'absent',
+                symptomScope: 'The advertising placeholder.',
+                instances: [],
+                rationale: 'Every supplied tile was inspected.',
+                pageObstruction: 'none',
+            },
+            usages: [],
+            attempts: 1,
+            model: 'vision-model',
+        }));
+        const observer = new BrowserExtensionAdsObserver({
+            candidateRule: 'example.test##.ad',
+            trustedValidationContext: {
+                reportedUrl: 'https://example.test/',
+                existingRules: [],
+                baselineHash: 'b'.repeat(64),
+            },
+            profile: PROFILE,
+            recorder,
+            artifactsDir,
+            vision: { ...visionStub, structured } as unknown as SingleShotClient,
+            reporterSymptom: 'an empty advertising placeholder',
+            attemptNumber: 1,
+            noSandbox: false,
+            dependencies: {
+                runPhase: async () => {
+                    register('shot-b', 'screenshot');
+                    tileIds.forEach((id) => register(id, 'screenshot-tile'));
+                    register('har-b', 'har');
+                    register('dom-b', 'dom');
+                    return {
+                        phase: 'B' as const,
+                        url: 'https://example.test/',
+                        screenshotArtifactId: 'shot-b',
+                        tileCoverage: {
+                            window: { fromY: 0, toY: 2 * VIEWPORT_HEIGHT },
+                            complete: tilesComplete,
+                            documentWidth: 1_920,
+                            documentHeight,
+                            viewportWidth: 1_920,
+                            viewportHeight: VIEWPORT_HEIGHT,
+                            overlapPx: 0,
+                            tiles: tileIds.map((artifactId, index) => ({
+                                artifactId,
+                                index,
+                                x: 0,
+                                y: index * VIEWPORT_HEIGHT,
+                                width: 1_920,
+                                height: VIEWPORT_HEIGHT,
+                                landmark: `Screen ${index + 1}`,
+                            })),
+                            ...(tilesComplete
+                                ? {}
+                                : { error: 'Document dimensions changed before tile capture.' }),
+                        },
+                        harArtifactId: 'har-b',
+                        domArtifactId: 'dom-b',
+                        appliedRules: [],
+                        ruleApplications: [],
+                        antiAdblockDetected: false,
+                    };
+                },
+                probeStructuralSnapshot: async () =>
+                    ({
+                        probeSucceeded: true,
+                        targetCount: 1,
+                        targetVisibleCount: 1,
+                    }) as StructuralSnapshot,
+            },
+        });
+        const completion = await observer.observe({
+            phase: 'B',
+            phaseTokenId: 'token-b',
+            session: {
+                artifactsDir,
+                isClosed: false,
+                getPage: () => ({}) as Page,
+                close: async () => undefined,
+                getNetworkLog: () => [],
+                resetNetworkLog: () => undefined,
+                getConsoleLog: () => [],
+                consoleCoverage: ConsoleCoverage.BrowserLogOnly,
+            } as unknown as IBrowserSession,
+            proof: {
+                leaseId: 'lease-b',
+                adapterStateDigest: 'a'.repeat(64),
+                phase: 'B',
+                filteringState: 'published_baseline',
+                sessionId: 'session-b',
+                actualContext: {
+                    kind: 'browser_extension',
+                    product: 'AdGuard Browser Extension',
+                    browser: 'CloakBrowser Chromium',
+                    productVersion: '5.0.0',
+                },
+                baselineDigest: 'b'.repeat(64),
+                candidateDigest: null,
+                extension: null,
+            },
+        });
+        return { completion, trace: recorder.toJSON() };
+    }
+
+    it('inspects a phase from its complete tiles when the browser captured no overview', async () => {
+        const { completion } = await observeWithoutOverview(true);
+
+        expect(completion).toMatchObject({
+            kind: 'observed',
+            captures: [
+                {
+                    visionVerified: true,
+                    coverageComplete: true,
+                    fullPageOverviewArtifactId: null,
+                    tileArtifactIds: ['tile-0', 'tile-1'],
+                },
+            ],
+        });
+    });
+
+    it('fails a phase with neither an overview nor complete tiles, and traces why', async () => {
+        const { completion, trace } = await observeWithoutOverview(false);
+
+        expect(completion).toMatchObject({
+            kind: 'failed',
+            limitation: { code: 'phase_proof_unavailable' },
+        });
+        expect(
+            trace.events
+                .filter((event) => event.type === TraceEventType.Error)
+                .map((event) => event.payload.error),
+        ).toEqual([expect.stringContaining('Document dimensions changed before tile capture.')]);
+    });
+
+    it('fails a phase whose tiles cover only a window of a page short enough to read whole', async () => {
+        // A page of 8,000 px fits one readable overview, and the tiles cover its first screens
+        // only: without that overview the rest of the page went unseen, so the phase proves
+        // nothing the candidate review could judge.
+        const { completion, trace } = await observeWithoutOverview(true, 8_000);
+
+        expect(completion).toMatchObject({
+            kind: 'failed',
+            limitation: { code: 'phase_proof_unavailable' },
+        });
+        expect(
+            trace.events
+                .filter((event) => event.type === TraceEventType.Error)
+                .map((event) => event.payload.error),
+        ).toEqual([expect.stringContaining(`y=0..${2 * VIEWPORT_HEIGHT}`)]);
+    });
+
+    it('verifies a candidate whose baseline and candidate phases have no overview', async () => {
+        const seen: ExperimentSeams = { probedSelectors: [] };
+        const experiment = await runExtensionExperiment(
+            '||increase-rev.cv3-ecf.workers.dev^$domain=sarkisozleri.bbs.tr',
+            { overviewCaptured: false, seen },
+        );
+
+        expect(experiment.verdict).toBe('verified');
+        const candidate = experiment.phases.at(-1)?.completion;
+        expect(candidate?.kind === 'observed' && candidate.candidateValidation).toMatchObject({
+            verified: true,
+            screenshotArtifactIds: ['shot-b', 'shot-c'],
+        });
+        expect(seen.applyRuleResult).toMatchObject({
+            visualReview: { beforeFullPageArtifactId: null, afterFullPageArtifactId: null },
         });
     });
 });

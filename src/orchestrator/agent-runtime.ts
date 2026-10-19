@@ -1,5 +1,9 @@
 import { RedirectOriginPolicy } from '../browser/redirect-origin-policy';
-import { applyRuleResultForModel, withRemainingCandidateAttempts } from './apply-rule-model-result';
+import {
+    applyRuleResultForModel,
+    environmentLimitationAnswer,
+    withRemainingCandidateAttempts,
+} from './apply-rule-model-result';
 import {
     CandidateRefusalMemo,
     candidateRefusal,
@@ -22,11 +26,7 @@ import { ToolRegistry } from '../agent/tool-registry';
 import type { RepositoryLintCommand } from '../rules/repository-lint-command';
 import { createToolRegistry } from '../agent/tool-factory';
 import type { FinishFixValidationRejection } from '../types/terminal-rejection';
-import {
-    FULL_PAGE_CAPTURE_INCOMPLETE_KIND,
-    inspectFullPageVisualCapture,
-} from '../analyzer/full-page-capture-inspection';
-import { visionOverviewRefusal } from '../pi/single-shot-input';
+import { inspectFullPageVisualCapture } from '../analyzer/full-page-capture-inspection';
 import type { AdGuardExtensionSettingsProfile } from '../browser/adguard-extension-settings';
 import {
     readBundledFilterCatalogIds,
@@ -219,6 +219,7 @@ import {
     type CandidateValidationOutcome,
     type PendingCandidateAttempt,
 } from './agent-runtime-candidate-context';
+import { incompleteCaptureRefusal, readScreenshotCapture } from './agent-runtime-page-capture';
 import {
     sessionBaselineCredited,
     settingsEvidenceFromReadBack,
@@ -1697,21 +1698,20 @@ export class AgentRuntime {
             reference.visualReview.afterViewportArtifactId,
             'screenshot',
         );
-        const beforeFullPage = this.resolveCandidateArtifactEvidence(
-            reference.visualReview.beforeFullPageArtifactId,
-            'screenshot-full-page',
-        );
-        const afterFullPage = this.resolveCandidateArtifactEvidence(
-            reference.visualReview.afterFullPageArtifactId,
-            'screenshot-full-page',
-        );
+        // Null where the browser captured no overview; undefined where one does not resolve.
+        const overview = (artifactId: string | null) =>
+            artifactId === null
+                ? null
+                : this.resolveCandidateArtifactEvidence(artifactId, 'screenshot-full-page');
+        const beforeFullPage = overview(reference.visualReview.beforeFullPageArtifactId);
+        const afterFullPage = overview(reference.visualReview.afterFullPageArtifactId);
         if (
             !validationArtifact ||
             !visualReviewArtifact ||
             !beforeViewport ||
             !afterViewport ||
-            !beforeFullPage ||
-            !afterFullPage
+            beforeFullPage === undefined ||
+            afterFullPage === undefined
         ) {
             return refuse('a candidate evidence artifact does not resolve to one typed record', {
                 validationArtifact: validationArtifact !== undefined,
@@ -1738,8 +1738,8 @@ export class AgentRuntime {
             visualReviewArtifact,
             beforeViewport,
             afterViewport,
-            beforeFullPage,
-            afterFullPage,
+            ...(beforeFullPage ? { beforeFullPage } : {}),
+            ...(afterFullPage ? { afterFullPage } : {}),
         };
     }
 
@@ -2435,23 +2435,7 @@ export class AgentRuntime {
             };
         }
         if (!capture.coverageComplete || capture.requiredArtifactIds.length === 0) {
-            const tileCoverage = capture.rawCapture.tileCoverage;
-            const coverageError =
-                typeof tileCoverage === 'object' &&
-                tileCoverage !== null &&
-                typeof (tileCoverage as Record<string, unknown>).error === 'string'
-                    ? String((tileCoverage as Record<string, unknown>).error)
-                    : undefined;
-            return {
-                error:
-                    'The latest full-page tile capture is incomplete, so batch vision cannot ' +
-                    'inspect it. ' +
-                    (coverageError ? `Capture detail: ${coverageError} ` : '') +
-                    'Do not recapture the same page state; continue the investigation with the ' +
-                    'viewport screenshot, full-page overview, DOM, and network evidence instead.',
-                errorKind: FULL_PAGE_CAPTURE_INCOMPLETE_KIND,
-                retryable: false,
-            };
+            return incompleteCaptureRefusal(capture.rawCapture);
         }
 
         let result;
@@ -3806,14 +3790,11 @@ export class AgentRuntime {
         if (earlyRefusal) {
             return earlyRefusal;
         }
+        // A sticky failure recorded before this call comes back below with no phase run.
+        const failureBefore = this.filteringEnvironmentDisposition?.failure ?? null;
         const preparationLimitation = await this.ensureFilteringEnvironment(state);
         if (preparationLimitation) {
-            return {
-                validationSkipped: true,
-                errorKind: 'environment_capability_limited',
-                retryable: false,
-                limitation: preparationLimitation,
-            };
+            return environmentLimitationAnswer(preparationLimitation, failureBefore);
         }
         // The extension environment replays the session it was built from in every experiment,
         // so a later session with other lists, Stealth Mode or profile is refused, not run on it.
@@ -3976,12 +3957,7 @@ export class AgentRuntime {
                 return refusal;
             }
             this.recordFilteringEnvironmentLimitation(experiment.limitation);
-            return {
-                validationSkipped: true,
-                errorKind: 'environment_capability_limited',
-                retryable: false,
-                limitation: experiment.limitation,
-            };
+            return environmentLimitationAnswer(experiment.limitation, null);
         }
         const result = observer?.result();
         if (result) {
@@ -4520,50 +4496,19 @@ export class AgentRuntime {
         }
 
         if (name === 'screenshot') {
-            const viewportArtifactId =
-                typeof result.artifactId === 'string' ? result.artifactId : undefined;
-            const fullPageArtifactId =
-                typeof result.fullPageArtifactId === 'string'
-                    ? result.fullPageArtifactId
-                    : undefined;
-            const tileCoverage =
-                typeof result.tileCoverage === 'object' && result.tileCoverage !== null
-                    ? (result.tileCoverage as Record<string, unknown>)
-                    : undefined;
-            const tiles = Array.isArray(tileCoverage?.tiles) ? tileCoverage.tiles : [];
-            const tileArtifactIds = tiles
-                .map((tile) =>
-                    typeof tile === 'object' &&
-                    tile !== null &&
-                    typeof (tile as Record<string, unknown>).artifactId === 'string'
-                        ? String((tile as Record<string, unknown>).artifactId)
-                        : undefined,
-                )
-                .filter((artifactId): artifactId is string => artifactId !== undefined);
-            const coverageComplete =
-                fullPageArtifactId &&
-                tileCoverage?.complete === true &&
-                tileArtifactIds.length > 0 &&
-                tileArtifactIds.length === tiles.length;
-            // The vision inventory excludes an overview no single request can carry or read, so
-            // the runtime must not demand its inspection either; the original-resolution tiles
-            // still carry the complete coverage proof. Both sides read the one shared rule.
-            const overviewBytes = fullPageArtifactId
-                ? this.options.recorder
-                      .getArtifacts()
-                      .find((artifact) => artifact.id === fullPageArtifactId)?.bytes
-                : undefined;
-            const overviewVisionEligible =
-                fullPageArtifactId !== undefined &&
-                visionOverviewRefusal({
-                    bytes: overviewBytes,
-                    documentWidth: tileCoverage?.documentWidth as number | undefined,
-                    documentHeight: tileCoverage?.documentHeight as number | undefined,
-                }) === null;
-            const requiredArtifactIds =
-                coverageComplete && fullPageArtifactId
-                    ? [...(overviewVisionEligible ? [fullPageArtifactId] : []), ...tileArtifactIds]
-                    : [];
+            const {
+                viewportArtifactId,
+                fullPageArtifactId,
+                tileCoverage,
+                tileArtifactIds,
+                coverageComplete,
+                requiredArtifactIds,
+            } = readScreenshotCapture(
+                result,
+                (artifactId) =>
+                    this.options.recorder.getArtifacts().find((item) => item.id === artifactId)
+                        ?.bytes,
+            );
             const viewport = viewportArtifactId
                 ? this.resolveScreenshotEvidence(viewportArtifactId, ['screenshot'])
                 : null;
@@ -4592,7 +4537,7 @@ export class AgentRuntime {
                     viewport,
                     fullPageOverview,
                     tiles: tileEvidence,
-                    coverageComplete: Boolean(coverageComplete),
+                    coverageComplete,
                     reporterSymptomPresence: null,
                     pageObstruction: null,
                     requiredArtifactIds,

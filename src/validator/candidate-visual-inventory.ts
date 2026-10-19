@@ -24,10 +24,11 @@ import {
     isBreakageSymptom,
 } from './symptom-rubric';
 import { TraceEventType } from '../types/trace';
+import { CandidateVisualInstanceSchema } from '../types/candidate-visual-review';
 import {
-    CandidateVisualInstanceSchema,
+    FullPageOverviewMode,
     type CandidateVisualFullPageOverviewEvidence,
-} from '../types/candidate-visual-review';
+} from '../types/full-page-overview-evidence';
 import { CaptureState } from '../types/validation';
 import type {
     CandidateVisualEvidenceImage,
@@ -382,17 +383,17 @@ export async function inventoryOverviewImage(
  *
  * @param options - Trusted candidate context and multimodal provider dependencies.
  * @param state - Whether the supplied image shows the control or candidate-applied document.
- * @param image - Immutable original full-page screenshot.
+ * @param image - Immutable original full-page screenshot, absent when the browser captured none.
  * @param provenance - Runner-derived relationship between original and vision evidence.
  * @returns Model inventory, or an explicit runner-owned omission carrying the plan's reason.
  */
 export async function inventoryPlannedFullPageOverview(
     options: CandidateVisualVerifierOptions,
     state: CaptureState,
-    image: CandidateVisualEvidenceImage,
+    image: CandidateVisualEvidenceImage | undefined,
     provenance: CandidateVisualFullPageOverviewEvidence,
 ): Promise<CandidateVisualTileInventory> {
-    if (provenance.mode === 'original') {
+    if (provenance.mode === FullPageOverviewMode.Original && image !== undefined) {
         return inventoryOverviewImage(
             options,
             state,
@@ -400,8 +401,11 @@ export async function inventoryPlannedFullPageOverview(
             image,
         );
     }
-    if (provenance.mode === 'blocked_oversized_incomplete_tiles') {
-        throw new Error(provenance.reason ?? 'Oversized full-page overview cannot be reviewed.');
+    if (
+        provenance.mode === FullPageOverviewMode.BlockedOversizedIncompleteTiles ||
+        provenance.mode === FullPageOverviewMode.BlockedUnavailableIncompleteTiles
+    ) {
+        throw new Error(provenance.reason ?? 'The full-page overview cannot be reviewed.');
     }
     options.recorder.record(TraceEventType.Decision, {
         phase: 'candidate_visual_full_page_overview',
@@ -423,7 +427,8 @@ export async function inventoryPlannedFullPageOverview(
         observations: [
             {
                 source: CandidateVisualEvidenceSource.FullPageOverviewOmitted,
-                artifactIds: [provenance.originalArtifactId],
+                artifactIds:
+                    provenance.originalArtifactId === null ? [] : [provenance.originalArtifactId],
                 coverageObserved: true,
                 symptomScope: omission,
                 instanceCount: 0,

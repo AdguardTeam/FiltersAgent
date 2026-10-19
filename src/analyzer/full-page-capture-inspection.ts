@@ -138,8 +138,8 @@ interface InventoryBatchOutcome {
  * artifact binding and coverage accounting.
  *
  * @param options - Vision provider, trace, reporter symptom, and artifact boundary.
- * @param rawCapture - Runner-owned screenshot result containing overview and complete tile
- *   coverage.
+ * @param rawCapture - Runner-owned screenshot result containing tile coverage and, when the browser
+ *   produced one, the overview.
  * @returns Compact aggregate plus exact successful and missing artifact identities.
  */
 export async function inspectFullPageVisualCapture(
@@ -147,17 +147,22 @@ export async function inspectFullPageVisualCapture(
     rawCapture: unknown,
 ): Promise<FullPageVisualCaptureResult> {
     const capture = v.parse(PreCandidateCaptureSchema, rawCapture);
-    const overview = resolveInventoryImage(
-        options.recorder,
-        options.artifactsDir,
-        capture.fullPageArtifactId,
-        'screenshot-full-page',
-        'Complete page overview.',
-    );
+    // The browser may have produced no overview at all; the tiles below still carry the proof.
+    const overview =
+        capture.fullPageArtifactId === undefined
+            ? null
+            : resolveInventoryImage(
+                  options.recorder,
+                  options.artifactsDir,
+                  capture.fullPageArtifactId,
+                  'screenshot-full-page',
+                  'Complete page overview.',
+              );
     // A single image the provider cannot show the model is worse than no image: it invites an
     // answer read off the prompt. The shared rule refuses it here and at the runtime requirement
     // that asks which artifacts this inventory must have inspected, so the two cannot disagree.
     const overviewVisionEligible =
+        overview !== null &&
         visionOverviewRefusal({
             bytes: overview.bytes,
             documentWidth: capture.tileCoverage.documentWidth,
@@ -237,13 +242,15 @@ export async function inspectFullPageVisualCapture(
             coverageComplete,
         ),
         pageObstruction: aggregatePageObstruction(successfulOutputs),
-        overviewArtifactId: overview.id,
+        overviewArtifactId: overview?.id ?? null,
         tileArtifactIds: tiles.map((tile) => tile.id),
         symptomScopes: [...new Set(successfulOutputs.map((output) => output.symptomScope))],
         instances: instances.slice(0, MAX_INVENTORY_INSTANCES),
         model: options.vision.modelId.trim().slice(0, 200) || 'unknown-model',
         rationales: successfulOutputs.map((output) => output.rationale).slice(0, 20),
-        ...(overviewVisionEligible ? {} : { excludedOversizedArtifactIds: [overview.id] }),
+        ...(overview === null || overviewVisionEligible
+            ? {}
+            : { excludedOversizedArtifactIds: [overview.id] }),
     };
     const requiredArtifactIds = [
         ...(overviewVisionEligible ? [overview.id] : []),

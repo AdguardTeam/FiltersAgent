@@ -6,7 +6,8 @@ import {
     type BrowserToolHandlers,
 } from '../../src/browser/browser-tools';
 import { ConsoleCoverage, type IBrowserSession } from '../../src/browser/browser-interfaces';
-import type { TraceRecorder } from '../../src/tracer/trace-recorder';
+import { TraceRecorder } from '../../src/tracer/trace-recorder';
+import { TraceEventType } from '../../src/types/trace';
 import { evaluatePageScript, fakeElement } from './fixtures/page-script-sandbox';
 import type { HostnameResolver } from '../../src/browser/network-safety';
 import { MAX_VISION_IMAGE_BYTES } from '../../src/pi/single-shot-input';
@@ -1393,6 +1394,72 @@ describe('screenshot', () => {
         });
     });
 
+    it.each([
+        {
+            refusal: 'Chromium refuses the full-page capture',
+            overview: (): Promise<Buffer> => {
+                throw new Error(CHROMIUM_CAPTURE_REFUSAL);
+            },
+        },
+        {
+            refusal: 'the PNG passes the vision cap and the JPEG cannot encode the page',
+            overview: async (options?: Record<string, unknown>): Promise<Buffer> => {
+                if (options?.type !== 'jpeg') {
+                    return Buffer.alloc(MAX_VISION_IMAGE_BYTES + 1);
+                }
+                throw new Error(CHROMIUM_CAPTURE_REFUSAL);
+            },
+        },
+    ])('keeps the tiles and traces the browser error when $refusal', async ({ overview }) => {
+        // Long pages: Chromium cannot capture one of about 17,500 px and taller, and a JPEG
+        // cannot hold one past 65,500 px. The tiles still carry the proof; the run's trace must
+        // say why the overview is missing.
+        const basePage = mockSession().getPage();
+        const page = {
+            ...basePage,
+            viewportSize: vi.fn().mockReturnValue({ width: 100, height: 100 }),
+            screenshot: vi.fn().mockImplementation(async (options?: Record<string, unknown>) => {
+                const clip = options?.clip as { width: number; height: number } | undefined;
+                if (clip) {
+                    return mockPng(clip.width, clip.height);
+                }
+                return options?.fullPage === true ? overview(options) : mockPng(1, 1);
+            }),
+            evaluate: vi
+                .fn()
+                .mockImplementation(async (expression: unknown) =>
+                    typeof expression === 'string' &&
+                    expression.includes('__adguard_full_page_tile_probe__')
+                        ? { documentWidth: 100, documentHeight: 180, landmarks: [] }
+                        : undefined,
+                ),
+        };
+        const recorder = new TraceRecorder({ runId: 'overview', issueNumber: 1, mode: 'fix' });
+        const tools = createTestBrowserToolHandlers({
+            session: mockSession({ getPage: vi.fn().mockReturnValue(page) }),
+            recorder,
+            artifactsDir: '/tmp',
+            fullPageTileOverlapPx: 20,
+            pageStabilizationTimeoutMs: 100,
+        });
+
+        const result = await tools.screenshot({ captureTiles: true });
+
+        expect(result.fullPageArtifactId).toBeUndefined();
+        expect(result.tileCoverage).toMatchObject({ complete: true });
+        expect(recorder.getArtifacts().map((artifact) => artifact.type)).toEqual([
+            'screenshot',
+            'screenshot-tile',
+            'screenshot-tile',
+        ]);
+        expect(
+            recorder
+                .toJSON()
+                .events.filter((event) => event.type === TraceEventType.Error)
+                .map((event) => event.payload.error),
+        ).toEqual([expect.stringContaining('Unable to capture screenshot')]);
+    });
+
     it('discards a viewport frame when the page moves during capture', async () => {
         const positions = [
             { x: 0, y: 0, stable: true },
@@ -2131,4 +2198,8 @@ describe('get_console_log', () => {
 
         expect(result).toEqual({ consoleCoverage: ConsoleCoverage.PageConsole, messages });
     });
-});
+}); /**
+ * What Chromium answers when it cannot capture a document as one full-page image.
+ */
+const CHROMIUM_CAPTURE_REFUSAL =
+    'page.screenshot: Protocol error (Page.captureScreenshot): Unable to capture screenshot';

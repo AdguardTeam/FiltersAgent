@@ -530,29 +530,22 @@ export class FilteringEnvironmentExecutionRecorder {
             candidate.visualReviewArtifact,
             candidate.beforeViewport,
             candidate.afterViewport,
-            candidate.beforeFullPage,
-            candidate.afterFullPage,
         ];
         if (references.some((reference) => reference === undefined)) {
             throw new Error('Candidate validation artifact references are incomplete.');
         }
-        const [
-            validationArtifact,
-            visualReviewArtifact,
-            beforeViewport,
-            afterViewport,
-            beforeFullPage,
-            afterFullPage,
-        ] = references as EnvironmentArtifactReference[];
+        const [validationArtifact, visualReviewArtifact, beforeViewport, afterViewport] =
+            references as EnvironmentArtifactReference[];
+        // An overview is absent where the browser captured none; the tiles carry that proof.
+        const { beforeFullPage, afterFullPage } = candidate;
         if (
             candidate.validationArtifactId !== validationArtifact.artifactId ||
             JSON.stringify(candidate.screenshotArtifactIds) !==
-                JSON.stringify([
-                    beforeViewport.artifactId,
-                    afterViewport.artifactId,
-                    beforeFullPage.artifactId,
-                    afterFullPage.artifactId,
-                ]) ||
+                JSON.stringify(
+                    [beforeViewport, afterViewport, beforeFullPage, afterFullPage].flatMap(
+                        (reference) => (reference ? [reference.artifactId] : []),
+                    ),
+                ) ||
             new Set(candidate.screenshotArtifactIds).size !== candidate.screenshotArtifactIds.length
         ) {
             throw new Error('Candidate validation artifact identities do not agree.');
@@ -561,8 +554,12 @@ export class FilteringEnvironmentExecutionRecorder {
         this.requireExactArtifact(entry, local, visualReviewArtifact, 'vision', ['C']);
         this.requireExactArtifact(entry, local, beforeViewport, 'screenshot', ['B']);
         this.requireExactArtifact(entry, local, afterViewport, 'screenshot', ['C']);
-        this.requireExactArtifact(entry, local, beforeFullPage, 'screenshot', ['B']);
-        this.requireExactArtifact(entry, local, afterFullPage, 'screenshot', ['C']);
+        if (beforeFullPage) {
+            this.requireExactArtifact(entry, local, beforeFullPage, 'screenshot', ['B']);
+        }
+        if (afterFullPage) {
+            this.requireExactArtifact(entry, local, afterFullPage, 'screenshot', ['C']);
+        }
         const review = completion.visualReview;
         if (!review) {
             throw new Error('Candidate validation lacks its visual review.');
@@ -572,8 +569,8 @@ export class FilteringEnvironmentExecutionRecorder {
             review.candidateRuleHash !== candidate.candidateDigest ||
             review.beforeViewportArtifactId !== beforeViewport.artifactId ||
             review.afterViewportArtifactId !== afterViewport.artifactId ||
-            review.beforeFullPageArtifactId !== beforeFullPage.artifactId ||
-            review.afterFullPageArtifactId !== afterFullPage.artifactId
+            review.beforeFullPageArtifactId !== (beforeFullPage?.artifactId ?? null) ||
+            review.afterFullPageArtifactId !== (afterFullPage?.artifactId ?? null)
         ) {
             throw new Error('Candidate visual review does not match its exact artifact pairing.');
         }
@@ -627,7 +624,9 @@ export class FilteringEnvironmentExecutionRecorder {
         >['before'],
         phase: typeof PhaseLabel.B | typeof PhaseLabel.C,
     ): void {
-        this.requireArtifact(entry, local, evidence.originalArtifactId, 'screenshot', [phase]);
+        if (evidence.originalArtifactId) {
+            this.requireArtifact(entry, local, evidence.originalArtifactId, 'screenshot', [phase]);
+        }
         if (evidence.visionArtifactId) {
             this.requireArtifact(entry, local, evidence.visionArtifactId, 'screenshot', [phase]);
         }

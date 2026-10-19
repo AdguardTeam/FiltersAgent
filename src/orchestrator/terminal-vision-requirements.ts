@@ -303,8 +303,8 @@ export function terminalVisionRequirements(
  * Return whether a report-only decision has complete vision evidence for its claimed status.
  *
  * `already_fixed_current` needs both an unfiltered control and a prepared-extension page. Other
- * report-only outcomes need at least one navigated full-page capture whose overview and every
- * original-resolution tile were inspected by vision.
+ * report-only outcomes need one navigated full-page capture whose tiles were all inspected by
+ * vision, with the overview when the browser captured one that vision can read.
  *
  * @param view - Read-only projection of the run the judgement reads.
  * @param outcome - Schema-valid report-only terminal proposal.

@@ -328,7 +328,7 @@ export const EnvironmentCandidateValidationSchema = v.strictObject({
         v.pipe(v.string(), v.minLength(1), v.maxLength(4_096), v.regex(/^[^\r\n]+$/u)),
     ),
     verified: v.boolean(),
-    screenshotArtifactIds: v.pipe(v.array(BoundedIdSchema), v.length(4)),
+    screenshotArtifactIds: v.pipe(v.array(BoundedIdSchema), v.minLength(2), v.maxLength(4)),
     validationArtifact: v.optional(EnvironmentArtifactReferenceSchema),
     visualReviewArtifact: v.optional(EnvironmentArtifactReferenceSchema),
     beforeViewport: v.optional(EnvironmentArtifactReferenceSchema),

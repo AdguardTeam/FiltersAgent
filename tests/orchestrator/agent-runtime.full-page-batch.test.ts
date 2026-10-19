@@ -896,11 +896,23 @@ describe('AgentRuntime full-page batch vision', () => {
         }
     });
 
-    it('never sends a full page too tall to read, and never waits for its inspection', async () => {
+    it.each([
+        {
+            overviewCaptured: true,
+            behavior:
+                'never sends a full page too tall to read, and never waits for its inspection',
+        },
+        {
+            overviewCaptured: false,
+            behavior: 'inspects a tall page from its tiles when the browser captured no overview',
+        },
+    ])('$behavior', async ({ overviewCaptured }) => {
         // A 375x10334 px overview reaches the model about 74 px wide, where it answers from the
         // prompt rather than from the pixels (seen on a live run). It is excluded from vision,
         // and the run must not then demand the inspection of an artifact the inventory never sent:
         // the terminal vision requirement and the inventory read the same eligibility rule.
+        // Chromium cannot capture such a page at all past about 17,500 px; the tiles carry the
+        // same proof then.
         const root = mkdtempSync(join(tmpdir(), 'agent-runtime-tall-overview-'));
         const recorder = new TraceRecorder({
             runId: 'tall-overview',
@@ -931,7 +943,7 @@ describe('AgentRuntime full-page batch vision', () => {
             handler: async () => {
                 for (const artifact of [
                     { id: 'viewport', type: 'screenshot' },
-                    { id: 'overview', type: 'screenshot-full-page' },
+                    ...(overviewCaptured ? [{ id: 'overview', type: 'screenshot-full-page' }] : []),
                     ...Array.from({ length: 5 }, (_, index) => ({
                         id: `tile-${index + 1}`,
                         type: 'screenshot-tile',
@@ -943,7 +955,7 @@ describe('AgentRuntime full-page batch vision', () => {
                 }
                 return {
                     artifactId: 'viewport',
-                    fullPageArtifactId: 'overview',
+                    ...(overviewCaptured ? { fullPageArtifactId: 'overview' } : {}),
                     tileCoverage: {
                         complete: true,
                         documentWidth: 375,
@@ -1055,7 +1067,11 @@ describe('AgentRuntime full-page batch vision', () => {
                 JSON.parse(readFileSync(inventoryPath!, 'utf8')) as {
                     excludedOversizedArtifactIds?: string[];
                 },
-            ).toMatchObject({ excludedOversizedArtifactIds: ['overview'] });
+            ).toMatchObject(
+                overviewCaptured
+                    ? { excludedOversizedArtifactIds: ['overview'] }
+                    : { overviewArtifactId: null },
+            );
             // The withheld overview is not in the required set, so the tiles alone complete the
             // run's vision evidence and nothing is left waiting for an image nobody can read.
             expect(runtime.getLatestCompleteVisionEnvironment()).toMatchObject({

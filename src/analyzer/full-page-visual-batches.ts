@@ -42,10 +42,13 @@ export const MAX_INVENTORY_INSTANCES = 50;
 
 /**
  * Runner screenshot response required for a complete pre-candidate capture.
+ *
+ * The overview is context and may be missing — the browser refuses a full-page capture of a very
+ * tall document — while the tiles carry the coverage proof.
  */
 export const PreCandidateCaptureSchema = v.object({
     artifactId: v.pipe(v.string(), v.minLength(1)),
-    fullPageArtifactId: v.pipe(v.string(), v.minLength(1)),
+    fullPageArtifactId: v.optional(v.pipe(v.string(), v.minLength(1))),
     tileCoverage: FullPageTileCoverageSchema,
 });
 
@@ -149,9 +152,9 @@ export interface PreCandidateVisualInventory {
     pageObstruction: PageObstruction;
 
     /**
-     * Full-page overview artifact inspected by vision.
+     * Full-page overview artifact of the capture, or null when the browser produced none.
      */
-    overviewArtifactId: string;
+    overviewArtifactId: string | null;
 
     /**
      * Ordered original-resolution tile artifacts inspected by vision.

@@ -3,7 +3,6 @@ import type { Logger } from 'pino';
 import * as v from 'valibot';
 import type { IBrowserSession } from './browser-interfaces';
 import type { TraceRecorder } from '../tracer/trace-recorder';
-import { MAX_VISION_IMAGE_BYTES } from '../pi/single-shot-input';
 import { redactNetworkLog } from './har-redactor';
 import { summarizeNetworkLog } from './network-log-inventory';
 import { ConsentStrategy, type ReproProfile } from '../types/repro-profile';
@@ -47,6 +46,7 @@ import {
     validateExpression,
 } from './expression-validator';
 import { writeArtifact, captureFullPageTiles, parseTileWindowArg } from './full-page-tiles';
+import { captureFullPageOverview } from './full-page-overview';
 import { inspectPageState } from './page-state-probe';
 import type { PageStateInspection } from '../types/page-state-inspection';
 import { BrowserFallbackReason } from '../types/browser-fallback-reason';
@@ -613,38 +613,7 @@ export function createBrowserToolHandlers(config: BrowserToolConfig): BrowserToo
                 };
             }
             const id = writeArtifact(artifactsDir, 'png', viewportBuffer, 'screenshot', recorder);
-            let fullPageArtifactId: string | undefined;
-            let fullPageError: string | undefined;
-            try {
-                const fullPageBuffer = await page.screenshot({ fullPage: true, type: 'png' });
-                if (fullPageBuffer.length <= MAX_VISION_IMAGE_BYTES) {
-                    fullPageArtifactId = writeArtifact(
-                        artifactsDir,
-                        'png',
-                        fullPageBuffer,
-                        'screenshot-full-page',
-                        recorder,
-                    );
-                } else {
-                    // A PNG overview this large exceeds the vision request ceiling and the
-                    // per-artifact evidence limit; degrade the context overview to JPEG while
-                    // the original-resolution PNG tiles keep the exact coverage proof.
-                    const jpegBuffer = await page.screenshot({
-                        fullPage: true,
-                        type: 'jpeg',
-                        quality: 60,
-                    });
-                    fullPageArtifactId = writeArtifact(
-                        artifactsDir,
-                        'jpg',
-                        jpegBuffer,
-                        'screenshot-full-page',
-                        recorder,
-                    );
-                }
-            } catch (error) {
-                fullPageError = String((error as Error).message).slice(0, 500);
-            }
+            const overview = await captureFullPageOverview(page, artifactsDir, recorder, logger);
             const tileCoverage =
                 args.captureTiles === true
                     ? await captureFullPageTiles(
@@ -660,8 +629,8 @@ export function createBrowserToolHandlers(config: BrowserToolConfig): BrowserToo
             const viewport = page.viewportSize();
             return {
                 artifactId: id,
-                fullPageArtifactId,
-                fullPageError,
+                fullPageArtifactId: overview.artifactId,
+                fullPageError: overview.error,
                 tileCoverage,
                 format: 'png',
                 viewport,

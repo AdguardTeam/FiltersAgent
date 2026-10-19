@@ -31,8 +31,10 @@ import {
 import {
     RuleApplicationFactSchema,
     ValidationViewportPositionSchema,
+    type PhaseResult,
     type RuleApplicationFact,
 } from '../types/validation';
+import { phaseCapturedPageState } from '../validator/tile-coverage-proof';
 import {
     calculateTrustedBaselineHash,
     type TrustedValidationContext,
@@ -230,7 +232,8 @@ export function deriveFixRunStatus(
  * @param factual - Parsed collect-only candidate experiment artifact.
  * @param candidatePatch - Candidate patch expected in Phase C.
  * @param expectedContext - Runner-owned issue URL and pinned repository baseline.
- * @param visualReview - Typed semantic review produced from the experiment's four screenshots.
+ * @param visualReview - Typed semantic review of the experiment's screenshots: both viewports and
+ *   the full-page overviews the browser captured.
  * @returns The refusal, or undefined when mechanical experiment provenance is complete and vision
  *   verified it.
  */
@@ -317,15 +320,8 @@ export function candidatePatchVerificationRefusal(
     if (phaseA.error || phaseB.error || phaseC.error) {
         return 'a phase recorded an error';
     }
-    const phasesHaveCompleteVisualArtifacts = [phaseA, phaseB, phaseC].every(
-        (phase) =>
-            typeof phase.screenshotArtifactId === 'string' &&
-            phase.screenshotArtifactId.length > 0 &&
-            typeof phase.fullPageScreenshotArtifactId === 'string' &&
-            phase.fullPageScreenshotArtifactId.length > 0,
-    );
-    if (!phasesHaveCompleteVisualArtifacts) {
-        return 'a phase lacks its viewport or full-page screenshot';
+    if (![phaseA, phaseB, phaseC].every((phase) => phaseCapturedPageState(phase as PhaseResult))) {
+        return 'a phase lacks its viewport screenshot, or both its full-page screenshot and tiles';
     }
 
     const phaseARuleApplications = verifiedRuleApplicationPartition(phaseA, []);
@@ -389,8 +385,8 @@ export function candidatePatchVerificationRefusal(
     if (
         review.beforeViewportArtifactId !== beforeViewportId ||
         review.afterViewportArtifactId !== phaseC.screenshotArtifactId ||
-        review.beforeFullPageArtifactId !== beforeFullPageId ||
-        review.afterFullPageArtifactId !== phaseC.fullPageScreenshotArtifactId
+        review.beforeFullPageArtifactId !== (beforeFullPageId ?? null) ||
+        review.afterFullPageArtifactId !== (phaseC.fullPageScreenshotArtifactId ?? null)
     ) {
         return 'the visual review screenshots are not the phase artifacts';
     }

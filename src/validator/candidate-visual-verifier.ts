@@ -270,8 +270,9 @@ function persistReview(
 }
 
 /**
- * Ask a vision model to judge four aligned before/after screenshots and bind the result to trusted
- * runner-owned evidence.
+ * Ask a vision model to judge aligned before/after screenshots — both viewports and the full-page
+ * overviews the browser captured, with their tiles — and bind the result to trusted runner-owned
+ * evidence.
  *
  * Model failures fail closed to a persisted inconclusive review. The final verdict, candidate hash,
  * validation identifier, and all screenshot identifiers are always derived by this runner.
@@ -367,12 +368,12 @@ export async function reviewCandidateVisually(
         const messages = buildReviewMessages(options, inventoryContext, fullPageOverviewEvidence);
         const allowedBeforeArtifactIds = new Set([
             options.evidence.beforeViewport.id,
-            options.evidence.beforeFullPage.id,
+            ...(options.evidence.beforeFullPage ? [options.evidence.beforeFullPage.id] : []),
             ...options.evidence.beforeTiles.map((tile) => tile.id),
         ]);
         const allowedAfterArtifactIds = new Set([
             options.evidence.afterViewport.id,
-            options.evidence.afterFullPage.id,
+            ...(options.evidence.afterFullPage ? [options.evidence.afterFullPage.id] : []),
             ...options.evidence.afterTiles.map((tile) => tile.id),
         ]);
         const normalized = await synthesizeFinalReview(
@@ -435,8 +436,8 @@ export async function reviewCandidateVisually(
         candidateRuleHash,
         beforeViewportArtifactId: options.evidence.beforeViewport.id,
         afterViewportArtifactId: options.evidence.afterViewport.id,
-        beforeFullPageArtifactId: options.evidence.beforeFullPage.id,
-        afterFullPageArtifactId: options.evidence.afterFullPage.id,
+        beforeFullPageArtifactId: options.evidence.beforeFullPage?.id ?? null,
+        afterFullPageArtifactId: options.evidence.afterFullPage?.id ?? null,
         ...(fullPageOverviewEvidence === undefined ? {} : { fullPageOverviewEvidence }),
         model,
         rationale: semanticOutput.rationale,

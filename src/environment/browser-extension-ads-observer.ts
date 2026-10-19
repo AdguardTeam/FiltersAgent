@@ -51,7 +51,9 @@ import { InteractionReplay, type InteractionReplayProjection } from './interacti
 import type { NormalizedSafeInteractionPlan } from './safe-interaction';
 import { measureDomChecks, pairDomCheckMeasurements } from './dom-check-runner';
 import {
+    candidateScreenshotArtifacts,
     environmentArtifact,
+    phaseCaptureFailed,
     persistFactualValidation,
     phaseScreenshotIds,
     withExtensionRuleFacts,
@@ -370,7 +372,7 @@ export class BrowserExtensionAdsObserver {
         if (input.phase !== PhaseLabel.C && phaseResult.tileCoverage?.window) {
             this.tileWindows.set(input.phase, phaseResult.tileCoverage.window);
         }
-        if (phaseResult.error) {
+        if (phaseCaptureFailed(phaseResult, this.options.recorder, input.phase)) {
             return {
                 kind: 'failed',
                 sessionId: input.proof.sessionId,
@@ -417,8 +419,8 @@ export class BrowserExtensionAdsObserver {
             ...(input.signal === undefined ? {} : { signal: input.signal }),
         };
         const inventoryCapture: Parameters<typeof inspectFullPageVisualCapture>[1] = {
-            // The inventory capture contract requires all three identities; omitting the viewport
-            // screenshot fails the whole phase observation at the schema, not at the vision call.
+            // Omitting the viewport screenshot fails the whole phase observation at the schema, not
+            // at the vision call; an overview the browser could not capture is simply absent.
             artifactId: phaseResult.screenshotArtifactId,
             fullPageArtifactId: phaseResult.fullPageScreenshotArtifactId,
             tileCoverage: phaseResult.tileCoverage,
@@ -765,25 +767,10 @@ export class BrowserExtensionAdsObserver {
             visual.artifactId,
             'vision',
         );
-        const beforeViewport = environmentArtifact(
+        const screenshots = candidateScreenshotArtifacts(
             this.options.recorder,
-            phaseBResult.screenshotArtifactId,
-            'screenshot',
-        );
-        const afterViewport = environmentArtifact(
-            this.options.recorder,
-            phaseCResult.screenshotArtifactId,
-            'screenshot',
-        );
-        const beforeFullPage = environmentArtifact(
-            this.options.recorder,
-            phaseBResult.fullPageScreenshotArtifactId!,
-            'screenshot',
-        );
-        const afterFullPage = environmentArtifact(
-            this.options.recorder,
-            phaseCResult.fullPageScreenshotArtifactId!,
-            'screenshot',
+            phaseBResult,
+            phaseCResult,
         );
         const candidateValidation = {
             validationArtifactId: validationArtifact.artifactId,
@@ -797,18 +784,9 @@ export class BrowserExtensionAdsObserver {
                 // the captures show is explained by that difference rather than by the candidate.
                 // The divergence stays in the evidence; only the claim of proof is withdrawn.
                 (this.interactionReplay?.preparedAlike() ?? true),
-            screenshotArtifactIds: [
-                beforeViewport.artifactId,
-                afterViewport.artifactId,
-                beforeFullPage.artifactId,
-                afterFullPage.artifactId,
-            ],
+            ...screenshots,
             validationArtifact,
             visualReviewArtifact,
-            beforeViewport,
-            afterViewport,
-            beforeFullPage,
-            afterFullPage,
         };
         candidatePhase.artifacts.push(validationArtifact, visualReviewArtifact);
         this.applyRuleResult = {

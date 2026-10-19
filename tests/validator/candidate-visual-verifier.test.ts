@@ -17,6 +17,7 @@ import {
 import { SingleShotResultKind, type SingleShotClient } from '../../src/pi/single-shot-types';
 import type { SingleShotMessage } from '../../src/pi/single-shot-input';
 import { CandidateInstanceDisposition } from '../../src/types/candidate-visual-review';
+import { FullPageOverviewMode } from '../../src/types/full-page-overview-evidence';
 import { MAX_EVALUATE_JS_EXPRESSION_CHARS } from '../../src/browser/browser-tools';
 import {
     MAX_DOM_CHECKS,
@@ -81,11 +82,20 @@ function imagePartCount(options: { messages: SingleShotMessage[] }): number {
     return count;
 }
 
+/**
+ * Review options whose fixture captured both full-page overviews.
+ */
+type OverviewReviewOptions = CandidateVisualVerifierOptions & {
+    evidence: Required<
+        Pick<CandidateVisualVerifierOptions['evidence'], 'beforeFullPage' | 'afterFullPage'>
+    >;
+};
+
 function makeOptions(
     root: string,
     vision: SingleShotClient,
     recorder: TraceRecorder,
-): CandidateVisualVerifierOptions {
+): OverviewReviewOptions {
     const evidence = {
         beforeViewport: { id: 'before-viewport', path: join(root, 'before-viewport.png') },
         afterViewport: { id: 'after-viewport', path: join(root, 'after-viewport.png') },
@@ -2379,4 +2389,73 @@ describe('reviewCandidateVisually on the single-shot client', () => {
             rmSync(root, { recursive: true, force: true });
         }
     });
+});
+
+describe('reviewCandidateVisually on a page too tall for one full-page overview', () => {
+    // money.pl and pb.pl: Chromium refused the full-page capture of a page about 17,500 px tall,
+    // and an overview past the vision byte cap is no more readable. The tile window of the same
+    // states carries the proof either way, so the review reaches its verdict on it.
+    const DOCUMENT = { width: 1_920, height: 17_811 };
+
+    it.each([
+        { overview: 'not captured', mode: FullPageOverviewMode.UnavailableIllegible },
+        { overview: 'over the vision byte cap', mode: FullPageOverviewMode.OmittedIllegible },
+    ])(
+        'verifies from the tile window when the overview is $overview',
+        async ({ overview, mode }) => {
+            const root = mkdtempSync(join(tmpdir(), 'candidate-visual-review-no-overview-'));
+            const recorder = new TraceRecorder({
+                runId: 'visual-review',
+                issueNumber: 3,
+                mode: 'fix',
+            });
+            const { vision, chat } = makeProvider({
+                symptom: 'resolved',
+                symptomScope: 'The empty advertising placeholder below the first article row.',
+                coverageComplete: true,
+                beforeInstances: [
+                    {
+                        artifactId: 'before-tile-1',
+                        landmark: 'Below the first article row.',
+                        description: 'An empty advertising placeholder.',
+                    },
+                ],
+                remainingInstances: [],
+                pageIntegrity: 'intact',
+                rationale: 'The placeholder is gone across the inspected window.',
+                observedDamage: [],
+            });
+            try {
+                const options: CandidateVisualVerifierOptions = makeOptions(root, vision, recorder);
+                // The scripted provider answers in call order, so the review must not run its
+                // completions side by side.
+                options.visionConcurrency = 1;
+                options.evidence.beforeDocument = DOCUMENT;
+                options.evidence.afterDocument = DOCUMENT;
+                options.evidence.beforeDocumentCoverageComplete = false;
+                options.evidence.afterDocumentCoverageComplete = false;
+                if (overview === 'not captured') {
+                    delete options.evidence.beforeFullPage;
+                    delete options.evidence.afterFullPage;
+                } else {
+                    writeFileSync(
+                        join(root, 'before-full-page.png'),
+                        Buffer.alloc(7 * 1024 * 1024),
+                    );
+                    writeFileSync(join(root, 'after-full-page.png'), Buffer.alloc(7 * 1024 * 1024));
+                }
+
+                const result = await reviewCandidateVisually(options);
+
+                expect(result.review.verdict).toBe('verified');
+                expect(result.review.fullPageOverviewEvidence?.before.mode).toBe(mode);
+                expect(result.review.fullPageOverviewEvidence?.after.mode).toBe(mode);
+                const calls = JSON.stringify(chat.mock.calls);
+                expect(calls).not.toContain('artifact=before-full-page');
+                expect(calls).not.toContain('artifact=after-full-page');
+            } finally {
+                rmSync(root, { recursive: true, force: true });
+            }
+        },
+    );
 });

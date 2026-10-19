@@ -5,6 +5,10 @@ import {
 } from '../validator/candidate-network-scope';
 import { CANDIDATE_VALIDATION_ARTIFACT_ID_PATTERN } from './candidate-artifact-identity';
 import {
+    ArtifactIdSchema,
+    CandidateVisualFullPageOverviewEvidenceSchema,
+} from './full-page-overview-evidence';
+import {
     CandidateNetworkVerdict,
     CandidateNetworkVerificationSchema,
     type CandidateNetworkVerification,
@@ -24,11 +28,6 @@ const MAX_VISUAL_INSTANCES = 50;
  * Maximum number of tile observations reconciled for either page state.
  */
 const MAX_INVENTORY_RECONCILIATIONS = 50;
-
-/**
- * Non-empty artifact identifier emitted by the trusted runner.
- */
-const ArtifactIdSchema = v.pipe(v.string(), v.minLength(1), v.maxLength(256));
 
 /**
  * Bounded natural-language explanation returned by the visual model.
@@ -290,43 +289,8 @@ export const CandidateVisualReviewModelOutputSchema = v.strictObject({
 });
 
 /**
- * Runner-owned provenance for the full-page image used or safely omitted for vision.
- */
-export const CandidateVisualFullPageOverviewEvidenceSchema = v.pipe(
-    v.strictObject({
-        mode: v.picklist([
-            'original',
-            'omitted_complete_tiles',
-            // Withheld because the document is far taller than it is wide. Unlike the oversized
-            // modes it needs no tile-coverage proof and never blocks the review: an image the
-            // model cannot read protects nothing. See `planFullPageOverview`.
-            'omitted_illegible',
-            'blocked_oversized_incomplete_tiles',
-        ]),
-        originalArtifactId: ArtifactIdSchema,
-        originalBytes: v.pipe(v.number(), v.integer(), v.minValue(0)),
-        visionArtifactId: v.nullable(ArtifactIdSchema),
-        visionBytes: v.nullable(v.pipe(v.number(), v.integer(), v.minValue(0))),
-        reason: v.nullable(v.pipe(v.string(), v.minLength(1), v.maxLength(1_000))),
-    }),
-    v.check((evidence) => {
-        if (evidence.mode === 'original') {
-            return (
-                evidence.visionArtifactId === evidence.originalArtifactId &&
-                evidence.visionBytes === evidence.originalBytes &&
-                evidence.reason === null
-            );
-        }
-        return (
-            evidence.visionArtifactId === null &&
-            evidence.visionBytes === null &&
-            evidence.reason !== null
-        );
-    }, 'Full-page overview provenance must bind original and vision artifacts consistently.'),
-);
-
-/**
- * Trusted visual-review record bound by the runner to one candidate and four evidence images.
+ * Trusted visual-review record bound by the runner to one candidate, both viewports and the
+ * full-page overviews the browser captured.
  */
 export const CandidateVisualReviewSchema = v.pipe(
     v.strictObject({
@@ -352,8 +316,9 @@ export const CandidateVisualReviewSchema = v.pipe(
         candidateRuleHash: v.pipe(v.string(), v.regex(/^[a-f0-9]{64}$/)),
         beforeViewportArtifactId: ArtifactIdSchema,
         afterViewportArtifactId: ArtifactIdSchema,
-        beforeFullPageArtifactId: ArtifactIdSchema,
-        afterFullPageArtifactId: ArtifactIdSchema,
+        // Null when the browser captured no overview of that state; the tiles carry its proof.
+        beforeFullPageArtifactId: v.nullable(ArtifactIdSchema),
+        afterFullPageArtifactId: v.nullable(ArtifactIdSchema),
         fullPageOverviewEvidence: v.optional(
             v.strictObject({
                 before: CandidateVisualFullPageOverviewEvidenceSchema,
@@ -425,13 +390,6 @@ export type CandidateVisualInventoryReconciliation = v.InferOutput<
  */
 export type CandidateVisualReviewModelOutput = v.InferOutput<
     typeof CandidateVisualReviewModelOutputSchema
->;
-
-/**
- * Runner-owned provenance for one full-page overview supplied to or omitted from vision.
- */
-export type CandidateVisualFullPageOverviewEvidence = v.InferOutput<
-    typeof CandidateVisualFullPageOverviewEvidenceSchema
 >;
 
 /**
