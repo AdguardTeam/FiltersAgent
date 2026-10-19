@@ -92,6 +92,8 @@ The format is based on [Keep a Changelog], and this project adheres to
 - Fixed CSS injection (`#$#`) candidates getting no structural facts in
   `apply_rule`: the probe now measures the rule's selector without its style
   block.
+- Fixed browser-verified CSS injection (`#$#`, `#$?#`) rules being reported
+  as unverified candidates instead of proposed patches.
 - Fixed full-page visual review on Claude vision models: screenshots longer
   than 8000 px are now scaled to the provider's image limits instead of being
   rejected, and a provider rejection of a vision request is reported as a

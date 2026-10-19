@@ -13,6 +13,7 @@ import {
 import { declaredPlacementForRun } from '../../src/knowledge/instruction-placement';
 import type { ProposeRuleOutcome } from '../../src/orchestrator/agent-runtime-candidate-context';
 import type { FixOutcome } from '../../src/types/fix-outcome';
+import { FixRunStatus } from '../../src/types/fix-run-result';
 
 let checkoutPath: string;
 
@@ -86,6 +87,24 @@ describe('enforceCandidateSafety', () => {
 
         expect(result.rejectionReason).toBeNull();
         expect(result.outcome.outcome).toBe('propose_rule');
+    });
+
+    it('publishes a verified CSS injection whatever properties it sets', () => {
+        // The blocker applies a `#$#` rule in phase C and the visual review judges it, so a
+        // verified padding fix reaches the maintainer as a patch, not as an unverified candidate.
+        const base = draftOutcome();
+        const rule = 'example.com#$#body > main { padding-right: unset !important; }';
+        const result = enforceCandidateSafety(
+            { ...base, ruleProposal: { ...base.ruleProposal, rule } },
+            { reportedDomain: 'example.com', checkoutPath },
+        );
+
+        expect(result.rejectionReason).toBeNull();
+        const candidatePatch = candidatePatchFromOutcome(result.outcome, checkoutPath);
+        expect(candidatePatch).toMatchObject({ rule });
+        expect(deriveFixRunStatus(result.outcome, candidatePatch, true)).toBe(
+            FixRunStatus.PatchProposed,
+        );
     });
 
     it('accepts a scriptlet declared as cosmetic and preserves its concrete syntax kind', () => {
@@ -350,7 +369,6 @@ describe('enforceCandidateSafety', () => {
 
     it.each([
         ['multiline rule', { rule: 'example.com##.ad\nexample.com##.other' }],
-        ['unsafe CSS injection', { rule: 'example.com#$#.ad,.comments { height: 0 !important; }' }],
         ['wrong domain', { rule: 'other.example##.ad-slot' }],
     ])('downgrades a candidate with %s', (_label, proposalOverride) => {
         const base = draftOutcome();
@@ -386,7 +404,9 @@ describe('enforceCandidateSafety', () => {
             syntaxKind: 'scriptlet',
             filePath: 'BaseFilter/sections/specific.txt',
         });
-        expect(deriveFixRunStatus(result.outcome, candidatePatch, true)).toBe('patch_proposed');
+        expect(deriveFixRunStatus(result.outcome, candidatePatch, true)).toBe(
+            FixRunStatus.PatchProposed,
+        );
     });
 
     it('carries a downgraded rule as the candidate for review with the rejection reason', () => {

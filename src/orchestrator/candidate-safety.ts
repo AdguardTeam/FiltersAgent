@@ -17,7 +17,6 @@ import {
 import { candidateScopeProblem, normalizeScopeDomain } from './candidate-scope';
 import type { DeclaredPlacementSet } from '../types/declared-placement';
 import { planRepositoryEdit } from '../repo/repository-edit';
-import { parseSafeCssInjectionRule } from '../rules/safe-css-injection';
 import type { Logger } from '../logger/logger';
 import { PolicyDecisionKind } from '../types/policy';
 
@@ -283,17 +282,10 @@ export function enforceCandidateSafety(
 
         // No syntax lint gates here: the in-browser phases already proved the blocker accepts and
         // applies the rule, and the repository's own lint command, when the run has one, only
-        // annotates the report. What stays is the validator-owned CSS safety subset: a candidate
-        // the validator could never apply in phase C must not reach the publisher.
+        // annotates the report. That holds for a CSS injection too: the blocker applies its
+        // declarations in phase C and the visual review judges what they changed, so a `#$#` rule
+        // answers to the same checks as a `##` one.
         const normalized = normalizeRule(proposal.rule);
-        if (
-            normalized.cssInjectionBody !== undefined &&
-            parseSafeCssInjectionRule(proposal.rule).value === undefined
-        ) {
-            throw new CandidateSafetyError(
-                'Candidate CSS injection is outside the validator-owned safe subset.',
-            );
-        }
         const parsedRuleType = generalRuleTypeForKind(normalized.kind);
         if (parsedRuleType === null) {
             throw new CandidateSafetyError(
