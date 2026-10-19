@@ -19,6 +19,7 @@ import {
 } from '../types/candidate-artifact-identity';
 import { ValidationViewportPositionSchema } from '../types/validation';
 import { RuleKind, normalizeRule } from '../repo/rule-normalizer';
+import { isSameSiteUrl } from '../browser/site-identity';
 import { appliedRulesMatch } from './applied-rules-match';
 import {
     calculateTrustedBaselineHash,
@@ -142,7 +143,8 @@ function runnerVisualReviewArtifactIdentity(
  * @param record - Parsed factual-validation payload.
  * @param candidateRule - Candidate bound to the artifact identity hash.
  * @param trustedContext - Immutable current URL and repository rules.
- * @returns Whether all context and applied-rule provenance matches exactly.
+ * @returns Whether the recorded context and applied rules match exactly and every phase landed on
+ *   the reported site.
  */
 function hasTrustedProvenance(
     record: Record<string, unknown>,
@@ -168,9 +170,9 @@ function hasTrustedProvenance(
         recordedContext?.reportedUrl === trustedContext.reportedUrl &&
         recordedContext.baselineHash === recomputedBaselineHash &&
         recordedContext.existingRuleCount === trustedContext.existingRules.length &&
-        phaseA?.url === trustedContext.reportedUrl &&
-        phaseB?.url === trustedContext.reportedUrl &&
-        phaseC?.url === trustedContext.reportedUrl &&
+        [phaseA, phaseB, phaseC].every((phase) =>
+            isSameSiteUrl(String(phase?.url), trustedContext.reportedUrl),
+        ) &&
         appliedRulesMatch(phaseA?.appliedRules, []) &&
         appliedRulesMatch(phaseB?.appliedRules, trustedContext.existingRules) &&
         appliedRulesMatch(phaseC?.appliedRules, [...trustedContext.existingRules, candidateRule])

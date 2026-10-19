@@ -493,6 +493,29 @@ describe('runSafeInteractionSequence', () => {
         expect(record.steps[0]!.refusalReason).toBe('external_destination');
     });
 
+    it("keeps working on the page the reported site's own redirect landed on", async () => {
+        // The page sits on the bare domain the reported `www` URL redirected to; following its
+        // own links and a path that changes as the page scrolls stay on the reported site.
+        const { session, page } = fakeSession({
+            facts: { 1: { tagName: 'a', destination: `${ALLOWED_ORIGIN}/news` } },
+            urlAfter: { 1: `${ALLOWED_ORIGIN}/news?page=2` },
+        });
+
+        const record = await runSafeInteractionSequence({
+            session,
+            plan: planOf([step('wait'), step('click'), step('scroll')]),
+            allowedOrigin: 'https://www.site.example',
+        });
+
+        expect(record.status).toBe('completed');
+        expect(record.steps.map((evidence) => evidence.outcome)).toEqual([
+            'performed',
+            'performed',
+            'performed',
+        ]);
+        expect(page.actions).toEqual(['click', 'scrollIntoViewIfNeeded']);
+    });
+
     it('names the page a step landed on when that step left the reported site', async () => {
         const landing = 'https://other.example/landing';
         const { session } = fakeSession({ urlAfter: { 0: landing } });

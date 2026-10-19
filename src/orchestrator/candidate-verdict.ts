@@ -11,6 +11,7 @@ import * as v from 'valibot';
 import { FixOutcomeKind, ReproductionStatus, type FixOutcome } from '../types/fix-outcome';
 import { planRepositoryEdit } from '../repo/repository-edit';
 import { normalizeRule } from '../repo/rule-normalizer';
+import { isSameSiteUrl } from '../browser/site-identity';
 import { appliedRulesMatch } from './applied-rules-match';
 import type { DeclaredPlacementSet } from '../types/declared-placement';
 import { RepositoryEditKind } from '../types/repository-edit-kind';
@@ -310,12 +311,16 @@ export function candidatePatchVerificationRefusal(
     if (!phaseA || !phaseB || !phaseC) {
         return 'a phase record is missing from the factual validation';
     }
-    if (
-        phaseA.url !== expectedContext.reportedUrl ||
-        phaseB.url !== expectedContext.reportedUrl ||
-        phaseC.url !== expectedContext.reportedUrl
-    ) {
-        return 'a phase URL differs from the trusted reported URL';
+    // A phase opens the reported URL and records where the browser landed. The site's own redirect
+    // (`www` to the bare domain, `http` to `https`) keeps the reported page; another site does not.
+    const strayPhase = [phaseA, phaseB, phaseC].find(
+        (phase) => !isSameSiteUrl(String(phase.url), expectedContext.reportedUrl),
+    );
+    if (strayPhase) {
+        return (
+            `phase ${String(strayPhase.phase)} landed on ${String(strayPhase.url)}, outside the ` +
+            `site of the trusted ${expectedContext.reportedUrl}`
+        );
     }
     if (phaseA.error || phaseB.error || phaseC.error) {
         return 'a phase recorded an error';

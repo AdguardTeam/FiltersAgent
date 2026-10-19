@@ -261,6 +261,20 @@ describe('selectRepresentativeRejectedCandidateScreenshots', () => {
         ).toBeUndefined();
     });
 
+    it("binds evidence from phases that followed the site's own redirect", () => {
+        const context = trustedContext();
+        const attempt = rejectedAttempt('example.com##.ad-slot', context);
+        for (const label of ['phaseA', 'phaseB', 'phaseC']) {
+            (attempt.record[label] as Record<string, unknown>).url =
+                'https://www.example.com/article/';
+        }
+        writeFileSync(attempt.artifacts[0].path, JSON.stringify(attempt.record));
+
+        expect(
+            selectRepresentativeRejectedCandidateScreenshots(attempt.artifacts, context),
+        ).toMatchObject({ validationArtifactId: attempt.validationArtifactId });
+    });
+
     it('rejects an unaligned or incomplete same-document screenshot pair', () => {
         const context = trustedContext();
         const rule = 'example.com##.ad-slot';

@@ -6,6 +6,7 @@ import type {
     InteractionPopupObservation,
 } from '../browser/interaction-page-events';
 import { canonicalHttpOrigin } from '../browser/network-safety';
+import { isSameSiteUrl } from '../browser/site-identity';
 import { redactPayload } from '../tracer/redactor';
 
 /**
@@ -577,7 +578,7 @@ export const SafeInteractionRefusalReason = {
     DevicePermission: 'device_permission',
 
     /**
-     * The control's destination leaves the reported site's origin.
+     * The control's destination leaves the reported site.
      */
     ExternalDestination: 'external_destination',
 
@@ -680,24 +681,48 @@ function targetSignature(facts: SafeInteractionTargetFacts): string {
 }
 
 /**
- * Decide whether one absolute destination leaves the reported site.
+ * Read the canonical origin of one http(s) URL without throwing.
  *
- * A destination that cannot be parsed is treated as leaving: an origin that cannot be established
- * has not been established.
+ * @param url - Absolute URL.
+ * @returns Canonical origin, or undefined when the URL does not parse as http(s).
+ */
+function httpOriginOf(url: string): string | undefined {
+    try {
+        return canonicalHttpOrigin(url);
+    } catch {
+        return undefined;
+    }
+}
+
+/**
+ * Decide whether one absolute destination leaves the origins a click may reach.
+ *
+ * The session's navigation guard admits only the origins the session loaded, so a click may lead to
+ * the reported origin, or to the origin of the page the browser is on when that page is on the
+ * reported site: the bare domain a `www` URL redirected to, for one. Any other destination, a
+ * related host the session never loaded included, is refused before the click instead of being
+ * aborted after it. A destination that cannot be parsed is treated as leaving: an origin that
+ * cannot be established has not been established.
  *
  * @param destination - Absolute destination, or the empty string when the element has none.
  * @param allowedOrigin - Canonical origin of the reported site.
- * @returns Whether the destination is off-origin or unestablishable.
+ * @param pageUrl - Main-frame URL the page is on before the step.
+ * @returns Whether the destination is outside the reachable origins or unestablishable.
  */
-function leavesAllowedOrigin(destination: string, allowedOrigin: string): boolean {
+function leavesReachableOrigins(
+    destination: string,
+    allowedOrigin: string,
+    pageUrl: string,
+): boolean {
     if (destination.length === 0) {
         return false;
     }
-    try {
-        return canonicalHttpOrigin(destination) !== canonicalHttpOrigin(allowedOrigin);
-    } catch {
-        return true;
-    }
+    const origin = httpOriginOf(destination);
+    const reachable = [
+        httpOriginOf(allowedOrigin),
+        isSameSiteUrl(pageUrl, allowedOrigin) ? httpOriginOf(pageUrl) : undefined,
+    ];
+    return origin === undefined || !reachable.includes(origin);
 }
 
 /**
@@ -739,12 +764,14 @@ function startsMedia(step: SafeInteractionStep, facts: SafeInteractionTargetFact
  * @param step - Exact normalized step the run wants to perform.
  * @param facts - Bounded probe facts, or null for a step that resolves no target.
  * @param allowedOrigin - Canonical origin of the reported site.
+ * @param pageUrl - Main-frame URL the page is on before the step.
  * @returns Permission, or the finite reason the host refuses.
  */
 export function classifySafeInteraction(
     step: SafeInteractionStep,
     facts: SafeInteractionTargetFacts | null,
     allowedOrigin: string,
+    pageUrl: string,
 ): SafeInteractionDecision {
     if (facts === null) {
         return { allowed: true };
@@ -791,8 +818,8 @@ export function classifySafeInteraction(
     }
     if (
         step.kind === SafeInteractionKind.Click &&
-        (leavesAllowedOrigin(facts.destination, allowedOrigin) ||
-            leavesAllowedOrigin(facts.formDestination, allowedOrigin))
+        (leavesReachableOrigins(facts.destination, allowedOrigin, pageUrl) ||
+            leavesReachableOrigins(facts.formDestination, allowedOrigin, pageUrl))
     ) {
         return refuse(SafeInteractionRefusalReason.ExternalDestination);
     }

@@ -48,7 +48,7 @@ import { allowUserScripts as allowUserScriptsDefault } from '../browser/chrome-u
 import { createLoopbackTextServer, type LoopbackTextServer } from '../local/loopback-text-server';
 import { CHROMIUM_USER_AGENT_PROFILE } from '../browser/prepared-extension-launch';
 import type { IBrowserSession } from '../browser/browser-interfaces';
-import { registrableDomain } from '../browser/request-party';
+import { isSameSiteUrl } from '../browser/site-identity';
 import type { BrowserContext } from 'playwright-core';
 import {
     extractBrowserNetworkErrorCode,
@@ -4440,8 +4440,7 @@ export class AgentRuntime {
             !state ||
             !landedUrl ||
             !this.redirectTargetUrls.includes(landedUrl) ||
-            registrableDomain(new URL(landedUrl).hostname) ===
-                registrableDomain(new URL(state.targetUrl).hostname)
+            isSameSiteUrl(landedUrl, state.targetUrl)
         ) {
             return result;
         }
@@ -4475,11 +4474,7 @@ export class AgentRuntime {
             // `http` on `https`. Comparing origins would refuse every such landing, and the run
             // could neither inspect the page it had loaded nor finish.
             const navigatedUrl = canonicalTargetUrl(result.url);
-            if (
-                navigatedUrl &&
-                registrableDomain(new URL(navigatedUrl).hostname) ===
-                    registrableDomain(new URL(state.targetUrl).hostname)
-            ) {
+            if (navigatedUrl && isSameSiteUrl(navigatedUrl, state.targetUrl)) {
                 state.navigationVerified = true;
                 this.lastBrowserError = undefined;
             } else if (navigatedUrl && !this.targetUrls().includes(navigatedUrl)) {

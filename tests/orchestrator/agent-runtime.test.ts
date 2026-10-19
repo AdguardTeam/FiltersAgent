@@ -4474,35 +4474,50 @@ describe('AgentRuntime', () => {
         });
     });
 
-    it("counts a landing on the site's own host as navigation, and another site's as none", async () => {
-        // AdguardFilters#241312: google.com loads as www.google.com. Comparing origins refused the
-        // landing, so the run could neither inspect the page it had loaded nor finish.
-        const analysisOnly: FixOutcome = {
-            outcome: 'analysis_only',
-            reasoning: 'The reported card is absent from the loaded page.',
-        };
-        const verdicts = new Map<string, string | undefined>();
-        for (const landingUrl of ['https://www.nettg.pl/', 'https://nettg-login.com/']) {
+    it.each([
+        ["the site's own host", 'https://nettg.pl/', 'https://www.nettg.pl/', true],
+        ['another domain', 'https://nettg.pl/', 'https://nettg-login.com/', false],
+        ['a sibling host', 'https://www.nettg.pl/', 'https://shop.nettg.pl/', false],
+        ['another tenant of a shared host', 'https://a.github.io/', 'https://b.github.io/', false],
+    ] as const)(
+        'counts a landing on %s as navigation only when it stays on the site',
+        async (_name, targetUrl, landingUrl, sameSite) => {
+            // AdguardFilters#241312: google.com loads as www.google.com. Comparing origins refused
+            // the landing, so the run could neither inspect the page it had loaded nor finish.
+            const analysisOnly: FixOutcome = {
+                outcome: 'analysis_only',
+                reasoning: 'The reported card is absent from the loaded page.',
+            };
             const runtime = await walledPageRuntime(
                 `landing-${landingUrl}`,
                 landingUrl,
                 'none',
                 'The reported page is fully visible.',
-                { ...runtimeOptions(), issueAttachmentArtifactIds: [] },
+                {
+                    ...runtimeOptions(),
+                    allowedTargetUrls: [targetUrl],
+                    issueAttachmentArtifactIds: [],
+                },
             );
             await fetchRuntimeIssue(runtime);
             await runtime.registry.dispatch('launch_browser', {
                 extension: 'none',
-                targetUrl: 'https://nettg.pl/',
+                targetUrl,
                 profile: browserProfile,
             });
-            await runtime.registry.dispatch('open_page', { url: 'https://nettg.pl/' });
-            verdicts.set(landingUrl, runtime.validateTerminalOutcome(analysisOnly)?.errorKind);
-        }
 
-        expect(verdicts.get('https://www.nettg.pl/')).not.toBe('browser_first_evidence_required');
-        expect(verdicts.get('https://nettg-login.com/')).toBe('browser_first_evidence_required');
-    });
+            const opened = await runtime.registry.dispatch('open_page', { url: targetUrl });
+
+            const errorKind = runtime.validateTerminalOutcome(analysisOnly)?.errorKind;
+            if (sameSite) {
+                expect(opened).not.toHaveProperty('redirectedTo');
+                expect(errorKind).not.toBe('browser_first_evidence_required');
+            } else {
+                expect(opened).toMatchObject({ redirectedTo: landingUrl });
+                expect(errorKind).toBe('browser_first_evidence_required');
+            }
+        },
+    );
 
     it('lets the run launch on the page a reported URL redirected to on another site', async () => {
         // A dco.ink short link landed on the article on another site.

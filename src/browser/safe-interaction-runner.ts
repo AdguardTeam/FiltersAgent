@@ -26,7 +26,7 @@ import type { TraceRecorder } from '../tracer/trace-recorder';
 import type { IBrowserSession } from './browser-interfaces';
 import { attachInteractionPageEventRecorders } from './interaction-page-events';
 import { stabilizePageForCapture } from './page-stability';
-import { canonicalHttpOrigin } from './network-safety';
+import { isSameSiteUrl } from './site-identity';
 import { encodeProbeInput, factNumber, factString } from './page-probe-transport';
 import { createTrustedPageEvaluator } from './trusted-page-evaluator';
 
@@ -497,7 +497,12 @@ export async function runSafeInteractionSequence(
                 }
                 precondition = readPageState(await evaluator.evaluate(buildStateProbe(nonce)));
 
-                const decision = classifySafeInteraction(step, facts, config.allowedOrigin);
+                const decision = classifySafeInteraction(
+                    step,
+                    facts,
+                    config.allowedOrigin,
+                    precondition.url,
+                );
                 if (!decision.allowed) {
                     outcome = 'refused';
                     refusalReason = decision.reason;
@@ -509,9 +514,11 @@ export async function runSafeInteractionSequence(
                     });
                     stabilization = stabilized.status;
                     result = readPageState(await evaluator.evaluate(buildStateProbe(nonce)));
-                    // The network guard aborts an off-origin main-frame navigation, but a step that
+                    // The network guard aborts an off-site main-frame navigation, but a step that
                     // moved the page anyway ends the sequence rather than observing another site.
-                    if (!sameOrigin(result.url, config.allowedOrigin)) {
+                    // The site's own redirect (`www` to the bare domain) and a path that changes as
+                    // the page scrolls stay on the reported site.
+                    if (!isSameSiteUrl(result.url, config.allowedOrigin)) {
                         outcome = 'failed';
                         refusalReason = SafeInteractionRefusalReason.ExternalDestination;
                     }
@@ -586,21 +593,6 @@ function unknownPageState(): SafeInteractionPageState {
         targetFound: false,
         targetVisible: false,
     };
-}
-
-/**
- * Decide whether one observed URL is still on the reported site.
- *
- * @param url - URL observed after a step.
- * @param allowedOrigin - Canonical origin of the reported site.
- * @returns Whether the page is still on the reported origin.
- */
-function sameOrigin(url: string, allowedOrigin: string): boolean {
-    try {
-        return canonicalHttpOrigin(url) === canonicalHttpOrigin(allowedOrigin);
-    } catch {
-        return false;
-    }
 }
 
 /**

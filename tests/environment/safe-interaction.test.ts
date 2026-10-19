@@ -402,6 +402,7 @@ describe('classifySafeInteraction', () => {
             stepOf(scenario.kind ?? 'click'),
             { ...PLAIN_BUTTON, ...scenario.facts },
             ALLOWED_ORIGIN,
+            `${ALLOWED_ORIGIN}/article`,
         );
 
         expect(decision.allowed).toBe(scenario.reason === null);
@@ -410,10 +411,52 @@ describe('classifySafeInteraction', () => {
         }
     });
 
+    it.each([
+        ['the origin the reported www URL redirected to', `${ALLOWED_ORIGIN}/news`, null],
+        ['the reported origin itself', 'https://www.site.example/news', null],
+        ['a subdomain the session never loaded', 'https://news.site.example/x', 'refused'],
+        ['the http variant of the page', 'http://site.example/x', 'refused'],
+        ['another port on the page host', 'https://site.example:8443/x', 'refused'],
+    ] as const)(
+        'clicks a link to %s only when the navigation guard would admit it',
+        (_name, destination, refusal) => {
+            const decision = classifySafeInteraction(
+                stepOf('click'),
+                { ...PLAIN_BUTTON, tagName: 'a', destination },
+                'https://www.site.example',
+                `${ALLOWED_ORIGIN}/article`,
+            );
+
+            expect(decision).toEqual(
+                refusal === null
+                    ? { allowed: true }
+                    : { allowed: false, reason: 'external_destination' },
+            );
+        },
+    );
+
+    it("refuses a link to the page's own origin when the page left the reported site", () => {
+        const decision = classifySafeInteraction(
+            stepOf('click'),
+            { ...PLAIN_BUTTON, tagName: 'a', destination: 'https://other.example/next' },
+            ALLOWED_ORIGIN,
+            'https://other.example/landing',
+        );
+
+        expect(decision).toEqual({ allowed: false, reason: 'external_destination' });
+    });
+
     it.each(['reload', 'back', 'wait'] as const)(
         'permits %s, which resolves no control to judge',
         (kind) => {
-            expect(classifySafeInteraction(stepOf(kind), null, ALLOWED_ORIGIN).allowed).toBe(true);
+            expect(
+                classifySafeInteraction(
+                    stepOf(kind),
+                    null,
+                    ALLOWED_ORIGIN,
+                    `${ALLOWED_ORIGIN}/article`,
+                ).allowed,
+            ).toBe(true);
         },
     );
 });

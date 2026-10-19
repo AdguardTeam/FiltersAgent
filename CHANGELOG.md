@@ -74,6 +74,14 @@ The format is based on [Keep a Changelog], and this project adheres to
 - Fixed benchmark cases ending as infrastructure failures, and
   `pnpm benchmark:case:add` rejecting issues, when the reporter's settings
   import link carries `&amp;` separators.
+- Fixed sites that redirect within themselves (`www.example.com` to
+  `example.com`, `http` to `https`): `interact_page` no longer reports
+  `external_destination` for steps that stay on the site, and a verified
+  candidate is no longer refused because its phases landed on the redirected
+  address. `open_page` now treats a redirect to a sibling host
+  (`shop.example.com`) or another tenant of a shared host (`a.github.io` to
+  `b.github.io`) as another site, and the agent opens the landing page in a
+  new session.
 - Fixed `launch_browser` refusing the reported page when the issue writes its
   URL with `&amp;` separators, and binding the session to a copy with broken
   query parameters instead.

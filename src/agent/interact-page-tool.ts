@@ -1,4 +1,5 @@
 import type { IBrowserSession } from '../browser/browser-interfaces';
+import { isRelatedHost } from '../browser/site-identity';
 import {
     persistSafeInteractionRecord,
     runSafeInteractionSequence,
@@ -78,7 +79,7 @@ function newRequestHosts(
     const hosts: string[] = [];
     for (const entry of session.getNetworkLog().slice(fromIndex)) {
         const host = requestHost(entry.url);
-        if (host.length === 0 || host === reportedHost || hosts.includes(host)) {
+        if (host.length === 0 || isRelatedHost(host, reportedHost) || hosts.includes(host)) {
             continue;
         }
         hosts.push(host);

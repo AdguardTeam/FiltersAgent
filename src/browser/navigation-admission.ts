@@ -6,6 +6,7 @@ import {
     type HostnameResolver,
 } from './network-safety';
 import { RedirectOriginPolicy } from './redirect-origin-policy';
+import { isRelatedHost } from './site-identity';
 
 /**
  * Chromium extension pages and workers need their local custom-filter server exempted.
@@ -92,21 +93,6 @@ export interface NavigationAdmission {
      * @returns Error detail, or undefined when no refusal remains.
      */
     takeBlockedNavigationError(): string | undefined;
-}
-
-/**
- * Relate landing and reported hosts only through equality or a subdomain boundary.
- *
- * @param landingHostname - Canonical landing hostname.
- * @param issueHostname - Canonical hostname from the reported URL.
- * @returns Whether either host is the other's subdomain or the same host.
- */
-export function isRelatedHost(landingHostname: string, issueHostname: string): boolean {
-    return (
-        landingHostname === issueHostname ||
-        landingHostname.endsWith(`.${issueHostname}`) ||
-        issueHostname.endsWith(`.${landingHostname}`)
-    );
 }
 
 /**
