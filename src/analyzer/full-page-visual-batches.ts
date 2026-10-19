@@ -53,9 +53,12 @@ export const PreCandidateCaptureSchema = v.object({
 });
 
 /**
- * Strict semantic inventory returned for one overview or tile batch.
+ * Semantic inventory returned for one overview or tile batch.
+ *
+ * Every field is required and checked; a key beside them is dropped rather than refused, as in the
+ * candidate review's tile inventory: a model that annotates its reply does so on every attempt.
  */
-export const PreCandidateVisualBatchOutputSchema = v.strictObject({
+export const PreCandidateVisualBatchOutputSchema = v.object({
     coverageObserved: v.boolean(),
     reporterSymptomPresence: ReporterSymptomPresenceSchema,
     symptomScope: v.pipe(v.string(), v.minLength(1), v.maxLength(2_000)),

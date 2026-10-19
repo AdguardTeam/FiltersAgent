@@ -86,6 +86,9 @@ function anthropicErrorType(status: number): string {
     if (status === 529) {
         return 'overloaded_error';
     }
+    if (status === 429) {
+        return 'rate_limit_error';
+    }
     if (status >= 500) {
         return 'api_error';
     }

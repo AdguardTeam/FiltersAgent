@@ -43,7 +43,7 @@ support it (Claude 5.x).
 | `llmVisionMaxOutputTokens` | When `llmVisionModel` differs from `llmModel` | Completion cap sent with the vision model's requests, in tokens. When `llmVisionModel` is unset or both inputs name one model, it is `llmMaxOutputTokens`. |
 | `llmReasoningEffort` | No | Reasoning effort of the investigation's requests: `off`, `minimal`, `low`, `medium` or `high`; defaults to `high`. On Anthropic, `off` omits thinking; a model that thinks by default keeps thinking. |
 | `llmSingleShotReasoningEffort` | No | Reasoning effort of the one-question calls (reading the issue, describing a screenshot), same values; defaults to `low`. On Anthropic with loop effort on, `off` sends disabled thinking on reasoning-enabled entries: Claude Opus 5.5 and Sonnet 5.5 reject it with HTTP 400, while Haiku 5.5 accepts it. |
-| `llmRequestMaxAttempts` | No | Total attempts per LLM request when the provider fails transiently (a 5xx, a timeout, a response cut off mid-stream), 1 to 3; defaults to 2. Raise it to 3 for a gateway that drops responses more than once in a row. |
+| `llmRequestMaxAttempts` | No | Total attempts per LLM request when the provider fails transiently (a 5xx, a timeout, a response cut off mid-stream), 1 to 3; defaults to 2. After an HTTP 429 rate limit, an agent-loop retry waits 60 seconds and a second one 120; a vision or intake call first spends its quick transport retries, then waits the same way. Raise it to 3 for a gateway that drops responses more than once in a row. |
 
 ## Outputs
 

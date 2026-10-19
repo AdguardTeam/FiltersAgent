@@ -369,7 +369,17 @@ export function buildApplicationToolSet(
                 // earlier on this page. The predicate matches only this one applied authority.
                 await session
                     .getPage()
-                    .route(admitsSurfaceUrl, (route) => route.continue())
+                    .route(admitsSurfaceUrl, (route) =>
+                        // A continuation still in flight when the browser closes rejects, and
+                        // Playwright rethrows a route callback's rejection where it kills the
+                        // process.
+                        route.continue().catch((error: unknown) => {
+                            logger.warn(
+                                { err: error, blockerSurfaceAuthority: surfaceAuthority },
+                                'the scoped route continuation could not settle a request',
+                            );
+                        }),
+                    )
                     .catch((error: unknown) => {
                         logger.warn(
                             {

@@ -75,9 +75,13 @@ export const MAX_OBSERVED_DAMAGE_ENTRIES = 20;
 export const MAX_OBSERVED_DAMAGE_ENTRY_CHARS = 1_000;
 
 /**
- * Strict output requested while the vision model inventories one bounded tile batch.
+ * Output requested while the vision model inventories one bounded tile batch.
+ *
+ * Every field is required and checked; a key beside them is dropped rather than refused. A model
+ * that annotates its reply (`coverageObserved_note`) did so on every attempt, so refusing the key
+ * left the review without a verdict over text the review never reads.
  */
-const CandidateVisualTileBatchOutputSchema = v.strictObject({
+const CandidateVisualTileBatchOutputSchema = v.object({
     coverageObserved: v.boolean(),
     symptomScope: v.pipe(v.string(), v.minLength(1), v.maxLength(MAX_SYMPTOM_SCOPE_CHARS)),
     instances: v.pipe(

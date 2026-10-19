@@ -1,7 +1,11 @@
+import { execFile } from 'node:child_process';
+import { resolve } from 'node:path';
+import { promisify } from 'node:util';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as v from 'valibot';
 import { createSingleShotClient } from '../../src/pi/single-shot';
 import { SingleShotResultKind } from '../../src/pi/single-shot-types';
+import { TurnStopReason } from '../../src/pi/stop-reason';
 import {
     HermeticScenario,
     type HermeticProvider,
@@ -9,6 +13,8 @@ import {
     startHermeticProvider,
 } from './hermetic-provider';
 import { createTestPiRuntime } from './test-runtime';
+
+const execFileAsync = promisify(execFile);
 
 const VerdictSchema = v.object({ verdict: v.string(), count: v.number() });
 
@@ -78,4 +84,19 @@ describe('provider-requested retry delay', () => {
         expect(result.kind).toBe(SingleShotResultKind.ProviderFailure);
         expect(provider.requests).toHaveLength(1);
     });
+});
+
+describe('a provider pause in a process with nothing else pending', () => {
+    it('keeps the process alive until the retry answers', async () => {
+        // A DeepSeek series run died here: the gateway asked for a pause before the run's browser
+        // started, nothing else held the event loop, and Node exited mid-await with no report. The
+        // exit happens only when the wait is the last thing pending, so the probe runs alone.
+        const { stdout } = await execFileAsync(
+            resolve('node_modules/.bin/tsx'),
+            [resolve('tests/pi/fixtures/provider-pause-probe.ts')],
+            { cwd: resolve('.'), timeout: 20_000 },
+        );
+
+        expect(JSON.parse(stdout)).toEqual({ stopReason: TurnStopReason.Stop, requests: 2 });
+    }, 30_000);
 });

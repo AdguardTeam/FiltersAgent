@@ -2418,6 +2418,42 @@ describe('reviewCandidateVisually on the single-shot client', () => {
             rmSync(root, { recursive: true, force: true });
         }
     });
+
+    it('accepts inventory replies that add a note beside the requested fields', async () => {
+        // A model answered every inventory with an extra key such as `coverageObserved_note`, on
+        // the reply and on its instances; the review reads nothing from them, and refusing them
+        // left a live review without a verdict.
+        const withNotes = (text: string): string => {
+            const batch = JSON.parse(text) as { instances: Record<string, unknown>[] };
+            return JSON.stringify({
+                ...batch,
+                coverageObserved_note: 'Every tile was readable.',
+                instances: batch.instances.map((instance) => ({
+                    ...instance,
+                    landmark_note: 'Measured from the header.',
+                })),
+            });
+        };
+        const script = validScript().map((reply, index, all) =>
+            index < all.length - 1 && reply.kind === ScriptedReplyKind.Text
+                ? { ...reply, text: withNotes(reply.text) }
+                : reply,
+        );
+        provider = await startHermeticProvider({ scenario: HermeticScenario.Scripted, script });
+        const root = mkdtempSync(join(tmpdir(), 'candidate-visual-hermetic-note-'));
+        const recorder = new TraceRecorder({ runId: 'visual-review', issueNumber: 3, mode: 'fix' });
+        try {
+            const result = await reviewCandidateVisually({
+                ...makeOptions(root, await createTestVisionClient(provider.baseUrl), recorder),
+                visionConcurrency: 1,
+            });
+
+            expect(result.review.verdict).toBe('verified');
+            expect(provider.requests).toHaveLength(7);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
 });
 
 describe('reviewCandidateVisually on a page too tall for one full-page overview', () => {

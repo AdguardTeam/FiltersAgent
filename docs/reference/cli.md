@@ -108,7 +108,7 @@ and Sonnet 5.5 reject this with HTTP 400; Haiku 5.5 accepts it.
 | `LLM_REASONING_EFFORT` | No | `high` | Thinking effort of loop requests: `off`, `minimal`, `low`, `medium` or `high` |
 | `LLM_SINGLE_SHOT_REASONING_EFFORT` | No | `low` | Thinking effort of single-shot calls: issue extraction and vision verdicts |
 | `LLM_REQUEST_TIMEOUT_MS` | No | `300000` | Per-attempt stall deadline: time to the response headers, then the longest gap between streamed model events, keep-alive pings excluded; a stalled attempt counts toward `LLM_REQUEST_MAX_ATTEMPTS` (30000–300000) |
-| `LLM_REQUEST_MAX_ATTEMPTS` | No | `2` | Total attempts for transient LLM failures (1–3) |
+| `LLM_REQUEST_MAX_ATTEMPTS` | No | `2` | Total attempts for transient LLM failures (1–3). After an HTTP 429 rate limit, an agent-loop retry waits 60 s and a second one 120 s; a vision or intake call first spends its quick transport retries, then waits the same way |
 | `LLM_PRICING_FILE` | No | — | JSON price file runs are priced from; without it the cost is not computed ([format](../guides/benchmark.md#count-the-cost)) |
 | `GITHUB_TOKEN` | For GitHub reads and comments | — | GitHub token scoped to the repository operation |
 | `GITHUB_REPO_OWNER`, `GITHUB_REPO_NAME` | No | — | Repository identity, set together |

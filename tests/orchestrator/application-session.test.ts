@@ -176,6 +176,18 @@ describe('application-session open_page admission', () => {
             expect(matcher(new URL(OTHER_EXTENSION_URL))).toBe(false);
         }
     });
+
+    it('settles a surface request whose browser closed before the continuation', async () => {
+        const recorded: RecordedPageCalls = { routes: [], navigations: [], messages: [] };
+        await toolOf(recorded, ToolName.OpenPage).execute({ url: SURFACE_URL }, undefined);
+        const closedRoute = {
+            continue: vi.fn(async () => {
+                throw new Error('route.continue: Target page, context or browser has been closed');
+            }),
+        };
+
+        await expect(recorded.routes[0].handler(closedRoute)).resolves.toBeUndefined();
+    });
 });
 
 describe('application-session send_extension_message admission', () => {

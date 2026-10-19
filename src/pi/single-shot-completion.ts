@@ -11,6 +11,7 @@ import type { SingleShotCallOptions } from './single-shot-types';
 import type { PiRuntime } from './runtime';
 import { toCompletionUsage, type CompletionUsage } from './usage-reporting';
 import { TurnStopReason } from './stop-reason';
+import { isProviderRateLimit, rateLimitRetryDelayMs } from './rate-limit-retry';
 import { isTransientGatewayFailure } from './transient-gateway-retry';
 
 /**
@@ -157,8 +158,8 @@ export interface SingleShotCompletion {
  *   after the headers surfaces as an error message it never retries, and one such fault would leave
  *   a candidate visual review "unavailable". A request pi refused because the provider asked for a
  *   pause above pi's own cap is retried the same way after that pause, up to
- *   `MAX_PROVIDER_REQUESTED_RETRY_DELAY_MS`. A caller abort and every deterministic failure return
- *   at once.
+ *   `MAX_PROVIDER_REQUESTED_RETRY_DELAY_MS`, and a rate-limit refusal after the rate-limit wait of
+ *   `rate-limit-retry.ts`. A caller abort and every deterministic failure return at once.
  */
 export async function completeOnce(
     runtime: PiRuntime,
@@ -193,6 +194,18 @@ export async function completeOnce(
                 'single-shot LLM call: the provider asked for a pause; waiting it out, then retrying',
             );
             delayMs = requestedDelayMs;
+        } else if (isProviderRateLimit(message)) {
+            delayMs = rateLimitRetryDelayMs(retry + 1);
+            options.logger?.warn(
+                {
+                    message: message.errorMessage,
+                    delayMs,
+                    retry: retry + 1,
+                    maxRetries,
+                    model: model.id,
+                },
+                'single-shot LLM call was rate-limited by the provider; waiting out the window',
+            );
         } else if (isTransientGatewayFailure(message) || isRetryableAssistantError(message)) {
             options.logger?.warn(
                 { message: message.errorMessage, retry: retry + 1, maxRetries, model: model.id },
@@ -227,6 +240,10 @@ function providerRequestedRetryDelayMs(message: AssistantMessage): number | unde
 /**
  * Wait before a retry, ending early when the caller aborts.
  *
+ * The timer stays referenced: the wait is work the run awaits, and it can be the only thing pending
+ * — a provider pause during intake, before any browser exists. An unreferenced timer let Node exit
+ * mid-await there, and the run ended with no report.
+ *
  * @param delayMs - How long to wait.
  * @param signal - The caller's abort signal, if any.
  * @returns `true` when the full delay passed, `false` when the caller aborted.
@@ -247,7 +264,6 @@ async function sleepUnlessAborted(
             signal?.removeEventListener('abort', onAbort);
             resolve(true);
         }, delayMs);
-        timer.unref();
         signal?.addEventListener('abort', onAbort, { once: true });
     });
 }

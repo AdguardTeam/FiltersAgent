@@ -78,6 +78,19 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Fixed
 
+- Fixed a run crashing when its browser closed while the network guard was
+  still checking a request: the process died on an unhandled `route.abort`
+  rejection.
+- Fixed a run exiting without a report while it waited out a pause the
+  provider asked for, such as a 120-second `retry-after` on HTTP 522.
+- Fixed an HTTP 429 rate limit, such as Anthropic's limit on concurrent
+  requests, ending the run as `llm_error` after retries 2 and 4 seconds
+  apart: a loop retry now waits 60 seconds and a second one 120, and a vision
+  or intake call waits the same way after its quick transport retries, all
+  within `LLM_REQUEST_MAX_ATTEMPTS`.
+- Fixed visual reviews ending without a verdict when the vision model added
+  a key of its own, such as `coverageObserved_note`, to an inventory reply or
+  to one of its instances; such a key is now ignored.
 - Fixed two benchmark cases started at once on a fresh `--output-root`
   failing with `EEXIST` while creating the shared output directory.
 - Fixed `###id` element-hiding rules being validated against the selector

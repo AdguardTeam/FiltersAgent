@@ -30,7 +30,8 @@ export interface NavigationAdmissionOptions {
      */
     resolveHostname: HostnameResolver;
     /**
-     * Operational log for retained and temporary landing origins.
+     * Operational log for retained and temporary landing origins, and for route actions the guard
+     * could not settle because the browser had closed.
      */
     logger?: Logger;
 }
@@ -160,6 +161,46 @@ export function createNavigationAdmission(
     }
 
     /**
+     * Decide whether one intercepted request may proceed, recording a refused main-frame
+     * navigation.
+     *
+     * @param page - Issue page whose main frame is origin-restricted.
+     * @param request - The intercepted request.
+     * @returns `true` when the request may proceed, `false` when the guard refuses it.
+     */
+    async function admitsRequest(page: Page, request: Request): Promise<boolean> {
+        let mainNavigation = false;
+        try {
+            const rawUrl = request.url();
+            const protocol = new URL(rawUrl).protocol;
+            if (protocol !== 'http:' && protocol !== 'https:') {
+                return true;
+            }
+            const frame = requestFrame(request);
+            mainNavigation =
+                frame !== undefined && frame === page.mainFrame() && request.isNavigationRequest();
+            if (mainNavigation) {
+                await admitMainNavigation(rawUrl);
+                return true;
+            }
+            const extensionRequest =
+                request.serviceWorker()?.url().startsWith(EXTENSION_PROTOCOL) === true ||
+                (!request.isNavigationRequest() &&
+                    frame !== undefined &&
+                    new URL(frame.page().mainFrame().url()).protocol === EXTENSION_PROTOCOL);
+            if (!extensionRequest) {
+                await validatePublicHttpUrl(rawUrl, { resolveHostname: options.resolveHostname });
+            }
+            return true;
+        } catch (error) {
+            if (mainNavigation) {
+                blockedNavigationError = (error as Error).message;
+            }
+            return false;
+        }
+    }
+
+    /**
      * Register one context-wide guard with main-frame admission before extension exemptions.
      *
      * @param page - Issue page whose main frame is origin-restricted.
@@ -170,40 +211,18 @@ export function createNavigationAdmission(
             return guardInstall;
         }
         const guard = async (route: Route, request: Request): Promise<void> => {
-            let mainNavigation = false;
+            const admitted = await admitsRequest(page, request);
             try {
-                const rawUrl = request.url();
-                const protocol = new URL(rawUrl).protocol;
-                if (protocol !== 'http:' && protocol !== 'https:') {
-                    await route.fallback();
-                    return;
-                }
-                const frame = requestFrame(request);
-                mainNavigation =
-                    frame !== undefined &&
-                    frame === page.mainFrame() &&
-                    request.isNavigationRequest();
-                if (mainNavigation) {
-                    await admitMainNavigation(rawUrl);
-                } else if (
-                    request.serviceWorker()?.url().startsWith(EXTENSION_PROTOCOL) ||
-                    (!request.isNavigationRequest() &&
-                        frame &&
-                        new URL(frame.page().mainFrame().url()).protocol === EXTENSION_PROTOCOL)
-                ) {
-                    await route.fallback();
-                    return;
-                } else {
-                    await validatePublicHttpUrl(rawUrl, {
-                        resolveHostname: options.resolveHostname,
-                    });
-                }
-                await route.fallback();
+                await (admitted ? route.fallback() : route.abort('blockedbyclient'));
             } catch (error) {
-                if (mainNavigation) {
-                    blockedNavigationError = (error as Error).message;
-                }
-                await route.abort('blockedbyclient');
+                // The admission check awaits a DNS lookup, so the browser can close while a
+                // request waits on it, and the route action then rejects. Playwright rethrows a
+                // route callback's rejection outside every caller, where it kills the process on
+                // an unhandled rejection; the request is gone with its page either way.
+                options.logger?.warn(
+                    { err: error, url: request.url(), admitted },
+                    'the network guard could not settle an intercepted request',
+                );
             }
         };
         guardInstall = page

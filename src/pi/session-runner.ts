@@ -17,6 +17,7 @@ import { type TerminalToolController } from './terminal-tool';
 import { createToolCallObservation } from './tool-bounce';
 import { unwrapStringifiedArguments } from './stringified-arguments';
 import { toAdvertisedSchema } from './tool-schema';
+import { extendRateLimitBackoff } from './rate-limit-retry';
 import { extendTransientGatewayRetry } from './transient-gateway-retry';
 import type { RunBudgets } from './guard-types';
 import { SealKind, type TerminalOutcome } from './seal-types';
@@ -385,6 +386,9 @@ export async function runAgentSession<T>(
     // hook to teach it. `transient-gateway-retry.ts` holds the whole pinned-vendor seam and the
     // reasons for it.
     extendTransientGatewayRetry(session, logger);
+    // Pi's one backoff starts at seconds, and a provider rate limit does not clear in seconds:
+    // `rate-limit-retry.ts` makes a rate-limited turn wait out the window first.
+    extendRateLimitBackoff(session, logger);
     // pi checks compaction after EVERY agent run, the one the terminal tool ended included: the
     // last assistant message stops on `toolUse`, so the aborted-skip does not apply, and a run
     // sitting above the threshold would buy one full summarization request after its payload was
