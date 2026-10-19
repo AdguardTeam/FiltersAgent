@@ -131,6 +131,9 @@ export const FullPageTileCoverageSchema = v.object({
     // True only when no explicit tileWindow was supplied and the default first-N-screens cap
     // was applied. Optional so artifacts recorded before this field existed still parse.
     windowDefaulted: v.optional(v.boolean()),
+    // True only when an explicit tileWindow needed more tiles than the limit and the capture kept
+    // its first rows; `window` then records the span those rows cover.
+    windowTrimmed: v.optional(v.boolean()),
     error: v.optional(v.pipe(v.string(), v.minLength(1), v.maxLength(500))),
 });
 

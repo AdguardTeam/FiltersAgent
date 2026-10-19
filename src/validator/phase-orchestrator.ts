@@ -25,6 +25,7 @@ import {
     recordPreflightDiagnostic,
 } from '../local/preflight-diagnostic-log';
 import { checkAntiAdblock } from './anti-adblock-check';
+import { measureElementTileWindow } from './element-tile-window';
 import {
     applyRule,
     clearAppliedNetworkRules,
@@ -891,71 +892,6 @@ const ELEMENT_GEOMETRY_PROBE = `
     return { found: true, width: rect.width, height: rect.height };
 })()
 `;
-
-/**
- * JavaScript snippet that measures one element's document-space vertical span.
- *
- * Hidden or detached candidates report a zero span so callers fall back to full-document capture
- * instead of trusting a degenerate window.
- */
-const ELEMENT_DOCUMENT_RECT_PROBE = `
-(function () {
-    var el = document.querySelector('__SELECTOR__');
-    if (!el) return { found: false, top: 0, bottom: 0 };
-    var rect = el.getBoundingClientRect();
-    return {
-        found: true,
-        top: rect.top + (window.scrollY || 0),
-        bottom: rect.bottom + (window.scrollY || 0),
-    };
-})()
-`;
-
-/**
- * Measure the document-space tile window around one localized element.
- *
- * The window spans the element plus one viewport above and below so the before/after comparison
- * sees the symptom and its immediate layout neighborhood instead of the whole document.
- *
- * @param evaluator - Runner-owned evaluator isolated from page JavaScript.
- * @param selector - Exact localized symptom selector.
- * @param viewportHeight - Current viewport height used as the context margin.
- * @returns Document-space span, or undefined when the element cannot bound one.
- */
-async function measureElementTileWindow(
-    evaluator: TrustedPageEvaluator,
-    selector: string,
-    viewportHeight: number,
-): Promise<FullPageTileWindow | undefined> {
-    if (viewportHeight <= 0) {
-        return undefined;
-    }
-    const escaped = selector.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-    try {
-        const result = await evaluator.evaluate(
-            ELEMENT_DOCUMENT_RECT_PROBE.replace('__SELECTOR__', escaped),
-        );
-        if (result && typeof result === 'object') {
-            const rect = result as Record<string, unknown>;
-            if (
-                rect.found === true &&
-                typeof rect.top === 'number' &&
-                Number.isFinite(rect.top) &&
-                typeof rect.bottom === 'number' &&
-                Number.isFinite(rect.bottom) &&
-                rect.bottom > rect.top
-            ) {
-                return {
-                    fromY: Math.max(0, rect.top - viewportHeight),
-                    toY: rect.bottom + viewportHeight,
-                };
-            }
-        }
-    } catch {
-        // A failed measurement falls back to full-document tile capture below.
-    }
-    return undefined;
-}
 
 /**
  * JavaScript snippet that measures selector scope and top-of-page semantic landmarks.
@@ -2071,6 +2007,7 @@ export async function runPhase(config: PhaseConfig): Promise<PhaseResult> {
             config.trustedPageEvaluator,
             config.adElementSelector,
             viewportHeight,
+            config.recorder,
         );
         return tileWindow;
     };
@@ -2108,6 +2045,12 @@ export async function runPhase(config: PhaseConfig): Promise<PhaseResult> {
             sameDocumentControlTileCoverage = parsedControlTileCoverage.success
                 ? parsedControlTileCoverage.output
                 : undefined;
+            // The candidate capture replays the span the control tiles cover: a capture fits an
+            // over-limit window to its own column count, and a candidate that changes the document
+            // width would otherwise tile a different span than BEFORE.
+            if (controlTileWindow && sameDocumentControlTileCoverage?.window) {
+                tileWindow = sameDocumentControlTileCoverage.window;
+            }
             sameDocumentControlViewport = parseValidationViewportPosition(
                 controlScreenshotRecord.viewportPosition,
             );

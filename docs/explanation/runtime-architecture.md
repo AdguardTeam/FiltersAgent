@@ -78,6 +78,22 @@ runs one candidate gets in all, shared with retries after an inconclusive
 review and with new reveal steps. Each check gets a few seconds on the page;
 one that does not settle fails, and the phase skips the checks after it.
 
+The review judges a candidate by what changed between the two states, so what
+both states share does not count against it. The original-resolution tiles
+span every element the candidate's selector matches, plus a viewport above
+and below, so a rule that hides several slots is judged at each slot instead
+of from the downscaled full-page overview. A span longer than one tile capture
+can carry keeps its first rows, and the candidate state is tiled over the same
+span as the baseline. A cookie banner or another overlay that both states show
+unchanged, away from the reported problem, hides the same pixels in both and
+leaves the comparison reliable; only one that changes between the states or
+covers the problem makes the review inconclusive. In an ads review, blank
+space the BEFORE state already records unchanged, such as an unloaded video
+panel, is the page's own and not residue. Space where BEFORE showed the
+reported problem is what the candidate had to clear, and nothing BEFORE
+records outweighs visible advertising. An incorrect-blocking review has no
+such rule: there an empty panel is the reported problem itself.
+
 ## Issue revisions and limits
 
 A live issue and an `export issue` bundle enter the same verified-revision

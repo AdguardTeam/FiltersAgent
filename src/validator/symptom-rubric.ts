@@ -125,6 +125,133 @@ export const SYMPTOM_DEFINITION_RUBRIC = [
 ];
 
 /**
+ * Rubric lines telling one inventory pass how to treat a dialog or overlay over the page.
+ *
+ * A pass sees one page state, so it cannot tell whether an obstruction changed; it records where
+ * the obstruction sits and what it covers, and the synthesis compares the two states
+ * ({@link COMPARISON_OBSTRUCTION_SYNTHESIS_RUBRIC}). Recorded as an instance of the defect, a
+ * site's cookie notice that sits unchanged in both states comes back as a remaining symptom.
+ */
+export const COMPARISON_OBSTRUCTION_INVENTORY_RUBRIC = [
+    'Treat cookie or consent dialogs, modal backdrops, blank overlays, and body scroll locks as',
+    'comparison obstructions. Unless the reporter-defined defect is that very element, an',
+    'obstruction is not an instance of it: name each one in the rationale with its landmark and',
+    'whether it covers a region where the defect appears, so the later comparison can tell one',
+    'that both states show unchanged from one that changes between them or hides the defect.',
+];
+
+/**
+ * Rubric lines telling the final synthesis when an obstruction makes the comparison unreliable.
+ *
+ * A cookie notice the run left alone sits at the same place in BEFORE and AFTER and hides the same
+ * pixels in both: with 18 empty-strip instances before and none after, the review still returned
+ * unclear for it, and a correct candidate went unverified. Only an obstruction that changes between
+ * the states, or hides where the symptom is, can make the states incomparable.
+ */
+export const COMPARISON_OBSTRUCTION_SYNTHESIS_RUBRIC = [
+    'Apart from the reporter-defined defect itself, a cookie or consent dialog, modal backdrop,',
+    'blank overlay, or body scroll lock prevents a reliable comparison of the underlying page',
+    'when it changes between the aligned states — appears, disappears, moves, or changes',
+    'appearance — or covers a region where the reporter-defined symptom appears in either state.',
+    'In that case set symptom=unclear, pageIntegrity=unclear, and coverageComplete=false; never',
+    'report the candidate as verified. One that both states show unchanged at the same place,',
+    'clear of every symptom region, hides the same pixels in both and leaves the comparison',
+    'reliable: judge the rest of the page as usual, and reconcile an observation of it as',
+    'not_same_symptom. Do not attribute a modal appearing or disappearing to the candidate unless',
+    'the aligned visual evidence itself proves that relationship.',
+];
+
+/**
+ * Rubric lines telling the final synthesis that blank space the page already had is not residue.
+ *
+ * A news page shows empty grey video panels in BEFORE and AFTER alike; read as repeats of the
+ * empty-ad-slot symptom, they kept a candidate that cleared every slot from verification. Space
+ * that BEFORE already shows unchanged was there without the candidate. Space where BEFORE showed
+ * the symptom is exactly what the candidate had to clear, so it stays residue, and no record of the
+ * BEFORE state ever dismisses visible advertising. Only an ads review states it: in an
+ * incorrect-blocking review an empty panel is the defect itself.
+ */
+export const PRE_EXISTING_BLANK_SPACE_RUBRIC = [
+    'Blank space the page already had without the candidate is not residue the candidate left:',
+    'an AFTER observation of blank space that the BEFORE inventory records unchanged at the same',
+    'landmark — in a BEFORE observation you reconcile as not_same_symptom, or in an',
+    `observedDamage entry prefixed "${PRE_EXISTING_DAMAGE_PREFIX}" — is not_same_symptom. This`,
+    'never covers space where a BEFORE observation you retain as same_symptom sat, which is what',
+    'the candidate had to clear, and never covers visible advertising, an ad label, or an ad frame.',
+];
+
+/**
+ * The page's own blank panels a BEFORE inventory of an ads review lists as pre-existing flaws.
+ *
+ * Listed under {@link PRE_EXISTING_DAMAGE_PREFIX}, they let the synthesis tell blank space the page
+ * already had from residue ({@link PRE_EXISTING_BLANK_SPACE_RUBRIC}). An incorrect-blocking review
+ * never lists them: there an empty media panel is the defect class itself.
+ */
+export const PRE_EXISTING_BLANK_PANELS =
+    'empty or unloaded media and image panels that are not ad slots';
+
+/**
+ * Dismissal ground, in every review, for an AFTER observation that is a distinct part of the page.
+ */
+const DISTINCT_STRUCTURE_GROUND = [
+    'strong image-grounded positive visual evidence that the observation is a visually distinct',
+    'normal structure or feature',
+];
+
+/**
+ * Dismissal ground, in every review, for an obstruction that leaves the comparison reliable.
+ *
+ * It carries the qualifiers of {@link COMPARISON_OBSTRUCTION_SYNTHESIS_RUBRIC}.
+ */
+const UNCHANGED_OBSTRUCTION_GROUND = [
+    'a comparison obstruction, other than the reporter-defined defect itself, that both states',
+    'show unchanged at the same place, clear of every symptom region',
+];
+
+/**
+ * Dismissal ground, in an ads review, for blank space the page already had.
+ *
+ * It carries the qualifiers of {@link PRE_EXISTING_BLANK_SPACE_RUBRIC}.
+ */
+export const PRE_EXISTING_BLANK_SPACE_GROUND = [
+    'blank space the BEFORE inventory records unchanged at the same landmark, as a BEFORE',
+    'observation reconciled not_same_symptom or an observedDamage entry prefixed',
+    `"${PRE_EXISTING_DAMAGE_PREFIX}", never where a BEFORE observation retained as same_symptom`,
+    'sat, and never visible advertising, an ad label, or an ad frame',
+];
+
+/**
+ * Dismissal ground, in an ads review, for blank space an agent DOM check proves is layout.
+ */
+const DOM_CHECK_LAYOUT_GROUND = [
+    'blank space an agent DOM check proves is page layout under the residue rubric',
+];
+
+/**
+ * The only grounds on which the final synthesis may dismiss an AFTER observation.
+ *
+ * The synthesis rules and the dismissal self-critique both state them, each ground with its own
+ * qualifiers, so the audit that backs the synthesis never allows more than the rules do and never
+ * overturns a dismissal they allow. The blank-space grounds belong to the ads review: in an
+ * incorrect-blocking review an empty panel is the defect itself, and no DOM check is supplied.
+ *
+ * @param kind - Problem class driving the review.
+ * @returns Prompt lines listing every ground, ending the sentence.
+ */
+export function afterDismissalGrounds(kind: SymptomKind): string[] {
+    const grounds = isBreakageSymptom(kind)
+        ? [DISTINCT_STRUCTURE_GROUND, UNCHANGED_OBSTRUCTION_GROUND]
+        : [
+              DISTINCT_STRUCTURE_GROUND,
+              UNCHANGED_OBSTRUCTION_GROUND,
+              PRE_EXISTING_BLANK_SPACE_GROUND,
+              DOM_CHECK_LAYOUT_GROUND,
+          ];
+    const rendered = grounds.map((ground) => ground.join(' '));
+    return [`${rendered.slice(0, -1).join('; ')}; or ${rendered.at(-1)}.`];
+}
+
+/**
  * Rubric lines weighing the DOM checks the agent attached to `apply_rule`.
  *
  * Two reviewers looked at the same pixels after a candidate and split on whether a white column

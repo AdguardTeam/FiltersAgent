@@ -138,6 +138,17 @@ The format is based on [Keep a Changelog], and this project adheres to
 - Fixed the AdGuard CLI route tunneling sites unfiltered when their
   certificate chain ends at a root with SCT constraints, such as USERTrust RSA
   or GlobalSign Root R3.
+- Fixed the candidate visual review of a rule that hides several slots
+  seeing only the first one at original resolution: the screenshot tiles now
+  span every element the rule's selector matches, and a span longer than one
+  capture can carry keeps its first rows instead of losing every tile. On a
+  long page such a review can take up to 48 tiles per state.
+- Fixed the candidate visual review ending inconclusive over a cookie or
+  consent banner left unchanged in both states; only an obstruction that
+  changes between the states or covers the reported problem still does.
+- Fixed the candidate visual review counting blank space the page already
+  had without the candidate, such as unloaded video panels, as ad layout
+  residue.
 - Fixed the AdGuard CLI route reporting a ready environment while it decrypted
   no HTTPS: preparation now sends an HTTPS request to the issue's site through
   the CLI, and a run whose request does not go through the filter ends

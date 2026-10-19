@@ -5,9 +5,12 @@ import { join } from 'node:path';
 import * as v from 'valibot';
 import { SingleShotMessageRole, type SingleShotMessage } from '../pi/single-shot-input';
 import {
+    COMPARISON_OBSTRUCTION_SYNTHESIS_RUBRIC,
+    PRE_EXISTING_BLANK_SPACE_RUBRIC,
     PRE_EXISTING_DAMAGE_PREFIX,
     SYMPTOM_DEFINITION_RUBRIC,
     SymptomKind,
+    afterDismissalGrounds,
     isBreakageSymptom,
     synthesisResidueRubric,
 } from './symptom-rubric';
@@ -127,6 +130,7 @@ function buildReviewMessages(
     inventoryContext: CandidateVisualTileInventoryContext,
     fullPageOverviewEvidence: CandidateVisualFullPageOverviewEvidencePair,
 ): SingleShotMessage[] {
+    const symptomKind = options.symptomKind ?? SymptomKind.Ads;
     const system: SingleShotMessage = {
         role: SingleShotMessageRole.System,
         text: [
@@ -169,26 +173,18 @@ function buildReviewMessages(
             'for every numbered AFTER observation: remaining retains it as the same unresolved',
             'defect, while not_same_symptom dismisses normal gutters, intentional spacing, or',
             'another visually distinct feature with a rationale.',
-            ...synthesisResidueRubric(
-                options.symptomKind ?? SymptomKind.Ads,
-                reviewNetworkScope(options),
-            ),
+            ...synthesisResidueRubric(symptomKind, reviewNetworkScope(options)),
             'An AFTER observation that',
             'visually repeats the reporter-defined symptom anywhere on the page must be remaining,',
             'even when it is smaller, less severe, at a different landmark, or less prominent than',
-            'the primary example. Use not_same_symptom only with strong image-grounded positive',
-            'visual evidence that the observation is a visually distinct normal',
-            'structure or feature, or for blank space an agent DOM check proves is page layout',
-            'under the residue rubric. Differences in size, severity, page coordinate or landmark,',
+            'the primary example. Use not_same_symptom only on one of these grounds:',
+            ...afterDismissalGrounds(symptomKind),
+            'Differences in size, severity, page coordinate or landmark,',
             'and prominence are not sufficient for dismissal. Browser and geometry facts may locate',
             'or measure an observation, but cannot dismiss a visually compatible symptom; agent DOM',
             'checks count only as the residue rubric says.',
-            'A cookie or consent dialog, modal backdrop, blank overlay, or body scroll lock that',
-            'remains unresolved in either aligned state, or changes appearance independently',
-            'between states, prevents a reliable comparison of the underlying page. In that case',
-            'set symptom=unclear, pageIntegrity=unclear, and coverageComplete=false; never report',
-            'the candidate as verified. Do not attribute a modal appearing or disappearing to the',
-            'candidate unless the aligned visual evidence itself proves that relationship.',
+            ...(isBreakageSymptom(symptomKind) ? [] : PRE_EXISTING_BLANK_SPACE_RUBRIC),
+            ...COMPARISON_OBSTRUCTION_SYNTHESIS_RUBRIC,
             'Never omit, repeat, or invent an',
             'observationIndex. Every image observation is already numbered, so both additional',
             'instance arrays must be empty. Do not invent or copy observations into those arrays.',

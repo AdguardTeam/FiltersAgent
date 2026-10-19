@@ -14,11 +14,14 @@ import { describeProviderFailure } from '../pi/single-shot';
 import { SingleShotResultKind } from '../pi/single-shot-types';
 import { SingleShotMessageRole, type SingleShotMessage } from '../pi/single-shot-input';
 import {
+    COMPARISON_OBSTRUCTION_INVENTORY_RUBRIC,
+    PRE_EXISTING_BLANK_PANELS,
     PRE_EXISTING_DAMAGE_PREFIX,
     REPORTER_SCOPE_RUBRIC,
     SYMPTOM_DEFINITION_RUBRIC,
     SymptomKind,
     inventoryResidueRubric,
+    isBreakageSymptom,
 } from './symptom-rubric';
 import { TraceEventType } from '../types/trace';
 import {
@@ -213,21 +216,29 @@ async function inventoryImages(
  * always overlapped its headline comes back from the AFTER tiles as text collision, and the review
  * reports pageIntegrity regressed for a candidate that touched nothing near it. The BEFORE passes
  * therefore list the page's own flaws under a fixed prefix, and the synthesis discounts AFTER
- * damage that matches one.
+ * damage that matches one. An ads review also lists the page's own blank panels, which the
+ * synthesis then tells from residue; in an incorrect-blocking review such a panel is the defect.
  *
  * @param state - Whether the pass looks at the control or the candidate-applied document.
+ * @param kind - Problem class driving the review.
  * @returns Prompt lines for that state's damage reporting.
  */
-function stateDamageRubric(state: CaptureState): string[] {
+function stateDamageRubric(state: CaptureState, kind: SymptomKind): string[] {
     if (state === CaptureState.After) {
         return ['Also report visible non-target page damage after the candidate.'];
     }
+    const flaws = [
+        'overlapping or clipped text',
+        'broken images',
+        ...(isBreakageSymptom(kind) ? [] : [PRE_EXISTING_BLANK_PANELS]),
+        'collapsed layout',
+    ].join(', ');
     return [
         'This is the page before the candidate, so nothing in it is candidate damage. Still list',
         'in observedDamage every rendering flaw the page already has apart from the',
-        'reporter-defined defect itself — overlapping or clipped text, broken images, collapsed',
-        `layout — each prefixed "${PRE_EXISTING_DAMAGE_PREFIX}" and naming its landmark, so the`,
-        "later comparison can tell the page's own flaws from damage a candidate causes.",
+        `reporter-defined defect itself — ${flaws} — each prefixed "${PRE_EXISTING_DAMAGE_PREFIX}"`,
+        "and naming its landmark, so the later comparison can tell the page's own flaws from",
+        'damage a candidate causes.',
     ];
 }
 
@@ -267,11 +278,8 @@ export async function inventoryTileState(
                         'with no matching defect still counts as observed coverage. Set',
                         'coverageObserved=false only when pixels are technically unreadable or the',
                         'image lacks enough visible page content to inspect that supplied region.',
-                        'Treat cookie or consent dialogs, modal backdrops, blank overlays, and body',
-                        'scroll locks as comparison obstructions. Inventory their visible effect;',
-                        'an unresolved obstruction or one that changes between aligned states makes',
-                        'the underlying page integrity unclear rather than intact.',
-                        ...stateDamageRubric(state),
+                        ...COMPARISON_OBSTRUCTION_INVENTORY_RUBRIC,
+                        ...stateDamageRubric(state, options.symptomKind ?? SymptomKind.Ads),
                     ].join(' '),
                     userContext: [
                         `Page state: ${state.toUpperCase()}.`,
@@ -340,10 +348,8 @@ export async function inventoryOverviewImage(
             'tiles are inspected separately for detail. For a viewport overview, inspect the',
             'target region at viewport resolution.',
             ...inventoryResidueRubric(options.symptomKind ?? SymptomKind.Ads),
-            'Treat cookie or consent dialogs, modal backdrops, blank overlays, and body scroll',
-            'locks as comparison obstructions. An unresolved obstruction or one that changes',
-            'between aligned states prevents a reliable intact-page conclusion.',
-            ...stateDamageRubric(state),
+            ...COMPARISON_OBSTRUCTION_INVENTORY_RUBRIC,
+            ...stateDamageRubric(state, options.symptomKind ?? SymptomKind.Ads),
             'Set coverageObserved=false only when this image is technically unreadable for',
             'its stated overview purpose.',
         ].join(' '),

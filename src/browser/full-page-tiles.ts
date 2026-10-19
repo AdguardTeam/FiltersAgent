@@ -8,6 +8,7 @@ import {
     type FullPageTileWindow,
     type CaptureState,
 } from '../types/validation';
+import { planFullPageTileClips } from './full-page-tile-plan';
 
 /**
  * Full-page screenshot tiling: probing, tile window math, and artifact writes.
@@ -20,10 +21,12 @@ const DEFAULT_FULL_PAGE_TILE_OVERLAP_PX = 160;
 /**
  * Maximum image count used to keep one semantic review bounded.
  *
- * Matches the hard configuration cap so tall reporter pages (tens of thousands of pixels) still
- * complete tile coverage instead of failing the capture deterministically.
+ * Both the default and the hard cap on a configured limit, so tall reporter pages (tens of
+ * thousands of pixels) still complete tile coverage instead of failing the capture
+ * deterministically. A plan above it captures no tile at all, except that an explicit window keeps
+ * the rows that fit.
  */
-const DEFAULT_FULL_PAGE_TILE_LIMIT = 48;
+export const FULL_PAGE_TILE_LIMIT = 48;
 
 /**
  * Number of viewport heights ("screens") the DEFAULT capture inspects when the caller supplies no
@@ -35,8 +38,8 @@ const DEFAULT_FULL_PAGE_TILE_LIMIT = 48;
  * to the bottom proves nothing about the reported issue, so the DEFAULT plan (no caller-supplied
  * window) is capped to the first `DEFAULT_FULL_PAGE_WINDOW_SCREENS` viewport heights. This never
  * clips an explicitly supplied `tileWindow` (e.g. the selector-derived window from
- * `measureElementTileWindow`), which may legitimately point below this cap and always wins
- * verbatim.
+ * `measureElementTileWindow`), which may legitimately point below this cap; only the tile limit can
+ * shorten it.
  *
  * Five screens: a 9-screen page slips under a ten-screen cap and can still cost a task 98 vision
  * images, and by the fifth screen of a long page the content is the same repeating feed — anything
@@ -267,27 +270,6 @@ function parsePngDimensions(buffer: Buffer): PngDimensions | undefined {
 }
 
 /**
- * Calculate overlapping tile starts that cover one complete document axis.
- *
- * @param extent - Full document width or height.
- * @param tileExtent - Viewport-sized tile width or height.
- * @param overlap - Requested overlap between adjacent tiles.
- * @returns Ordered unique start coordinates including the exact far edge.
- */
-function fullPageTileStarts(extent: number, tileExtent: number, overlap: number): number[] {
-    if (extent <= tileExtent) {
-        return [0];
-    }
-    const step = Math.max(1, tileExtent - Math.min(overlap, tileExtent - 1));
-    const starts: number[] = [];
-    for (let start = 0; start + tileExtent < extent; start += step) {
-        starts.push(start);
-    }
-    starts.push(Math.max(0, extent - tileExtent));
-    return [...new Set(starts)];
-}
-
-/**
  * Select bounded page landmarks that lie inside one vertical tile.
  *
  * @param landmarks - Runner-parsed heading landmarks for the document.
@@ -374,6 +356,8 @@ function fullPageTileStateError(
  * @param limit - Maximum number of emitted tiles.
  * @param screenshotTimeoutMs - Bounded Playwright timeout for each clip.
  * @param tileWindow - Optional document-space vertical span restricting the tile plan.
+ * @param keepFirstRows - Whether a window that needs more tiles than `limit` keeps the rows that
+ *   fit, top first, instead of capturing none.
  * @returns Mechanical coverage proof for this single attempt.
  */
 async function captureFullPageTileAttempt(
@@ -386,31 +370,18 @@ async function captureFullPageTileAttempt(
     overlapPx: number,
     limit: number,
     screenshotTimeoutMs: number,
-    tileWindow?: FullPageTileWindow,
+    tileWindow: FullPageTileWindow | undefined,
+    keepFirstRows: boolean,
 ): Promise<FullPageTileCoverage> {
-    const window = tileWindow
-        ? {
-              fromY: Math.max(0, Math.min(tileWindow.fromY, probe.documentHeight)),
-              toY: Math.max(0, Math.min(tileWindow.toY, probe.documentHeight)),
-          }
-        : null;
-    const xStarts = fullPageTileStarts(probe.documentWidth, viewportWidth, overlapPx);
-    const allYStarts = fullPageTileStarts(probe.documentHeight, viewportHeight, overlapPx);
-    // A window (explicit or the caller's default first-N-screens cap, resolved by
-    // captureFullPageTiles before this call) shrinks the planned region below the full document.
-    // `complete` below is computed relative to plannedClips, not to the document, so capping the
-    // window on a long page still reports `complete: true` once every planned clip is captured.
-    // That is intentional: a `complete: false` coverage strips vision-verified status from the
-    // whole session, and the point of the default cap is to keep long-page sessions verifiable,
-    // not to fail them.
-    const yStarts = window
-        ? allYStarts.filter(
-              (y) =>
-                  y < window.toY &&
-                  Math.min(y + viewportHeight, probe.documentHeight) > window.fromY,
-          )
-        : allYStarts;
-    const plannedClips = yStarts.flatMap((y) => xStarts.map((x) => ({ x, y })));
+    const plan = planFullPageTileClips(
+        { width: probe.documentWidth, height: probe.documentHeight },
+        { width: viewportWidth, height: viewportHeight },
+        overlapPx,
+        limit,
+        tileWindow,
+        keepFirstRows,
+    );
+    const plannedClips = plan.clips;
     const tiles: FullPageTileCoverage['tiles'] = [];
     if (plannedClips.length === 0 || plannedClips.length > limit) {
         return {
@@ -421,7 +392,7 @@ async function captureFullPageTileAttempt(
             viewportHeight,
             overlapPx,
             tiles,
-            window,
+            window: plan.window,
             error:
                 plannedClips.length === 0
                     ? 'The requested tile window excluded every planned tile.'
@@ -491,9 +462,15 @@ async function captureFullPageTileAttempt(
             break;
         }
     }
+    // `complete` is computed relative to the planned clips, not to the document, so a window on a
+    // long page (an explicit one, a trimmed one, or the default first-screens cap) still reports
+    // `complete: true` once every planned clip is captured. That is intentional: a
+    // `complete: false` coverage strips vision-verified status from the whole session, and the
+    // point of a window is to keep long-page sessions verifiable, not to fail them.
     const complete = plannedClips.length > 0 && tiles.length === plannedClips.length;
     return {
-        window,
+        window: plan.window,
+        ...(plan.windowTrimmed ? { windowTrimmed: true } : {}),
         complete,
         documentWidth: probe.documentWidth,
         documentHeight: probe.documentHeight,
@@ -550,7 +527,9 @@ export function parseTileWindowArg(value: unknown): FullPageTileWindow | undefin
  * When `tileWindow` is omitted and the document exceeds `DEFAULT_FULL_PAGE_WINDOW_SCREENS` viewport
  * heights, the plan defaults to the first `DEFAULT_FULL_PAGE_WINDOW_SCREENS` screens instead of the
  * whole document, and the returned coverage sets `windowDefaulted`. A caller that supplies
- * `tileWindow` always gets it back unchanged, never clipped by this default.
+ * `tileWindow` never has it clipped by this default. When that window needs more tiles than the
+ * limit, the capture keeps its first rows that fit instead of none, records the window those rows
+ * cover and sets `windowTrimmed`.
  *
  * @param page - Active Playwright page containing the stabilized document.
  * @param artifactsDir - Runner-owned artifact directory.
@@ -581,8 +560,8 @@ export async function captureFullPageTiles(
         Math.max(0, Math.min(viewportWidth, viewportHeight) - 1),
     );
     const limit = Number.isFinite(configuredLimit)
-        ? Math.min(48, Math.max(1, Math.floor(configuredLimit ?? 1)))
-        : DEFAULT_FULL_PAGE_TILE_LIMIT;
+        ? Math.min(FULL_PAGE_TILE_LIMIT, Math.max(1, Math.floor(configuredLimit ?? 1)))
+        : FULL_PAGE_TILE_LIMIT;
     let probe = await readFullPageTileProbe(page);
     if (!probe || viewportWidth === 0 || viewportHeight === 0) {
         return {
@@ -620,6 +599,7 @@ export async function captureFullPageTiles(
         limit,
         screenshotTimeoutMs,
         effectiveTileWindow,
+        tileWindow !== undefined,
     );
     if (coverage.error?.startsWith(FULL_PAGE_TILE_DIMENSION_CHANGE_ERROR_PREFIX)) {
         probe = await readFullPageTileProbe(page);
@@ -635,6 +615,7 @@ export async function captureFullPageTiles(
                 limit,
                 screenshotTimeoutMs,
                 effectiveTileWindow,
+                tileWindow !== undefined,
             );
         } else {
             coverage = {

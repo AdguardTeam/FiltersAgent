@@ -8,6 +8,12 @@ import { TraceRecorder } from '../../src/tracer/trace-recorder';
 import { reviewCandidateVisually } from '../../src/validator/candidate-visual-verifier';
 import type { CandidateVisualVerifierOptions } from '../../src/validator/candidate-visual-evidence';
 import { composeReporterSymptomScope } from '../../src/validator/reporter-symptom-scope';
+import {
+    PRE_EXISTING_BLANK_PANELS,
+    PRE_EXISTING_BLANK_SPACE_GROUND,
+    PRE_EXISTING_BLANK_SPACE_RUBRIC,
+    SymptomKind,
+} from '../../src/validator/symptom-rubric';
 import { SingleShotResultKind, type SingleShotClient } from '../../src/pi/single-shot-types';
 import type { SingleShotMessage } from '../../src/pi/single-shot-input';
 import { CandidateInstanceDisposition } from '../../src/types/candidate-visual-review';
@@ -366,6 +372,37 @@ function sequencedInventoryOutput(): Record<string, unknown> {
     };
 }
 
+/**
+ * A final synthesis that resolves an empty panel and dismisses a blank AFTER area as the page's
+ * own.
+ */
+function blankAreaFinalOutput(): Record<string, unknown> {
+    return {
+        symptom: 'resolved',
+        symptomScope: 'The empty panel on the reported page.',
+        coverageComplete: true,
+        beforeInventoryReconciliation: [
+            {
+                observationIndex: 1,
+                disposition: 'same_symptom',
+                rationale: 'The empty panel is the reported symptom.',
+            },
+        ],
+        afterInventoryReconciliation: [
+            {
+                observationIndex: 1,
+                disposition: 'not_same_symptom',
+                rationale: 'The blank area looks the same in both states.',
+            },
+        ],
+        additionalBeforeInstances: [],
+        additionalRemainingInstances: [],
+        pageIntegrity: 'intact',
+        rationale: 'The reported panel is resolved.',
+        observedDamage: [],
+    };
+}
+
 let provider: HermeticProvider | undefined;
 
 afterEach(async () => {
@@ -479,6 +516,73 @@ describe('reviewCandidateVisually', () => {
         } finally {
             rmSync(root, { recursive: true, force: true });
         }
+    });
+
+    it('keeps the blank-space rules of an ads review out of an incorrect-blocking review', async () => {
+        // In an incorrect-blocking review an empty media panel is the defect itself, so the rules
+        // that set aside blank space the page already had belong to the ads review alone; there,
+        // the dismissal audit states that ground with the same limits as the synthesis rules.
+        const sentFor = async (
+            symptomKind: SymptomKind,
+        ): Promise<{ texts: string[]; audit: string }> => {
+            const root = mkdtempSync(join(tmpdir(), 'candidate-visual-review-blank-space-'));
+            const recorder = new TraceRecorder({
+                runId: 'visual-review',
+                issueNumber: 3,
+                mode: 'fix',
+            });
+            const { vision, chat } = makeSequencedFinalProvider(
+                {
+                    symptomScope: 'The empty panel on the reported page.',
+                    beforeInstances: [
+                        {
+                            artifactId: 'before-tile-1',
+                            landmark: 'Main column.',
+                            description: 'An empty panel.',
+                        },
+                    ],
+                    remainingInstances: [
+                        {
+                            artifactId: 'after-tile-1',
+                            landmark: 'Lower column.',
+                            description: 'A blank area.',
+                        },
+                    ],
+                    observedDamage: [],
+                },
+                [blankAreaFinalOutput(), blankAreaFinalOutput()],
+            );
+            try {
+                await reviewCandidateVisually({
+                    ...makeOptions(root, vision, recorder),
+                    symptomKind,
+                });
+                const lastMessages = (
+                    chat.mock.calls.at(-1)![0] as { messages: SingleShotMessage[] }
+                ).messages;
+                const audit = lastMessages.at(-1)!;
+                return {
+                    texts: sentTexts(chat),
+                    audit: 'text' in audit && typeof audit.text === 'string' ? audit.text : '',
+                };
+            } finally {
+                rmSync(root, { recursive: true, force: true });
+            }
+        };
+        const adsOnlyRules = [
+            PRE_EXISTING_BLANK_SPACE_RUBRIC.join(' '),
+            PRE_EXISTING_BLANK_SPACE_GROUND.join(' '),
+            PRE_EXISTING_BLANK_PANELS,
+        ];
+
+        const ads = await sentFor(SymptomKind.Ads);
+        const breakage = await sentFor(SymptomKind.Breakage);
+
+        for (const rule of adsOnlyRules) {
+            expect(ads.texts.some((text) => text.includes(rule))).toBe(true);
+            expect(breakage.texts.some((text) => text.includes(rule))).toBe(false);
+        }
+        expect(ads.audit).toContain(PRE_EXISTING_BLANK_SPACE_GROUND.join(' '));
     });
 
     it('swaps the ads residue rubric for breakage semantics in incorrect-blocking reviews', async () => {

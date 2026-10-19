@@ -14,6 +14,8 @@ import { calculateTrustedBaselineHash } from '../../src/validator/trusted-valida
 import { BlockerVerificationMethod } from '../../src/environment/environment-proofs';
 import type { TrustedPageEvaluator } from '../../src/browser/trusted-page-evaluator';
 import { ConsoleCoverage, type IBrowserSession } from '../../src/browser/browser-interfaces';
+import { captureFullPageTiles } from '../../src/browser/full-page-tiles';
+import type { FullPageTileWindow } from '../../src/types/validation';
 import type {
     AdapterPhaseLease,
     BoundEnvironmentPhaseHandle,
@@ -1712,6 +1714,183 @@ describe('runPhase', () => {
                 tileWindow: { fromY: 1_000, toY: 3_600 },
             },
         ]);
+    });
+
+    /**
+     * Run one tile-capturing phase on a page whose selector matches the given document spans,
+     * measuring them with the real in-page probe, and return the window the capture was asked for.
+     */
+    async function capturedTileWindow(
+        matches: { top: number; bottom: number }[],
+        viewportHeight: number,
+    ): Promise<{ fromY: number; toY: number } | undefined> {
+        const handlers = mockHandlers();
+        const screenshotArgs: Record<string, unknown>[] = [];
+        vi.mocked(handlers.screenshot).mockImplementation(async (args) => {
+            screenshotArgs.push(args as Record<string, unknown>);
+            return {
+                artifactId: 'shot',
+                fullPageArtifactId: 'shot-full',
+                viewportPosition: { x: 0, y: 0 },
+            } as never;
+        });
+        const scrollY = 500;
+        const elements = matches.map(({ top, bottom }) => ({
+            getBoundingClientRect: () => ({
+                top: top - scrollY,
+                bottom: bottom - scrollY,
+                width: bottom > top ? 300 : 0,
+                height: bottom - top,
+            }),
+        }));
+        const evaluator: TrustedPageEvaluator = {
+            evaluate: async (expression: string): Promise<unknown> =>
+                runInNewContext(expression, {
+                    document: {
+                        querySelector: () => elements[0] ?? null,
+                        querySelectorAll: () => elements,
+                    },
+                    window: { scrollY },
+                }),
+        };
+        const page = {
+            ...mockPage(),
+            viewportSize: vi.fn().mockReturnValue({ width: 1_920, height: viewportHeight }),
+        } as unknown as Page;
+
+        await runPhase({
+            handlers,
+            page,
+            artifactsDir: '/tmp/test-artifacts',
+            phase: 'B',
+            url: 'https://example.com',
+            rules: [],
+            trustedPageEvaluator: evaluator,
+            adElementSelector: '.ad-slot',
+            captureVisualTiles: true,
+            recorder: mockRecorder(),
+        });
+
+        expect(screenshotArgs).toHaveLength(1);
+        return screenshotArgs[0].tileWindow as { fromY: number; toY: number } | undefined;
+    }
+
+    it('bounds tile capture around every instance a multi-instance selector matches', async () => {
+        // A selector that hides several slots must get original-resolution tiles at each of them;
+        // judged from the downscaled overview, the lower slots leave the review unclear.
+        const instances = [
+            { top: 122, bottom: 322 },
+            { top: 2_900, bottom: 3_200 },
+            { top: 5_400, bottom: 5_650 },
+        ];
+
+        const window = await capturedTileWindow(
+            [...instances, { top: 4_000, bottom: 4_000 }],
+            1_080,
+        );
+
+        expect(window).toBeDefined();
+        for (const instance of instances) {
+            expect(window!.fromY).toBeLessThanOrEqual(instance.top);
+            expect(window!.toY).toBeGreaterThanOrEqual(instance.bottom);
+        }
+    });
+
+    it('captures the candidate over the same tile span the control capture recorded', async () => {
+        // A candidate can bring the document width under the viewport width, and each capture fits
+        // a window over the tile limit to its own column count. AFTER must cover the span BEFORE
+        // covers, or the review compares different parts of the page.
+        const artifactsDir = mkdtempSync(join(tmpdir(), 'phase-tile-span-'));
+        let documentWidth = 2_178;
+        const viewport = { width: 1_920, height: 1_080 };
+        const tilePage = {
+            viewportSize: () => viewport,
+            evaluate: async () => ({
+                documentWidth,
+                documentHeight: 30_000,
+                landmarks: [],
+                scrollX: 0,
+                scrollY: 0,
+            }),
+            screenshot: async (options: { clip: { width: number; height: number } }) => {
+                const png = Buffer.alloc(24);
+                Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).copy(png, 0);
+                png.write('IHDR', 12, 'ascii');
+                png.writeUInt32BE(options.clip.width, 16);
+                png.writeUInt32BE(options.clip.height, 20);
+                return png;
+            },
+        } as unknown as Page;
+        const handlers = mockHandlers();
+        let shot = 0;
+        vi.mocked(handlers.screenshot).mockImplementation(async (args) => {
+            shot += 1;
+            return {
+                artifactId: `shot-${shot}`,
+                fullPageArtifactId: `full-${shot}`,
+                viewportPosition: { x: 0, y: 0 },
+                tileCoverage: await captureFullPageTiles(
+                    tilePage,
+                    artifactsDir,
+                    mockRecorder(),
+                    undefined,
+                    undefined,
+                    1_000,
+                    (args as { tileWindow?: FullPageTileWindow }).tileWindow,
+                ),
+            } as never;
+        });
+        const page = { ...mockPage(), viewportSize: () => viewport } as unknown as Page;
+        vi.mocked(page.addStyleTag).mockImplementation(async () => {
+            documentWidth = viewport.width;
+            return {
+                evaluate: async (callback: (element: { remove: () => void }) => unknown) =>
+                    callback({ remove: () => undefined }),
+            } as never;
+        });
+        const instances = [
+            { top: 500, bottom: 800 },
+            { top: 25_700, bottom: 26_000 },
+        ].map(({ top, bottom }) => ({
+            getBoundingClientRect: () => ({ top, bottom, width: 300, height: bottom - top }),
+        }));
+        const evaluator: TrustedPageEvaluator = {
+            evaluate: async (expression: string): Promise<unknown> =>
+                runInNewContext(expression, {
+                    document: { querySelectorAll: () => instances },
+                    window: { scrollY: 0 },
+                }),
+        };
+
+        try {
+            const result = await runPhase({
+                handlers,
+                page,
+                artifactsDir,
+                phase: 'C',
+                url: 'https://example.com',
+                rules: [],
+                deferredRule: 'example.com##.ad-slot',
+                materialize: async () => true,
+                createViewportAnchor: async () => ({ x: 0, y: 0 }),
+                restoreViewportAnchor: async (anchor) => ({ ...anchor }),
+                trustedPageEvaluator: evaluator,
+                adElementSelector: '.ad-slot',
+                captureVisualTiles: true,
+                recorder: mockRecorder(),
+            });
+
+            const before = result.sameDocumentControlTileCoverage!;
+            const after = result.tileCoverage!;
+            expect(before.windowTrimmed).toBe(true);
+            expect(after.complete).toBe(true);
+            expect(after.window).toEqual(before.window);
+            expect([...new Set(after.tiles.map((tile) => tile.y))]).toEqual([
+                ...new Set(before.tiles.map((tile) => tile.y)),
+            ]);
+        } finally {
+            rmSync(artifactsDir, { recursive: true, force: true });
+        }
     });
 
     it('returns successful PhaseResult with artifacts', async () => {
