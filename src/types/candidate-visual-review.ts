@@ -8,6 +8,8 @@ import {
     ArtifactIdSchema,
     CandidateVisualFullPageOverviewEvidenceSchema,
 } from './full-page-overview-evidence';
+import { CandidateVisualInstanceSchema, MAX_RATIONALE_CHARS } from './candidate-visual-instance';
+import { CandidateVisualSettlementSchema } from './candidate-visual-settlement';
 import {
     CandidateNetworkVerdict,
     CandidateNetworkVerificationSchema,
@@ -17,7 +19,7 @@ import {
 /**
  * Maximum number of page-damage observations accepted from one visual review.
  */
-const MAX_OBSERVED_DAMAGE_ITEMS = 20;
+export const MAX_OBSERVED_DAMAGE_ITEMS = 20;
 
 /**
  * Maximum number of repeated symptom instances accepted from one visual review.
@@ -32,12 +34,21 @@ const MAX_INVENTORY_RECONCILIATIONS = 50;
 /**
  * Bounded natural-language explanation returned by the visual model.
  */
-const RationaleSchema = v.pipe(v.string(), v.minLength(1), v.maxLength(4_000));
+const RationaleSchema = v.pipe(v.string(), v.minLength(1), v.maxLength(MAX_RATIONALE_CHARS));
+
+/**
+ * Longest description of one visually observed non-target regression.
+ */
+export const MAX_OBSERVED_DAMAGE_ITEM_CHARS = 1_000;
 
 /**
  * Bounded description of one visually observed non-target regression.
  */
-const ObservedDamageItemSchema = v.pipe(v.string(), v.minLength(1), v.maxLength(1_000));
+const ObservedDamageItemSchema = v.pipe(
+    v.string(),
+    v.minLength(1),
+    v.maxLength(MAX_OBSERVED_DAMAGE_ITEM_CHARS),
+);
 
 /**
  * Bounded description of the complete reporter-defined symptom family inspected by vision.
@@ -175,30 +186,6 @@ export type CandidateVisualIntegrityBasis =
  * Every integrity basis value, for schemas and exhaustive listings.
  */
 export const CANDIDATE_VISUAL_INTEGRITY_BASIS_VALUES = Object.values(CandidateVisualIntegrityBasis);
-
-/**
- * Longest landmark one visual occurrence may name: enough for a page region in a sentence. The
- * synthesis context limit is derived from it, since every occurrence is sent there whole.
- */
-export const MAX_INSTANCE_LANDMARK_CHARS = 500;
-
-/**
- * Longest description of one visual occurrence. The synthesis context limit is derived from it,
- * since every occurrence is sent there whole.
- */
-export const MAX_INSTANCE_DESCRIPTION_CHARS = 1_000;
-
-/**
- * One visual occurrence tied to an exact runner-owned screenshot or tile artifact.
- *
- * Every field is required and checked; a key beside them is dropped rather than refused, because a
- * vision model annotates its instances (`landmark_note`) the same way it annotates a whole reply.
- */
-export const CandidateVisualInstanceSchema = v.object({
-    artifactId: ArtifactIdSchema,
-    landmark: v.pipe(v.string(), v.minLength(1), v.maxLength(MAX_INSTANCE_LANDMARK_CHARS)),
-    description: v.pipe(v.string(), v.minLength(1), v.maxLength(MAX_INSTANCE_DESCRIPTION_CHARS)),
-});
 
 /**
  * Auditable final-model disposition of one before-state tile observation.
@@ -347,6 +334,7 @@ export const CandidateVisualReviewSchema = v.pipe(
             v.maxLength(MAX_OBSERVED_DAMAGE_ITEMS),
         ),
         inventoryReconciliation: v.optional(CandidateVisualInventoryReconciliationSchema),
+        settlement: v.optional(CandidateVisualSettlementSchema),
     }),
     v.check((review) => {
         const scope = review.candidateNetworkScope;
@@ -387,11 +375,6 @@ export type CandidateVisualAdLayoutResidue = v.InferOutput<
  * Model judgment about visible non-target page integrity.
  */
 export type CandidateVisualPageIntegrity = v.InferOutput<typeof CandidateVisualPageIntegritySchema>;
-
-/**
- * One visual symptom occurrence tied to an evidence artifact and page landmark.
- */
-export type CandidateVisualInstance = v.InferOutput<typeof CandidateVisualInstanceSchema>;
 
 /**
  * Complete auditable dispositions for the before and after tile inventories.

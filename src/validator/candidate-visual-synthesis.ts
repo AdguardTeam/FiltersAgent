@@ -18,20 +18,32 @@ import {
     CANDIDATE_VISUAL_AD_LAYOUT_RESIDUE_VALUES,
     CANDIDATE_VISUAL_SYMPTOM_VALUES,
     CandidateInstanceDisposition,
-    CandidateVisualInstanceSchema,
     CandidateVisualReviewModelOutputSchema,
-    type CandidateVisualInstance,
+    MAX_OBSERVED_DAMAGE_ITEMS,
+    MAX_OBSERVED_DAMAGE_ITEM_CHARS,
     type CandidateVisualInventoryReconciliation,
     type CandidateVisualReviewModelOutput,
 } from '../types/candidate-visual-review';
-import { CaptureState } from '../types/validation';
-import { MAX_RATIONALE_CHARS } from './candidate-visual-inventory';
+import {
+    CandidateVisualInstanceSchema,
+    MAX_RATIONALE_CHARS,
+} from '../types/candidate-visual-instance';
+import {
+    assertAdditionalInstanceBindings,
+    assertCompleteInventoryReconciliation,
+    orderInventoryDispositions,
+} from './candidate-visual-reconciliation';
 import {
     MAX_RECONCILED_INSTANCES,
     type CandidateVisualTileInventory,
 } from './candidate-visual-context';
 import type { CandidateVisualVerifierOptions } from './candidate-visual-evidence';
 import { SymptomKind } from './symptom-rubric';
+import {
+    MISSING_CONTENT_PREFIX,
+    assertConsistentSynthesis,
+    type SynthesisConsistency,
+} from './candidate-visual-consistency';
 import {
     buildAfterDismissalAuditMessage,
     buildFinalSynthesisRepairMessage,
@@ -76,36 +88,63 @@ const CandidateVisualAfterDispositionOutputSchema = v.object({
 });
 
 /**
- * Semantic output used only by the final inventory-reconciliation vision call.
+ * Longest missing-content entry: one kept damage entry once the prefix and its space are added.
  */
-const CandidateVisualFinalModelOutputSchema = v.object({
-    symptom: v.picklist(CANDIDATE_VISUAL_SYMPTOM_VALUES),
-    symptomScope: v.pipe(v.string(), v.minLength(1), v.maxLength(2_000)),
-    adLayoutResidue: v.picklist(CANDIDATE_VISUAL_AD_LAYOUT_RESIDUE_VALUES),
-    coverageComplete: v.boolean(),
-    beforeInventoryReconciliation: v.pipe(
-        v.array(CandidateVisualBeforeDispositionOutputSchema),
-        v.maxLength(MAX_RECONCILED_INSTANCES),
+const MAX_MISSING_CONTENT_ENTRY_CHARS =
+    MAX_OBSERVED_DAMAGE_ITEM_CHARS - MISSING_CONTENT_PREFIX.length - 1;
+
+/**
+ * Semantic output used only by the final inventory-reconciliation vision call.
+ *
+ * Missing content joins observedDamage in the review, so both lists share one entry bound, checked
+ * here where the reply names both fields rather than later against a field the model never wrote.
+ */
+const CandidateVisualFinalModelOutputSchema = v.pipe(
+    v.object({
+        symptom: v.picklist(CANDIDATE_VISUAL_SYMPTOM_VALUES),
+        symptomScope: v.pipe(v.string(), v.minLength(1), v.maxLength(2_000)),
+        adLayoutResidue: v.picklist(CANDIDATE_VISUAL_AD_LAYOUT_RESIDUE_VALUES),
+        coverageComplete: v.boolean(),
+        beforeInventoryReconciliation: v.pipe(
+            v.array(CandidateVisualBeforeDispositionOutputSchema),
+            v.maxLength(MAX_RECONCILED_INSTANCES),
+        ),
+        afterInventoryReconciliation: v.pipe(
+            v.array(CandidateVisualAfterDispositionOutputSchema),
+            v.maxLength(MAX_RECONCILED_INSTANCES),
+        ),
+        additionalBeforeInstances: v.pipe(
+            v.array(CandidateVisualInstanceSchema),
+            v.maxLength(MAX_RECONCILED_INSTANCES),
+        ),
+        additionalRemainingInstances: v.pipe(
+            v.array(CandidateVisualInstanceSchema),
+            v.maxLength(MAX_RECONCILED_INSTANCES),
+        ),
+        pageIntegrity: v.picklist(CANDIDATE_VISUAL_PAGE_INTEGRITY_VALUES),
+        rationale: v.pipe(v.string(), v.minLength(1), v.maxLength(MAX_RATIONALE_CHARS)),
+        observedDamage: v.pipe(
+            v.array(
+                v.pipe(v.string(), v.minLength(1), v.maxLength(MAX_OBSERVED_DAMAGE_ITEM_CHARS)),
+            ),
+            v.maxLength(MAX_OBSERVED_DAMAGE_ITEMS),
+        ),
+        // Optional so a reply that names nothing gone needs no key; the review keeps each entry in
+        // observedDamage behind its prefix.
+        missingContent: v.optional(
+            v.array(
+                v.pipe(v.string(), v.minLength(1), v.maxLength(MAX_MISSING_CONTENT_ENTRY_CHARS)),
+            ),
+        ),
+    }),
+    v.check(
+        (output) =>
+            output.observedDamage.length + (output.missingContent?.length ?? 0) <=
+            MAX_OBSERVED_DAMAGE_ITEMS,
+        `observedDamage and missingContent together hold at most ${MAX_OBSERVED_DAMAGE_ITEMS} ` +
+            'entries; merge entries about the same element.',
     ),
-    afterInventoryReconciliation: v.pipe(
-        v.array(CandidateVisualAfterDispositionOutputSchema),
-        v.maxLength(MAX_RECONCILED_INSTANCES),
-    ),
-    additionalBeforeInstances: v.pipe(
-        v.array(CandidateVisualInstanceSchema),
-        v.maxLength(MAX_RECONCILED_INSTANCES),
-    ),
-    additionalRemainingInstances: v.pipe(
-        v.array(CandidateVisualInstanceSchema),
-        v.maxLength(MAX_RECONCILED_INSTANCES),
-    ),
-    pageIntegrity: v.picklist(CANDIDATE_VISUAL_PAGE_INTEGRITY_VALUES),
-    rationale: v.pipe(v.string(), v.minLength(1), v.maxLength(MAX_RATIONALE_CHARS)),
-    observedDamage: v.pipe(
-        v.array(v.pipe(v.string(), v.minLength(1), v.maxLength(1_000))),
-        v.maxLength(20),
-    ),
-});
+);
 
 /**
  * Output returned by the final inventory-reconciliation vision call.
@@ -128,90 +167,6 @@ interface NormalizedCandidateVisualOutput {
 }
 
 /**
- * Minimal numbered observation reference shared by both reconciliation phases.
- */
-interface IndexedInventoryDisposition {
-    /**
-     * One-based position in the matching runner-owned tile inventory.
-     */
-    observationIndex: number;
-}
-
-/**
- * Require exactly one final-model disposition for every numbered tile observation.
- *
- * @param state - Page state whose inventory is being reconciled.
- * @param observationCount - Number of runner-numbered observations for the state.
- * @param dispositions - Final-model disposition indices to validate.
- * @returns Nothing when every expected index appears exactly once.
- */
-function assertCompleteInventoryReconciliation(
-    state: CaptureState,
-    observationCount: number,
-    dispositions: ReadonlyArray<IndexedInventoryDisposition>,
-): void {
-    const indices = dispositions.map((item) => item.observationIndex);
-    const unknown = indices.filter((index) => index < 1 || index > observationCount);
-    const duplicates = [
-        ...new Set(indices.filter((index, position) => indices.indexOf(index) !== position)),
-    ];
-    const received = new Set(indices);
-    const missing = Array.from({ length: observationCount }, (_, index) => index + 1).filter(
-        (index) => !received.has(index),
-    );
-    if (unknown.length > 0 || duplicates.length > 0 || missing.length > 0) {
-        const detail = [
-            missing.length > 0 ? `missing=${missing.join(',')}` : undefined,
-            duplicates.length > 0 ? `duplicate=${duplicates.join(',')}` : undefined,
-            unknown.length > 0 ? `unknown=${unknown.join(',')}` : undefined,
-        ]
-            .filter((item): item is string => item !== undefined)
-            .join('; ');
-        throw new Error(
-            `Final vision must reconcile every ${state} tile observation exactly once` +
-                (detail ? `: ${detail}` : '.'),
-        );
-    }
-}
-
-/**
- * Return validated dispositions in their runner-owned observation order.
- *
- * @param observationCount - Number of expected sequential observations.
- * @param dispositions - Complete dispositions already checked for exact indices.
- * @returns Dispositions ordered from observation one through the final observation.
- */
-function orderInventoryDispositions<T extends IndexedInventoryDisposition>(
-    observationCount: number,
-    dispositions: ReadonlyArray<T>,
-): T[] {
-    const byIndex = new Map(dispositions.map((item) => [item.observationIndex, item]));
-    return Array.from({ length: observationCount }, (_, index) => byIndex.get(index + 1)!);
-}
-
-/**
- * Validate that newly found overview instances cite evidence from their matching page state.
- *
- * @param instances - Additional instances reported from overview images.
- * @param allowedArtifactIds - Runner-owned identifiers valid for the selected page state.
- * @param state - Human-readable page state used in fail-closed diagnostics.
- * @returns Nothing when every instance is phase-bound to trusted evidence.
- */
-function assertAdditionalInstanceBindings(
-    instances: CandidateVisualInstance[],
-    allowedArtifactIds: ReadonlySet<string>,
-    state: CaptureState,
-): void {
-    for (const instance of instances) {
-        if (!allowedArtifactIds.has(instance.artifactId)) {
-            throw new Error(
-                `Vision cited a non-${state} evidence artifact: ${instance.artifactId}`,
-            );
-        }
-    }
-}
-
-/**
  * Reconcile every tile observation and copy only schema-owned semantic fields from vision.
  *
  * @param output - Final provider result containing explicit inventory dispositions.
@@ -220,6 +175,7 @@ function assertAdditionalInstanceBindings(
  * @param allowedBeforeArtifactIds - Runner-owned before-state identifiers the model may cite.
  * @param allowedAfterArtifactIds - Runner-owned after-state identifiers the model may cite.
  * @param runnerCoverageComplete - Whether the tile capture mechanically covered both documents.
+ * @param consistency - Which summary fields must rest on a reconciled observation.
  * @returns Strict semantic observations plus an auditable runner-bound reconciliation.
  */
 function normalizeModelOutput(
@@ -229,6 +185,7 @@ function normalizeModelOutput(
     allowedBeforeArtifactIds: ReadonlySet<string>,
     allowedAfterArtifactIds: ReadonlySet<string>,
     runnerCoverageComplete: boolean,
+    consistency: SynthesisConsistency,
 ): NormalizedCandidateVisualOutput {
     assertCompleteInventoryReconciliation(
         'before',
@@ -292,7 +249,18 @@ function normalizeModelOutput(
         ],
         pageIntegrity: output.pageIntegrity,
         rationale: output.rationale,
-        observedDamage: output.observedDamage,
+        observedDamage: [
+            ...output.observedDamage,
+            ...(output.missingContent ?? []).map((item) => `${MISSING_CONTENT_PREFIX} ${item}`),
+        ],
+    });
+    assertConsistentSynthesis(semanticOutput, consistency, {
+        observationCount: afterInventory.instances.length,
+        damageCount: afterInventory.observations.reduce(
+            (count, observation) => count + observation.observedDamage.length,
+            0,
+        ),
+        missingContentCount: output.missingContent?.length ?? 0,
     });
     return {
         semanticOutput,
@@ -405,6 +373,7 @@ function recordFinalSynthesisAttempt(
  * @param allowedAfterArtifactIds - Runner-owned after screenshot identifiers.
  * @param runnerCoverageComplete - Whether capture and inventory coverage were complete.
  * @param model - Bounded vision-model identifier.
+ * @param consistency - Which summary fields must rest on a reconciled observation.
  * @returns Normalized semantic result and complete reconciliation audit trail.
  */
 export async function synthesizeFinalReview(
@@ -416,6 +385,7 @@ export async function synthesizeFinalReview(
     allowedAfterArtifactIds: ReadonlySet<string>,
     runnerCoverageComplete: boolean,
     model: string,
+    consistency: SynthesisConsistency,
 ): Promise<NormalizedCandidateVisualOutput> {
     let messages = baseMessages;
     let lastValidationError = 'unknown final synthesis validation failure';
@@ -431,7 +401,9 @@ export async function synthesizeFinalReview(
         // One schema-validation attempt per outer attempt: the loop owns bounded repair and the
         // dismissal audit, so the client must not burn its own repair budget here.
         if (result.kind === SingleShotResultKind.ProviderFailure) {
-            throw new Error(`Vision ${describeProviderFailure(result)}`);
+            throw new Error(
+                `Vision final synthesis attempt ${attempt} ${describeProviderFailure(result)}`,
+            );
         }
         if (result.kind === SingleShotResultKind.InvalidResult) {
             lastValidationError = result.detail;
@@ -476,6 +448,7 @@ export async function synthesizeFinalReview(
                 allowedBeforeArtifactIds,
                 allowedAfterArtifactIds,
                 runnerCoverageComplete,
+                consistency,
             );
             const dismissedAfterObservationIndices = untrustedOutput.afterInventoryReconciliation
                 .filter((item) => item.disposition === CandidateInstanceDisposition.NotSameSymptom)

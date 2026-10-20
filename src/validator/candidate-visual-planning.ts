@@ -208,3 +208,72 @@ export function tileBatches(tiles: CandidateVisualEvidenceTile[]): CandidateVisu
     }
     return batches;
 }
+
+/**
+ * One comparison a request may carry: anything that holds the image it sends.
+ */
+export interface ComparisonImage {
+    /**
+     * The image sent for the comparison.
+     */
+    image: CandidateVisualEvidenceImage;
+}
+
+/**
+ * Comparison requests planned for one item image.
+ */
+export interface ComparisonBatches<T> {
+    /**
+     * Ordered batches, each within the request byte budget beside the reserved images.
+     */
+    batches: T[][];
+
+    /**
+     * Comparisons too large to fit beside the reserved images in any request.
+     */
+    leftOut: number;
+}
+
+/**
+ * Split comparison images into requests that each also carry images already reserved for them.
+ *
+ * Unlike {@link tileBatches}, a request here is never allowed past the byte budget to keep an image:
+ * an image that does not fit beside the reserved bytes even alone is left out, and the caller
+ * leaves what it was meant to compare to the synthesis.
+ *
+ * @param items - Ordered comparisons, each carrying one image.
+ * @param maxImages - Most comparison images one request may carry.
+ * @param reservedBytes - Bytes every request already spends on the images sent beside them.
+ * @returns Ordered batches, and how many comparisons fit in none.
+ */
+export function comparisonBatches<T extends ComparisonImage>(
+    items: readonly T[],
+    maxImages: number,
+    reservedBytes: number,
+): ComparisonBatches<T> {
+    const batches: T[][] = [];
+    let current: T[] = [];
+    let currentBytes = reservedBytes;
+    let leftOut = 0;
+    for (const item of items) {
+        const bytes = evidenceImageBytes(item.image);
+        if (reservedBytes + bytes > MAX_VISION_IMAGE_BYTES_PER_REQUEST) {
+            leftOut += 1;
+            continue;
+        }
+        if (
+            current.length >= maxImages ||
+            currentBytes + bytes > MAX_VISION_IMAGE_BYTES_PER_REQUEST
+        ) {
+            batches.push(current);
+            current = [];
+            currentBytes = reservedBytes;
+        }
+        current.push(item);
+        currentBytes += bytes;
+    }
+    if (current.length > 0) {
+        batches.push(current);
+    }
+    return { batches, leftOut };
+}

@@ -10,11 +10,11 @@ import {
     SYNTHESIS_CONTEXT_DECISION_PHASE,
 } from '../../src/validator/candidate-visual-verifier';
 import { MAX_TILE_INVENTORY_CONTEXT_CHARS } from '../../src/validator/candidate-visual-context';
+import { MAX_OBSERVED_DAMAGE_ENTRIES } from '../../src/validator/candidate-visual-inventory';
 import {
-    MAX_OBSERVED_DAMAGE_ENTRIES,
     MAX_OBSERVED_DAMAGE_ENTRY_CHARS,
     MAX_RATIONALE_CHARS,
-} from '../../src/validator/candidate-visual-inventory';
+} from '../../src/types/candidate-visual-instance';
 import { VISUAL_REVIEW_UNAVAILABLE_PREFIX } from '../../src/validator/candidate-visual-synthesis';
 import type { CandidateVisualVerifierOptions } from '../../src/validator/candidate-visual-evidence';
 import { composeReporterSymptomScope } from '../../src/validator/reporter-symptom-scope';
@@ -113,6 +113,28 @@ function inventoryRequestState(options: {
 }
 
 /**
+ * Whether a request is an attribution request, which compares an AFTER tile with BEFORE tiles.
+ *
+ * @param options - The structured call options.
+ * @returns True for an attribution request.
+ */
+function isAttributionRequest(options: { messages: SingleShotMessage[] }): boolean {
+    return JSON.stringify(options.messages).includes('ITEM artifact=');
+}
+
+/**
+ * The reply of an attribution request in a suite that does not exercise attribution: nothing is
+ * found unchanged, so every AFTER item stays for the synthesis.
+ */
+const NO_ATTRIBUTION_REPLY = {
+    kind: SingleShotResultKind.Parsed,
+    value: { items: [] },
+    usages: [],
+    attempts: 1,
+    model: 'vision-stub',
+};
+
+/**
  * Review options whose fixture captured both full-page overviews.
  */
 type OverviewReviewOptions = CandidateVisualVerifierOptions & {
@@ -205,6 +227,9 @@ function makeProvider(output: Record<string, unknown> | Error): {
     chat: ReturnType<typeof vi.fn>;
 } {
     const chat = vi.fn(async (options: { messages: SingleShotMessage[] }) => {
+        if (isAttributionRequest(options)) {
+            return NO_ATTRIBUTION_REPLY;
+        }
         if (output instanceof Error) {
             return {
                 kind: SingleShotResultKind.ProviderFailure,
@@ -260,7 +285,10 @@ function makeProvider(output: Record<string, unknown> | Error): {
                     symptomScope: String(output.symptomScope),
                     instances: remainingInstances,
                     observedDamage: Array.isArray(output.observedDamage)
-                        ? output.observedDamage
+                        ? output.observedDamage.map((description) => ({
+                              artifactId: [...labelledArtifactIds][0],
+                              description,
+                          }))
                         : [],
                     rationale: 'The complete after tile batch was inventoried.',
                 }
@@ -2015,15 +2043,33 @@ describe('reviewCandidateVisually', () => {
     });
 
     it('rejects a nebule-like candidate when vision reports residual ad layout', async () => {
+        // The residue-only shape a maintainer is handed: the synthesis keeps the empty wrapper as
+        // the observation residue rests on, and no remaining instance says the symptom is there.
         const root = mkdtempSync(join(tmpdir(), 'candidate-visual-review-ad-layout-residue-'));
         const recorder = new TraceRecorder({ runId: 'visual-review', issueNumber: 3, mode: 'fix' });
-        const { vision } = makeSequencedFinalProvider(sequencedInventoryOutput(), [
-            resolvedFinalOutput({
-                adLayoutResidue: 'present',
-                rationale:
-                    'The creatives disappeared, but four empty outer ad wrappers remain visible.',
-            }),
-        ]);
+        const wrapper = {
+            artifactId: 'after-tile-1',
+            landmark: 'Between the first two article cards.',
+            description: 'An empty outer ad wrapper with its REKLAMA label.',
+            footprint: 'visible',
+        };
+        const { vision } = makeSequencedFinalProvider(
+            { ...sequencedInventoryOutput(), remainingInstances: [wrapper] },
+            [
+                resolvedFinalOutput({
+                    adLayoutResidue: 'present',
+                    afterInventoryReconciliation: [
+                        {
+                            observationIndex: 1,
+                            disposition: 'not_same_symptom',
+                            rationale: 'The empty labelled wrapper is residue, not the ad itself.',
+                        },
+                    ],
+                    rationale:
+                        'The creatives disappeared, but empty outer ad wrappers remain visible.',
+                }),
+            ],
+        );
         try {
             const result = await reviewCandidateVisually(makeOptions(root, vision, recorder));
 
@@ -2274,6 +2320,7 @@ function hermeticBeforeTileJson(): string {
                 artifactId: 'before-tile-1',
                 landmark: 'Top of the movie list.',
                 description: 'The anti-adblock overlay covers the movie list.',
+                footprint: 'visible',
             },
         ],
         observedDamage: [],
@@ -2595,6 +2642,9 @@ function batchAndSynthesisProvider(
         const labelledIds = [
             ...JSON.stringify(options.messages).matchAll(/artifact=([^;\\.]+)/gu),
         ].map((match) => match[1] ?? '');
+        if (isAttributionRequest(options)) {
+            return NO_ATTRIBUTION_REPLY;
+        }
         return {
             kind: SingleShotResultKind.Parsed,
             value: imagePartCount(options) > 0 ? batch(labelledIds) : synthesis,
@@ -2635,9 +2685,13 @@ function maximalDamageBatch(labelledIds: string[]): Record<string, unknown> {
         coverageObserved: true,
         symptomScope: `Advertising slots on ${label}.`,
         instances: [],
-        observedDamage: Array.from({ length: MAX_OBSERVED_DAMAGE_ENTRIES }, (_, index) =>
-            `Damage ${index + 1} on ${label}. `.padEnd(MAX_OBSERVED_DAMAGE_ENTRY_CHARS, 'x'),
-        ),
+        observedDamage: Array.from({ length: MAX_OBSERVED_DAMAGE_ENTRIES }, (_, index) => ({
+            artifactId: labelledIds[0],
+            description: `Damage ${index + 1} on ${label}. `.padEnd(
+                MAX_OBSERVED_DAMAGE_ENTRY_CHARS,
+                'x',
+            ),
+        })),
         rationale: `Rationale for ${label}. `.padEnd(MAX_RATIONALE_CHARS, 'x'),
     };
 }
@@ -2893,11 +2947,11 @@ describe('reviewCandidateVisually blind inventory', () => {
         const recorder = new TraceRecorder({ runId: 'visual-review', issueNumber: 3, mode: 'fix' });
         const damage = 'The "AD FEATURE" label overlaps the headline of the first article card.';
         const { vision, chat } = batchAndSynthesisProvider(
-            () => ({
+            (labelledIds) => ({
                 coverageObserved: true,
                 symptomScope: 'Advertising slots between article cards.',
                 instances: [],
-                observedDamage: [damage],
+                observedDamage: [{ artifactId: labelledIds[0], description: damage }],
                 rationale: 'Every supplied image was inventoried.',
             }),
             resolvedFinalOutput({ beforeInventoryReconciliation: [] }),
@@ -2912,10 +2966,13 @@ describe('reviewCandidateVisually blind inventory', () => {
                 .find((line) => line.startsWith('{"before"'));
             const inventory = JSON.parse(inventoryLine ?? '{}') as Record<
                 CaptureState,
-                { observations: Array<{ observedDamage: string[] }> } | undefined
+                | { observations: Array<{ observedDamage: Array<{ description: string }> }> }
+                | undefined
             >;
             const damageOf = (state: CaptureState): string[] =>
-                inventory[state]?.observations.flatMap((item) => item.observedDamage) ?? [];
+                inventory[state]?.observations.flatMap((item) =>
+                    item.observedDamage.map((entry) => entry.description),
+                ) ?? [];
             expect(damageOf(CaptureState.Before)).toEqual(
                 Array.from({ length: 3 }, () => `${PRE_EXISTING_DAMAGE_PREFIX} ${damage}`),
             );

@@ -13,8 +13,9 @@ import type { TraceRecorder } from '../tracer/trace-recorder';
 import {
     MAX_INSTANCE_DESCRIPTION_CHARS,
     MAX_INSTANCE_LANDMARK_CHARS,
-    type CandidateVisualInstance,
-} from '../types/candidate-visual-review';
+    type CandidateVisualDamageEntry,
+    type CandidateVisualInventoryInstance,
+} from '../types/candidate-visual-instance';
 import {
     MAX_ARTIFACT_ID_CHARS,
     type CandidateVisualFullPageOverviewEvidence,
@@ -198,7 +199,7 @@ export interface CandidateVisualInventoryObservation {
     /**
      * Bounded visible-damage observations produced by this request.
      */
-    observedDamage: string[];
+    observedDamage: CandidateVisualDamageEntry[];
 
     /**
      * Bounded model rationale for the visual observation.
@@ -218,7 +219,7 @@ export interface CandidateVisualTileInventory {
     /**
      * Every model-observed occurrence tied to a runner-owned tile.
      */
-    instances: CandidateVisualInstance[];
+    instances: CandidateVisualInventoryInstance[];
 
     /**
      * Every image request that produced this inventory, with the symptom scope, damage and

@@ -91,6 +91,15 @@ The format is based on [Keep a Changelog], and this project adheres to
 - Fixed visual reviews ending without a verdict when the vision model added
   a key of its own, such as `coverageObserved_note`, to a reply or to an
   object inside it; such a key is now ignored.
+- Fixed visual reviews rejecting correct candidates for things the page shows
+  without them: a flaw or a gap that the baseline capture shows unchanged no
+  longer counts as damage or ad residue, and blank space where the ad was
+  stops counting as residue once a DOM check names the element that holds it
+  as page layout. Each such item is recorded in the review's `settlement`.
+  In an ads review, a `not_resolved` answer with no remaining observation,
+  residue with no AFTER observation, or, for a cosmetic rule, `regressed`
+  with no listed flaw or named missing content now ends the review
+  inconclusive after repair instead of rejecting the candidate.
 - Fixed two benchmark cases started at once on a fresh `--output-root`
   failing with `EEXIST` while creating the shared output directory.
 - Fixed `###id` element-hiding rules being validated against the selector

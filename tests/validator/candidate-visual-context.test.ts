@@ -9,17 +9,24 @@ import {
     type CandidateVisualInventoryObservation,
     type CandidateVisualTileInventory,
 } from '../../src/validator/candidate-visual-context';
+import { MAX_OBSERVED_DAMAGE_ENTRIES } from '../../src/validator/candidate-visual-inventory';
 import {
-    MAX_OBSERVED_DAMAGE_ENTRIES,
+    CandidateVisualInstanceFootprint,
     MAX_OBSERVED_DAMAGE_ENTRY_CHARS,
     MAX_RATIONALE_CHARS,
-} from '../../src/validator/candidate-visual-inventory';
+} from '../../src/types/candidate-visual-instance';
 
 /**
- * Observations per state that, at the largest damage and rationale a batch may report, overflow the
- * full context but fit once every rationale is shortened.
+ * Observations per state that, at the largest rationale and one damage entry short of the most a
+ * batch may report, overflow the full context but fit once every rationale is shortened.
  */
 const OBSERVATIONS_FITTING_ONLY_SHORTENED = 7;
+
+/**
+ * Damage entries per batch in that sizing: at the most a batch may report, the entries alone push
+ * seven observations per state past the limit however short the rationales are.
+ */
+const DAMAGE_ENTRIES_FITTING_ONLY_SHORTENED = MAX_OBSERVED_DAMAGE_ENTRIES - 1;
 
 /**
  * Observations per state that overflow the context even with every rationale shortened.
@@ -67,12 +74,13 @@ function stateInventory(
         coverageObserved: true,
         symptomScope: textOf(`${state} scope ${index + 1}`, MAX_SYMPTOM_SCOPE_CHARS),
         instanceCount: 1,
-        observedDamage: Array.from({ length: sizes.damageEntries }, (_entry, damageIndex) =>
-            textOf(
+        observedDamage: Array.from({ length: sizes.damageEntries }, (_entry, damageIndex) => ({
+            artifactId: `${state}-tile-${index + 1}`,
+            description: textOf(
                 `${state} damage ${index + 1}.${damageIndex + 1}`,
                 MAX_OBSERVED_DAMAGE_ENTRY_CHARS,
             ),
-        ),
+        })),
         rationale: textOf(`${state} rationale ${index + 1}`, sizes.rationaleChars),
     }));
     return {
@@ -81,6 +89,7 @@ function stateInventory(
             artifactId: observation.artifactIds[0] ?? '',
             landmark: `${state} landmark ${index + 1}`,
             description: `${state} advert ${index + 1}`,
+            footprint: CandidateVisualInstanceFootprint.Visible,
         })),
         observations,
     };
@@ -144,7 +153,7 @@ describe('renderTileInventoryContext', () => {
             for (const batchText of [
                 observation.symptomScope,
                 observation.rationale,
-                ...observation.observedDamage,
+                ...observation.observedDamage.map((entry) => entry.description),
             ]) {
                 expect(occurrences(context.text, batchText)).toBe(1);
             }
@@ -154,7 +163,7 @@ describe('renderTileInventoryContext', () => {
     it('shortens only batch rationales to the fixed length when the full context exceeds the limit', () => {
         const sizes = {
             rationaleChars: MAX_RATIONALE_CHARS,
-            damageEntries: MAX_OBSERVED_DAMAGE_ENTRIES,
+            damageEntries: DAMAGE_ENTRIES_FITTING_ONLY_SHORTENED,
         };
         const before = stateInventory('before', OBSERVATIONS_FITTING_ONLY_SHORTENED, sizes);
         const after = stateInventory('after', OBSERVATIONS_FITTING_ONLY_SHORTENED, sizes);
