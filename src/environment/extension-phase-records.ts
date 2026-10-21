@@ -72,7 +72,7 @@ export function environmentArtifact(
 /**
  * Resolve every screenshot identity carried by one phase without duplicating references.
  *
- * @param result - Phase result carrying viewport, overview, and tile identities.
+ * @param result - Phase result carrying viewport, overview, tile and tile window map identities.
  * @returns Ordered unique screenshot identities.
  */
 export function phaseScreenshotIds(result: PhaseResult): string[] {
@@ -80,6 +80,7 @@ export function phaseScreenshotIds(result: PhaseResult): string[] {
         result.screenshotArtifactId,
         ...(result.fullPageScreenshotArtifactId ? [result.fullPageScreenshotArtifactId] : []),
         ...(result.tileCoverage?.tiles.map((tile) => tile.artifactId) ?? []),
+        ...(result.tileCoverage?.map ? [result.tileCoverage.map.artifactId] : []),
     ].filter(
         (artifactId, index, values) =>
             artifactId.length > 0 && values.indexOf(artifactId) === index,

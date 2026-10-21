@@ -358,3 +358,31 @@ export function synthesisResidueRubric(kind: SymptomKind, scope?: CandidateNetwo
         ...DOM_CHECK_RESIDUE_RUBRIC,
     ];
 }
+
+/**
+ * Prompt lines telling one inventory pass which page damage to list.
+ *
+ * Both states are asked the same thing, because a pass told its state answers what that state is
+ * expected to show. The code then marks every BEFORE entry {@link PRE_EXISTING_DAMAGE_PREFIX}, and
+ * the synthesis discounts AFTER damage that matches one: without the BEFORE list, a card whose "AD
+ * FEATURE" label has always overlapped its headline comes back from the AFTER tiles as text
+ * collision, and the review reports pageIntegrity regressed for a candidate that touched nothing
+ * near it. An ads review also lists the page's own blank panels, which the synthesis then tells
+ * from residue; in an incorrect-blocking review such a panel is the defect.
+ *
+ * @param kind - Problem class driving the review.
+ * @returns Prompt lines for damage reporting.
+ */
+export function pageDamageRubric(kind: SymptomKind): string[] {
+    const flaws = [
+        'overlapping or clipped text',
+        'broken images',
+        ...(isBreakageSymptom(kind) ? [] : [PRE_EXISTING_BLANK_PANELS]),
+        'collapsed layout',
+    ].join(', ');
+    return [
+        'List in observedDamage every visible rendering flaw of the page apart from the',
+        `reporter-defined defect itself — ${flaws} — each naming its landmark and citing the`,
+        'labelled artifact ID of the image it is visible in.',
+    ];
+}

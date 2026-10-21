@@ -63,6 +63,22 @@ export interface CandidateVisualEvidenceTile extends CandidateVisualEvidenceImag
 }
 
 /**
+ * Screenshot of the top of the document span the tiles cover, taken for a page too tall for its
+ * full-page overview to be read as one image.
+ */
+export interface CandidateVisualTileWindowMap extends CandidateVisualEvidenceImage {
+    /**
+     * Vertical document coordinate at which the map begins.
+     */
+    y: number;
+
+    /**
+     * Map height in CSS pixels.
+     */
+    height: number;
+}
+
+/**
  * Pixel extent of the document one page state's full-page overview spans.
  */
 export interface CandidateVisualDocumentSize {
@@ -115,8 +131,8 @@ export interface CandidateVisualEvidence {
     /**
      * Whether the runner proved that before tiles cover the proven capture scope.
      *
-     * A window-bounded capture proves the localized symptom neighborhood; the verdict relies on
-     * that scope plus the full-page overview for the remaining context.
+     * A window-bounded capture proves the localized symptom neighborhood, and the review answers
+     * for that window alone: the full-page overview is only its map.
      */
     beforeCoverageComplete: boolean;
 
@@ -128,7 +144,7 @@ export interface CandidateVisualEvidence {
     /**
      * Whether the runner proved that before tiles cover the complete document.
      *
-     * Only whole-document coverage may substitute tiles for an oversized overview image.
+     * Short of it, the review records the inspected window as the reason of its overview plan.
      */
     beforeDocumentCoverageComplete?: boolean;
 
@@ -141,7 +157,7 @@ export interface CandidateVisualEvidence {
      * Document extent the before full-page overview spans, when the capture measured it.
      *
      * A page far taller than it is wide cannot be read as one image, so the extent decides whether
-     * the overview reaches vision at all. Absent leaves the byte ceiling as the only gate.
+     * the overview or the tile window map is the page state's map.
      */
     beforeDocument?: CandidateVisualDocumentSize;
 
@@ -149,6 +165,18 @@ export interface CandidateVisualEvidence {
      * Document extent the after full-page overview spans, when the capture measured it.
      */
     afterDocument?: CandidateVisualDocumentSize;
+
+    /**
+     * Map of the before tile window, present only when the document is too tall for its overview to
+     * be read as one image.
+     */
+    beforeTileWindowMap?: CandidateVisualTileWindowMap;
+
+    /**
+     * Map of the after tile window, present only when the document is too tall for its overview to
+     * be read as one image.
+     */
+    afterTileWindowMap?: CandidateVisualTileWindowMap;
 }
 
 /**

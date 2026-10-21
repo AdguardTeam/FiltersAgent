@@ -101,6 +101,49 @@ export const FullPageTileWindowSchema = v.strictObject({
 export type FullPageTileWindow = v.InferOutput<typeof FullPageTileWindowSchema>;
 
 /**
+ * One screenshot of the top of the document span the tiles cover, at most as tall as an overview
+ * can be and still be read as one image. Taken for a candidate's baseline and candidate phases when
+ * the whole document is too tall for its full-page overview to be read; the candidate review shows
+ * it to the vision model as the map of that page state.
+ */
+export const FullPageTileWindowMapSchema = v.object({
+    artifactId: v.pipe(v.string(), v.minLength(1)),
+    y: v.pipe(v.number(), v.minValue(0)),
+    height: v.pipe(v.number(), v.minValue(1)),
+});
+
+/**
+ * Artifact types of the screenshots a phase capture registers.
+ */
+export const ScreenshotArtifactType = {
+    /**
+     * The viewport screenshot.
+     */
+    Viewport: 'screenshot',
+
+    /**
+     * The full-page overview.
+     */
+    FullPage: 'screenshot-full-page',
+
+    /**
+     * One original-resolution tile.
+     */
+    Tile: 'screenshot-tile',
+
+    /**
+     * The tile window map of a page too tall for its overview to be read.
+     */
+    TileWindowMap: 'screenshot-tile-window-map',
+} as const;
+
+/**
+ * ScreenshotArtifactType value.
+ */
+export type ScreenshotArtifactType =
+    (typeof ScreenshotArtifactType)[keyof typeof ScreenshotArtifactType];
+
+/**
  * Mechanical proof describing how original-resolution tiles cover one page state.
  */
 export const FullPageTileCoverageSchema = v.object({
@@ -119,6 +162,8 @@ export const FullPageTileCoverageSchema = v.object({
     // its first rows; `window` then records the span those rows cover.
     windowTrimmed: v.optional(v.boolean()),
     error: v.optional(v.pipe(v.string(), v.minLength(1), v.maxLength(500))),
+    // Present only on a document too tall for its overview to be read as one image.
+    map: v.optional(FullPageTileWindowMapSchema),
 });
 
 /**

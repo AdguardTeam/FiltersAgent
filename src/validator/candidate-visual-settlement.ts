@@ -125,17 +125,11 @@ export async function settleAfterInventory(
               )
         : [];
     const flaws = after.observations.flatMap((observation, observationIndex) =>
-        observation.observedDamage.flatMap((entry, entryIndex) =>
-            entry.artifactId === undefined
-                ? []
-                : [
-                      {
-                          entry,
-                          artifactId: entry.artifactId,
-                          key: damageKey(observationIndex, entryIndex),
-                      },
-                  ],
-        ),
+        observation.observedDamage.map((entry, entryIndex) => ({
+            entry,
+            artifactId: entry.artifactId,
+            key: damageKey(observationIndex, entryIndex),
+        })),
     );
     const items: AttributionItem[] = [
         ...flaws.map(({ entry, artifactId, key }) => ({

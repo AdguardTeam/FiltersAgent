@@ -25,6 +25,7 @@ import type {
     CandidateVisualVerifierOptions,
 } from './candidate-visual-evidence';
 import { boundedModel } from './candidate-visual-context';
+import { tilePosition } from './candidate-visual-map';
 import {
     MAX_TILES_PER_VISION_BATCH,
     comparisonBatches,
@@ -48,16 +49,6 @@ import {
  */
 function stateHeight(measured: number | undefined, tiles: CandidateVisualEvidenceTile[]): number {
     return measured ?? Math.max(0, ...tiles.map((tile) => tile.y + tile.height));
-}
-
-/**
- * Where a tile sits in the document, as its label states it.
- *
- * @param tile - The tile.
- * @returns The label text.
- */
-function tilePlace(tile: CandidateVisualEvidenceTile): string {
-    return `document x=${tile.x}..${tile.x + tile.width}, y=${tile.y}..${tile.y + tile.height}`;
 }
 
 /**
@@ -199,8 +190,8 @@ async function attributeImage(
  * Find which AFTER items the BEFORE state shows unchanged.
  *
  * An item cited on an AFTER tile is compared with the BEFORE tiles of its window, one cited on the
- * AFTER viewport with the BEFORE viewport. An item cited on the full-page overview is not asked
- * about: the overview spans a page state at a scale no BEFORE image shares at the same detail.
+ * AFTER viewport with the BEFORE viewport. No item cites the full-page overview: the review shows
+ * it only as a map, which carries no artifact.
  *
  * @param options - Review options providing the evidence, model and trace.
  * @param items - Every AFTER item to attribute.
@@ -223,10 +214,13 @@ export async function attributeAfterItems(
         stateHeight(options.evidence.afterDocument?.height, afterTiles);
     const requests = [
         ...afterTiles.map((tile) => ({
-            item: { image: tile, place: tilePlace(tile) },
+            item: {
+                image: tile,
+                place: tilePosition(tile, afterTiles.length, options.evidence.afterDocument),
+            },
             comparisons: beforeWindow(tile, beforeTiles, lost).map((before) => ({
                 image: before,
-                place: tilePlace(before),
+                place: tilePosition(before, beforeTiles.length, options.evidence.beforeDocument),
             })),
         })),
         {

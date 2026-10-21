@@ -106,6 +106,14 @@ The format is based on [Keep a Changelog], and this project adheres to
   residue with no AFTER observation, or, for a cosmetic rule, `regressed`
   with no listed flaw or named missing content now ends the review
   inconclusive after repair instead of rejecting the candidate.
+- Fixed visual reviews rejecting correct candidates for ads seen only on the
+  downscaled full-page overview: the overview now goes in front of every tile
+  batch as a map that cannot be cited, each tile is labelled with its place,
+  such as `TILE 2 of 5, y=1080–2160`, and only what a tile or the viewport
+  shows counts. A page more than eight times taller than wide gets a map of
+  the span its tiles cover instead of none. A review whose tiles cover only a
+  window of the page now reports `tile window only` with the inspected range,
+  and an overview past the 5 MB vision limit no longer blocks the review.
 - Fixed two benchmark cases started at once on a fresh `--output-root`
   failing with `EEXIST` while creating the shared output directory.
 - Fixed `###id` element-hiding rules being validated against the selector

@@ -191,7 +191,9 @@ export class BrowserExtensionAdsObserver {
                 ? { tileWindow: rememberedWindow }
                 : {}),
             captureVisualTiles: true,
+            captureTileWindowMap: input.phase !== PhaseLabel.A,
             recorder: this.options.recorder,
+            logger: this.options.logger,
             ...(this.interactionReplay
                 ? {
                       interact: this.interactionReplay.replayFor(

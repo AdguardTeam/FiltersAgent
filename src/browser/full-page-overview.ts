@@ -3,6 +3,7 @@ import type { Logger } from 'pino';
 import { MAX_VISION_IMAGE_BYTES } from '../pi/single-shot-input';
 import type { TraceRecorder } from '../tracer/trace-recorder';
 import { TraceEventType } from '../types/trace';
+import { ScreenshotArtifactType } from '../types/validation';
 import { writeArtifact } from './full-page-tiles';
 
 /**
@@ -72,7 +73,7 @@ export async function captureFullPageOverview(
                     artifactsDir,
                     'png',
                     png,
-                    'screenshot-full-page',
+                    ScreenshotArtifactType.FullPage,
                     recorder,
                 ),
             };
@@ -83,7 +84,13 @@ export async function captureFullPageOverview(
             quality: OVERVIEW_JPEG_QUALITY,
         });
         return {
-            artifactId: writeArtifact(artifactsDir, 'jpg', jpeg, 'screenshot-full-page', recorder),
+            artifactId: writeArtifact(
+                artifactsDir,
+                'jpg',
+                jpeg,
+                ScreenshotArtifactType.FullPage,
+                recorder,
+            ),
         };
     } catch (error) {
         const message = (error instanceof Error ? error.message : String(error)).slice(

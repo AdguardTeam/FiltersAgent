@@ -19,6 +19,7 @@ import { SingleShotResultKind, type SingleShotClient } from '../pi/single-shot-t
 import type { TraceRecorder } from '../tracer/trace-recorder';
 import { type SymptomKind } from '../validator/symptom-rubric';
 import { PAGE_OBSTRUCTION_INSTRUCTION, PageObstructionSchema } from '../types/page-obstruction';
+import { ScreenshotArtifactType } from '../types/validation';
 import { registeredParameters } from './registered-parameters';
 import { ToolName } from './tool-names';
 import type { ToolRegistry } from './tool-registry';
@@ -59,10 +60,10 @@ const ScreenshotObservationSchema = v.strictObject({
  * runtime produced. Anything else the model names — a HAR, a DOM dump, an inventory JSON — is not
  * an image and must be refused rather than handed to the vision model as a file path.
  */
-const VISION_SCREENSHOT_ARTIFACT_TYPES = [
-    'screenshot',
-    'screenshot-full-page',
-    'screenshot-tile',
+const VISION_SCREENSHOT_ARTIFACT_TYPES: readonly string[] = [
+    ScreenshotArtifactType.Viewport,
+    ScreenshotArtifactType.FullPage,
+    ScreenshotArtifactType.Tile,
     'issue-screenshot',
 ];
 

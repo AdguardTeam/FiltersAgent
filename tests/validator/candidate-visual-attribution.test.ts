@@ -102,17 +102,4 @@ describe('reviewCandidateVisually compares an AFTER item with the BEFORE images 
             }),
         ]);
     });
-
-    it('keeps a flaw that cites an image outside its request for the synthesis', async () => {
-        const { review } = await reviewWith({
-            instances: [BEFORE_SLOT],
-            damage: [
-                { ...FOOTER_GRAPHIC, artifactId: 'after-viewport', reportedOn: 'after-tile-2' },
-            ],
-            attribute: () => ({ comparisonArtifactId: 'before-viewport' }),
-        });
-
-        expect(review.verdict).toBe('rejected');
-        expect(review.pageIntegrity).toBe('regressed');
-    });
 });

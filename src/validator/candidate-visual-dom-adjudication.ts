@@ -17,6 +17,7 @@ import { TraceEventType } from '../types/trace';
 import { DomCheckMeasurementStatus, type DomCheckRecord } from '../types/dom-check';
 import type { CandidateVisualInventoryInstance } from '../types/candidate-visual-instance';
 import type {
+    CandidateVisualDocumentSize,
     CandidateVisualEvidenceTile,
     CandidateVisualVerifierOptions,
 } from './candidate-visual-evidence';
@@ -28,6 +29,7 @@ import {
 import { MAX_RATIONALE_CHARS } from '../types/candidate-visual-instance';
 import { MAX_DOM_CHECK_FACTS_CHARS, renderDomChecksForReview } from './dom-check-context';
 import { answeredOnce } from './candidate-visual-reconciliation';
+import { tilePosition } from './candidate-visual-map';
 
 /**
  * What a DOM check says about one blank AFTER observation.
@@ -265,19 +267,17 @@ function layoutProof(
  *
  * @param instance - The observation.
  * @param tiles - Tiles of its page state.
- * @returns A label with the tile's document range when the observation cites a tile.
+ * @param document - Document extent of its page state, when measured.
+ * @returns A label with the tile's place when the observation cites a tile, else the viewport.
  */
 function locate(
     instance: CandidateVisualInventoryInstance,
     tiles: CandidateVisualEvidenceTile[],
+    document: CandidateVisualDocumentSize | undefined,
 ): string {
     const tile = tiles.find((candidate) => candidate.id === instance.artifactId);
-    const range =
-        tile === undefined
-            ? 'overview image'
-            : `tile document x=${tile.x}..${tile.x + tile.width}, ` +
-              `y=${tile.y}..${tile.y + tile.height}`;
-    return `${range}; ${instance.landmark} — ${instance.description}`.replace(/\s+/gu, ' ');
+    const place = tile === undefined ? 'viewport' : tilePosition(tile, tiles.length, document);
+    return `${place}; ${instance.landmark} — ${instance.description}`.replace(/\s+/gu, ' ');
 }
 
 /**
@@ -326,13 +326,21 @@ export async function adjudicateDomChecks(
                         : beforeInstances.map(
                               (instance, index) =>
                                   `BEFORE ${index + 1}: ` +
-                                  locate(instance, options.evidence.beforeTiles),
+                                  locate(
+                                      instance,
+                                      options.evidence.beforeTiles,
+                                      options.evidence.beforeDocument,
+                                  ),
                           )),
                     'AFTER observations of blank space to decide:',
                     ...items.map(
                         (item, index) =>
                             `Observation ${index + 1}: ` +
-                            locate(item.instance, options.evidence.afterTiles),
+                            locate(
+                                item.instance,
+                                options.evidence.afterTiles,
+                                options.evidence.afterDocument,
+                            ),
                     ),
                 ].join('\n'),
             },

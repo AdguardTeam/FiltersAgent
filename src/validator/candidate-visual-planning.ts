@@ -9,6 +9,7 @@
 import { statSync } from 'node:fs';
 import {
     MAX_VISION_IMAGE_BYTES,
+    VISION_IMAGE_LIMITS,
     VisionOverviewRefusal,
     visionOverviewRefusal,
 } from '../pi/single-shot-input';
@@ -20,6 +21,7 @@ import type {
     CandidateVisualDocumentSize,
     CandidateVisualEvidenceImage,
     CandidateVisualEvidenceTile,
+    CandidateVisualTileWindowMap,
 } from './candidate-visual-evidence';
 
 /**
@@ -55,6 +57,104 @@ export function evidenceImageBytes(image: CandidateVisualEvidenceImage): number 
 }
 
 /**
+ * Longest side of the map a tile request carries in front of its tiles: the top of the 1,000 to
+ * 2,000 px a downscaled whole-page overview is recommended at, and no larger than the side every
+ * image of a many-image request must fit.
+ */
+export const MAP_LONG_EDGE_PX = VISION_IMAGE_LIMITS.manyImagesMaxSidePx;
+
+/**
+ * Largest base64-encoded map: every tile request carries it beside its tiles, so it takes a small
+ * fixed share of {@link MAX_VISION_IMAGE_BYTES_PER_REQUEST} instead of competing with them.
+ */
+export const MAX_MAP_ENCODED_BYTES = 1024 * 1024;
+
+/**
+ * What one page state's map is downscaled from.
+ */
+export const CandidateVisualMapSource = {
+    /**
+     * The full-page overview of a page short enough to be read as one image.
+     */
+    WholePage: 'whole_page',
+
+    /**
+     * The browser's screenshot of the tile window of a page too tall for that.
+     */
+    TileWindow: 'tile_window',
+} as const;
+
+/**
+ * CandidateVisualMapSource value.
+ */
+export type CandidateVisualMapSource =
+    (typeof CandidateVisualMapSource)[keyof typeof CandidateVisualMapSource];
+
+/**
+ * The image one page state's map is downscaled from.
+ */
+export type CandidateVisualMapSourceImage =
+    | {
+          /**
+           * The whole page.
+           */
+          kind: typeof CandidateVisualMapSource.WholePage;
+
+          /**
+           * The full-page overview.
+           */
+          image: CandidateVisualEvidenceImage;
+      }
+    | {
+          /**
+           * The tile window.
+           */
+          kind: typeof CandidateVisualMapSource.TileWindow;
+
+          /**
+           * The tile window screenshot.
+           */
+          image: CandidateVisualTileWindowMap;
+      };
+
+/**
+ * How one page state's full-page overview takes part in the review.
+ */
+export interface CandidateVisualOverviewPlan {
+    /**
+     * Provenance recorded for the state; its vision fields stay empty until the map is built.
+     */
+    evidence: CandidateVisualFullPageOverviewEvidence;
+
+    /**
+     * The image the state's map is downscaled from, absent when the state has none.
+     */
+    mapSource?: CandidateVisualMapSourceImage;
+}
+
+/**
+ * Say which document range the original-resolution tiles inspected.
+ *
+ * @param tiles - Ordered original-resolution tiles of the page state.
+ * @param document - Document extent, when the capture measured it.
+ * @returns The inspected range, as a clause.
+ */
+function inspectedTiles(
+    tiles: readonly CandidateVisualEvidenceTile[],
+    document: CandidateVisualDocumentSize | undefined,
+): string {
+    if (tiles.length === 0) {
+        return 'no original-resolution tiles were inspected';
+    }
+    return (
+        `original-resolution tiles from y=${Math.min(...tiles.map((tile) => tile.y))} to ` +
+        `y=${Math.max(...tiles.map((tile) => tile.y + tile.height))}` +
+        (document === undefined ? '' : ` of ${document.height} px`) +
+        ' were inspected'
+    );
+}
+
+/**
  * Say why an unreadably tall overview was withheld and exactly what was read in its place.
  *
  * The sentence is persisted in the review and read by maintainers, so it names the pixel size and
@@ -71,12 +171,6 @@ function illegibleOverviewReason(
     tiles: readonly CandidateVisualEvidenceTile[],
     captured: boolean,
 ): string {
-    const inspected =
-        tiles.length > 0
-            ? `original-resolution tiles from y=${Math.min(...tiles.map((tile) => tile.y))} to ` +
-              `y=${Math.max(...tiles.map((tile) => tile.y + tile.height))} of ` +
-              `${document.height} px were inspected instead`
-            : 'no original-resolution tiles were inspected';
     const extent =
         `${document.width}x${document.height} px (aspect ` +
         `${(document.height / document.width).toFixed(1)}:1)`;
@@ -85,41 +179,44 @@ function illegibleOverviewReason(
         : `The browser captured no full-page overview, and one of ${extent} would be too tall`;
     return (
         `${overview} for a vision model to read as one image, which the provider fits into a ` +
-        `bounded square; ${inspected}, and the rest of the page was not inspected.`
+        `bounded square; ${inspectedTiles(tiles, document)} instead, and the rest of the page ` +
+        'was not inspected.'
     );
 }
 
 /**
- * Plan how one original full-page artifact participates in the bounded vision review.
+ * Plan how one page state's full-page overview takes part in the review.
  *
- * An oversized original is never mutated or sent beyond the provider byte limit. It may be omitted
- * only when a non-empty, mechanically complete original-resolution tile set covers the same state.
- * The schema keeps a distinct nullable vision artifact reference so omission cannot be confused
- * with the immutable original and a future derivative can extend the contract explicitly.
+ * The overview is never inventoried: it reaches vision only as the map in front of the tiles, so
+ * what the review answers for is always the range its tiles cover. A plan records that range
+ * whenever it is less than the document, so neither the synthesis nor the run report reads
+ * page-wide coverage into a review of a window.
  *
- * An overview the provider would shrink past readability is omitted on different terms: it needs no
- * tile-coverage proof and never blocks the review, because an image the model cannot read protects
- * nothing while blocking would make every long page unverifiable. The document's shape decides that
- * before its bytes do, so a long page ends the same way whether its overview was readable in size,
- * too large to send, or never captured: the browser refuses a full-page capture of a very tall
- * document. Short of that, a missing overview stands in for an oversized one.
+ * An overview of a page short enough to be read as one image is the map at any byte size, since the
+ * map is a downscaled derivative. An overview the provider would shrink past readability is
+ * withheld: the map is then the browser's screenshot of the tile window. The document's shape
+ * decides that before anything else, so a long page ends the same way whether its overview was
+ * captured or not: the browser refuses a full-page capture of a very tall document. Short of that,
+ * a state the browser captured no overview of is reviewed only when its tiles cover the whole
+ * document, the terms `phaseCapturedPageState` proves the phase on.
  *
  * @param image - Immutable runner-owned full-page evidence artifact, absent when none was captured.
  * @param coverageComplete - Whether the runner proved complete document tile coverage.
  * @param tiles - Ordered original-resolution tiles for the same page state.
  * @param document - Document extent the overview spans, when the capture measured it.
- * @returns Validated provenance describing the original and vision-facing overview.
+ * @param tileWindowMap - Screenshot of the tile window, captured only for an illegibly tall page.
+ * @returns The provenance to record and the image to map the state from.
  */
 export function planFullPageOverview(
     image: CandidateVisualEvidenceImage | undefined,
     coverageComplete: boolean,
     tiles: readonly CandidateVisualEvidenceTile[],
     document?: CandidateVisualDocumentSize,
-): CandidateVisualFullPageOverviewEvidence {
-    const originalBytes = image === undefined ? null : statSync(image.path).size;
-    const withheld = {
+    tileWindowMap?: CandidateVisualTileWindowMap,
+): CandidateVisualOverviewPlan {
+    const original = {
         originalArtifactId: image?.id ?? null,
-        originalBytes,
+        originalBytes: image === undefined ? null : statSync(image.path).size,
         visionArtifactId: null,
         visionBytes: null,
     };
@@ -133,49 +230,52 @@ export function planFullPageOverview(
         }) === VisionOverviewRefusal.Illegible
     ) {
         return {
-            ...withheld,
-            mode:
-                image === undefined
-                    ? FullPageOverviewMode.UnavailableIllegible
-                    : FullPageOverviewMode.OmittedIllegible,
-            reason: illegibleOverviewReason(document, tiles, image !== undefined),
+            evidence: {
+                ...original,
+                mode:
+                    image === undefined
+                        ? FullPageOverviewMode.UnavailableIllegible
+                        : FullPageOverviewMode.OmittedIllegible,
+                reason: illegibleOverviewReason(document, tiles, image !== undefined),
+            },
+            ...(tileWindowMap === undefined
+                ? {}
+                : {
+                      mapSource: {
+                          kind: CandidateVisualMapSource.TileWindow,
+                          image: tileWindowMap,
+                      },
+                  }),
         };
     }
-    const tilesStandIn = coverageComplete && tiles.length > 0;
-    if (image === undefined || originalBytes === null) {
+    const tilesCoverDocument = coverageComplete && tiles.length > 0;
+    if (image === undefined) {
         return {
-            ...withheld,
-            mode: tilesStandIn
-                ? FullPageOverviewMode.UnavailableCompleteTiles
-                : FullPageOverviewMode.BlockedUnavailableIncompleteTiles,
-            reason: tilesStandIn
-                ? 'The browser captured no full-page overview; complete original-resolution ' +
-                  'tiles provide visual coverage.'
-                : 'The browser captured no full-page overview and complete original-resolution ' +
-                  'tiles are unavailable.',
-        };
-    }
-    if (visionOverviewRefusal({ bytes: originalBytes }) === null) {
-        return {
-            mode: FullPageOverviewMode.Original,
-            originalArtifactId: image.id,
-            originalBytes,
-            visionArtifactId: image.id,
-            visionBytes: originalBytes,
-            reason: null,
+            evidence: {
+                ...original,
+                mode: tilesCoverDocument
+                    ? FullPageOverviewMode.UnavailableCompleteTiles
+                    : FullPageOverviewMode.BlockedUnavailableIncompleteTiles,
+                reason: tilesCoverDocument
+                    ? 'The browser captured no full-page overview; complete original-resolution ' +
+                      'tiles provide visual coverage.'
+                    : 'The browser captured no full-page overview and complete ' +
+                      'original-resolution tiles are unavailable.',
+            },
         };
     }
     return {
-        ...withheld,
-        mode: tilesStandIn
-            ? FullPageOverviewMode.OmittedCompleteTiles
-            : FullPageOverviewMode.BlockedOversizedIncompleteTiles,
-        reason: tilesStandIn
-            ? `Original full-page overview exceeds the ${MAX_VISION_IMAGE_BYTES}-` +
-              'byte vision request limit; complete original-resolution tiles provide visual ' +
-              'coverage without altering the original artifact.'
-            : `Original full-page overview exceeds the ${MAX_VISION_IMAGE_BYTES}-byte ` +
-              'vision request limit and complete original-resolution tiles are unavailable.',
+        evidence: tilesCoverDocument
+            ? { ...original, mode: FullPageOverviewMode.Original, reason: null }
+            : {
+                  ...original,
+                  mode: FullPageOverviewMode.WindowedTiles,
+                  reason:
+                      `The full-page overview was shown only as a map; ` +
+                      `${inspectedTiles(tiles, document)}, and the rest of the page was not ` +
+                      'inspected.',
+              },
+        mapSource: { kind: CandidateVisualMapSource.WholePage, image },
     };
 }
 
@@ -183,12 +283,16 @@ export function planFullPageOverview(
  * Split page tiles into count- and byte-bounded provider requests without omitting any image.
  *
  * @param tiles - Complete ordered tile list for one page state.
+ * @param reservedBytes - Bytes every request already spends on the map sent in front of its tiles.
  * @returns Ordered batches containing at most the configured image limit.
  */
-export function tileBatches(tiles: CandidateVisualEvidenceTile[]): CandidateVisualEvidenceTile[][] {
+export function tileBatches(
+    tiles: CandidateVisualEvidenceTile[],
+    reservedBytes = 0,
+): CandidateVisualEvidenceTile[][] {
     const batches: CandidateVisualEvidenceTile[][] = [];
     let current: CandidateVisualEvidenceTile[] = [];
-    let currentBytes = 0;
+    let currentBytes = reservedBytes;
     for (const tile of tiles) {
         const bytes = evidenceImageBytes(tile);
         if (
@@ -198,7 +302,7 @@ export function tileBatches(tiles: CandidateVisualEvidenceTile[]): CandidateVisu
         ) {
             batches.push(current);
             current = [];
-            currentBytes = 0;
+            currentBytes = reservedBytes;
         }
         current.push(tile);
         currentBytes += bytes;

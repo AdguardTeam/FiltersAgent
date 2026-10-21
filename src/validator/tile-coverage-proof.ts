@@ -5,8 +5,9 @@ import type { FullPageTileCoverage, PhaseResult } from '../types/validation';
  * When the original-resolution tiles of one page state prove it without a full-page overview.
  *
  * The browser cannot always capture an overview: Chromium refuses a document taller than about
- * 17,500 px. A tile capture's `complete` covers its window only, and the overview carries the rest
- * of the page, so without one the tiles prove the state on the terms the candidate review's
+ * 17,500 px. A tile capture's `complete` covers its window only. The pre-candidate inventory reads
+ * the rest of the page from the overview; the candidate review shows it only as a map and answers
+ * for the window. Without an overview the tiles prove the state on the terms the candidate review's
  * `planFullPageOverview` applies: they cover the whole document, or the document is too tall for
  * any overview to be read, and the window is all a review could inspect anyway.
  */

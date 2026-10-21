@@ -83,12 +83,12 @@ export const MAX_OBSERVED_DAMAGE_ENTRY_CHARS = 1_000;
 /**
  * One visible rendering flaw an inventory request reported.
  *
- * The artifact routes the flaw to its comparison with the BEFORE state; an entry that cited an
- * image its request never carried keeps no artifact and stays the synthesis's to judge. BEFORE
- * entries carry the pre-existing prefix in their description.
+ * The artifact is an image the request carried and routes the flaw to its comparison with the
+ * BEFORE state; an entry citing anything else is dropped before it gets here. BEFORE entries carry
+ * the pre-existing prefix in their description.
  */
 export const CandidateVisualDamageEntrySchema = v.object({
-    artifactId: v.optional(ArtifactIdSchema),
+    artifactId: ArtifactIdSchema,
     description: v.pipe(v.string(), v.minLength(1), v.maxLength(MAX_OBSERVED_DAMAGE_ENTRY_CHARS)),
 });
 

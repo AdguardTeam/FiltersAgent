@@ -76,8 +76,8 @@ const MAX_SERIALIZED_OBSERVATION_FRAME_CHARS =
     SERIALIZED_RECORD_OVERHEAD_CHARS;
 
 /**
- * Overview requests one page state makes beside its tile batches: the viewport and the full-page
- * overview.
+ * Observations one page state holds beside its tile batches: the viewport inventory and the
+ * overview plan's reason.
  */
 const OVERVIEW_OBSERVATIONS_PER_STATE = 2;
 
@@ -151,14 +151,10 @@ export const CandidateVisualEvidenceSource = {
     ViewportOverview: 'viewport_overview',
 
     /**
-     * A single full-page overview image.
+     * The overview plan's reason: the document range the review answers for, when it is less than
+     * the whole document, or why the overview was not shown.
      */
-    FullPageOverview: 'full_page_overview',
-
-    /**
-     * A full-page overview omitted because complete original-resolution tiles cover the state.
-     */
-    FullPageOverviewOmitted: 'full_page_overview_omitted',
+    FullPageOverviewReason: 'full_page_overview_reason',
 } as const;
 
 /**

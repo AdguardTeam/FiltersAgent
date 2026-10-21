@@ -39,7 +39,7 @@ import type { FixOutcome } from '../../src/types/fix-outcome';
 import { deriveCandidateArtifactExecutionSuffix } from '../../src/types/candidate-artifact-identity';
 import type { CandidateVisualReview } from '../../src/types/candidate-visual-review';
 import type { PhaseResult, StructuralSnapshot } from '../../src/types/validation';
-import type { CandidateVisualEvidence } from '../../src/validator/candidate-evidence-resolver';
+import type { ResolvedCandidateVisualEvidence } from '../../src/validator/candidate-evidence-resolver';
 import type { CandidateVisualVerifierResult } from '../../src/validator/candidate-visual-verifier';
 import type { FullPageVisualCaptureResult } from '../../src/analyzer/full-page-capture-inspection';
 import type { AgentEnvironmentSelectionRequest } from '../../src/environment/environment-selection-contract';
@@ -1288,13 +1288,17 @@ async function extensionExperimentRuntime(scenario: ExtensionExperimentRuntimeOp
                         batchFailures: [],
                     };
                 },
-                resolveCandidateVisualEvidence: (_input, options): CandidateVisualEvidence => {
+                resolveCandidateVisualEvidence: (
+                    _input,
+                    options,
+                ): ResolvedCandidateVisualEvidence => {
                     validationArtifactIds.push(options.validationArtifactId);
                     const attempt = fixtureArtifacts.get(fixtureAttempt)!;
                     const before = attempt.get('B')!;
                     const after = attempt.get('C')!;
                     return {
-                        factualValidation: {} as CandidateVisualEvidence['factualValidation'],
+                        factualValidation:
+                            {} as ResolvedCandidateVisualEvidence['factualValidation'],
                         beforeViewport: before.viewport,
                         beforeFullPage: before.fullPage,
                         afterViewport: after.viewport,

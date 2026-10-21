@@ -44,7 +44,7 @@ import {
     type CandidateVisualReviewModelOutput,
 } from '../../src/types/candidate-visual-review';
 import type { NetworkRequestEntry } from '../../src/browser/browser-interfaces';
-import type { CandidateVisualEvidence as ResolvedCandidateVisualEvidence } from '../../src/validator/candidate-evidence-resolver';
+import type { ResolvedCandidateVisualEvidence } from '../../src/validator/candidate-evidence-resolver';
 import type {
     AdapterPhaseLease,
     BoundEnvironmentPhaseHandle,

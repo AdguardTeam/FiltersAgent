@@ -24,6 +24,7 @@ import {
 import { InfrastructureFailureReason } from '../types/infrastructure-failure-reason';
 import type { MissingInformationEntry } from '../types/missing-information';
 import type { ArtifactRef } from '../types/trace';
+import { ScreenshotArtifactType } from '../types/validation';
 
 /**
  * Artifact types the serialized result lists as this run's screenshots.
@@ -31,9 +32,7 @@ import type { ArtifactRef } from '../types/trace';
  * A result that silently drops one kind of capture reads as evidence the run never took.
  */
 const RESULT_SCREENSHOT_ARTIFACT_TYPES = [
-    'screenshot',
-    'screenshot-full-page',
-    'screenshot-tile',
+    ...Object.values(ScreenshotArtifactType),
     'issue-screenshot',
 ];
 

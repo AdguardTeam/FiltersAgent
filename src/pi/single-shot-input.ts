@@ -99,7 +99,8 @@ export const VISION_IMAGE_LIMITS = {
  * "remaining blank reserved ad-slot bands" quoted straight out of the symptom text while the
  * viewport screenshot and the original-resolution tiles of that same state show every band gone.
  * Such a fabricated inventory rejects a correct candidate, so an overview past this ratio is not
- * sent at all.
+ * sent at all: the review answers only for the tile window, and its map is a screenshot of that
+ * window cut at this ratio instead of the whole-page stripe.
  */
 export const MAX_LEGIBLE_OVERVIEW_ASPECT_RATIO = 8;
 
@@ -286,7 +287,7 @@ const RIFF_FORM_TYPE_OFFSET = 8;
  * @param bytes - Encoded image bytes.
  * @returns JPEG, GIF or WebP MIME for their signatures, PNG MIME otherwise.
  */
-function sniffImageMime(bytes: Uint8Array): VisionImageMime {
+export function sniffImageMime(bytes: Uint8Array): VisionImageMime {
     const head = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     if (head.length >= 3 && head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff) {
         return VisionImageMime.Jpeg;
@@ -354,6 +355,30 @@ async function toImageContent(image: SingleShotImage, sideLimitPx: number): Prom
         );
     }
     return { type: 'image', data: fitted.data, mimeType: fitted.mimeType };
+}
+
+/**
+ * Downscale an encoded image to fit a side limit and an encoded-size limit, aspect kept.
+ *
+ * Unlike a request image, the source may be past the per-image byte cap: the result is a derivative
+ * at a caller-chosen small size, never the original.
+ *
+ * @param bytes - Encoded image bytes.
+ * @param sideLimitPx - Longest side the result may have.
+ * @param maxEncodedBytes - Largest base64-encoded size the result may have.
+ * @returns The fitted image bytes, or null when the image cannot be decoded or fitted.
+ */
+export async function fitImage(
+    bytes: Uint8Array,
+    sideLimitPx: number,
+    maxEncodedBytes: number,
+): Promise<Buffer | null> {
+    const fitted = await resizeImage(bytes, sniffImageMime(bytes), {
+        maxWidth: sideLimitPx,
+        maxHeight: sideLimitPx,
+        maxBytes: maxEncodedBytes,
+    });
+    return fitted === null ? null : Buffer.from(fitted.data, 'base64');
 }
 
 /**

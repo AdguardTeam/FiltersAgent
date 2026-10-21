@@ -157,7 +157,7 @@ import {
     type AdsEnvironmentPhaseObservationInput,
 } from '../validator/phase-orchestrator';
 import { extractBrowserLaunchSignal } from './browser-launch-signal';
-import { PhaseLabel } from '../types/validation';
+import { PhaseLabel, ScreenshotArtifactType } from '../types/validation';
 import {
     decidingCandidateVerdict,
     readExperimentFields,
@@ -864,7 +864,8 @@ type BrowserLifecycleToolName =
     (typeof BrowserLifecycleToolName)[keyof typeof BrowserLifecycleToolName];
 
 /**
- * Exact recorder media role required by a candidate artifact binding.
+ * Exact recorder media role of a candidate artifact binding that is not a screenshot; screenshots
+ * are bound by their `ScreenshotArtifactType`.
  */
 const CandidateArtifactExpectedType = {
     /**
@@ -876,16 +877,6 @@ const CandidateArtifactExpectedType = {
      * A candidate visual review record.
      */
     CandidateVisualReview: 'candidate-visual-review',
-
-    /**
-     * A single viewport screenshot.
-     */
-    Screenshot: 'screenshot',
-
-    /**
-     * A full-page screenshot.
-     */
-    ScreenshotFullPage: 'screenshot-full-page',
 } as const;
 
 /**
@@ -1678,25 +1669,28 @@ export class AgentRuntime {
         }
         const validationArtifact = this.resolveCandidateArtifactEvidence(
             validationArtifactId,
-            'application/json',
+            CandidateArtifactExpectedType.ApplicationJson,
         );
         const visualReviewArtifact = this.resolveCandidateArtifactEvidence(
             reference.visualReviewArtifactId,
-            'candidate-visual-review',
+            CandidateArtifactExpectedType.CandidateVisualReview,
         );
         const beforeViewport = this.resolveCandidateArtifactEvidence(
             reference.visualReview.beforeViewportArtifactId,
-            'screenshot',
+            ScreenshotArtifactType.Viewport,
         );
         const afterViewport = this.resolveCandidateArtifactEvidence(
             reference.visualReview.afterViewportArtifactId,
-            'screenshot',
+            ScreenshotArtifactType.Viewport,
         );
         // Null where the browser captured no overview; undefined where one does not resolve.
         const overview = (artifactId: string | null) =>
             artifactId === null
                 ? null
-                : this.resolveCandidateArtifactEvidence(artifactId, 'screenshot-full-page');
+                : this.resolveCandidateArtifactEvidence(
+                      artifactId,
+                      ScreenshotArtifactType.FullPage,
+                  );
         const beforeFullPage = overview(reference.visualReview.beforeFullPageArtifactId);
         const afterFullPage = overview(reference.visualReview.afterFullPageArtifactId);
         if (
@@ -4458,13 +4452,17 @@ export class AgentRuntime {
                         ?.bytes,
             );
             const viewport = viewportArtifactId
-                ? this.resolveScreenshotEvidence(viewportArtifactId, ['screenshot'])
+                ? this.resolveScreenshotEvidence(viewportArtifactId, [
+                      ScreenshotArtifactType.Viewport,
+                  ])
                 : null;
             const fullPageOverview = fullPageArtifactId
-                ? this.resolveScreenshotEvidence(fullPageArtifactId, ['screenshot-full-page'])
+                ? this.resolveScreenshotEvidence(fullPageArtifactId, [
+                      ScreenshotArtifactType.FullPage,
+                  ])
                 : null;
             const tileEvidence = tileArtifactIds.map((artifactId) =>
-                this.resolveScreenshotEvidence(artifactId, ['screenshot-tile']),
+                this.resolveScreenshotEvidence(artifactId, [ScreenshotArtifactType.Tile]),
             );
             const allArtifactIds = [
                 ...(viewportArtifactId ? [viewportArtifactId] : []),
@@ -4545,12 +4543,12 @@ export class AgentRuntime {
      */
     private resolveScreenshotEvidence(
         artifactId: string,
-        allowedTypes: string[],
+        allowedTypes: ScreenshotArtifactType[],
     ): AgentRuntimeScreenshotEvidence {
         const artifacts = this.options.recorder.getArtifacts();
         for (let index = artifacts.length - 1; index >= 0; index -= 1) {
             const artifact = artifacts[index];
-            if (artifact.id === artifactId && allowedTypes.includes(artifact.type)) {
+            if (artifact.id === artifactId && allowedTypes.some((type) => type === artifact.type)) {
                 return { artifactId, path: artifact.path };
             }
         }
@@ -4569,7 +4567,7 @@ export class AgentRuntime {
      */
     private resolveCandidateArtifactEvidence(
         artifactId: string,
-        expectedType: CandidateArtifactExpectedType,
+        expectedType: CandidateArtifactExpectedType | ScreenshotArtifactType,
     ): AgentRuntimeCandidateArtifactEvidence | undefined {
         const artifacts = this.options.recorder
             .getArtifacts()

@@ -258,13 +258,22 @@ function renderNetworkVerification(network: CandidateNetworkVerification): strin
 const MAX_OVERVIEW_OMISSION_REASON_CHARS = 400;
 
 /**
+ * Overview modes under which the review inspected only the tile window: the tiles cover a window of
+ * a page whose overview was shown only as a map, or the page is too tall for any overview to read.
+ */
+const TILE_WINDOW_ONLY_MODES: readonly FullPageOverviewMode[] = [
+    FullPageOverviewMode.WindowedTiles,
+    FullPageOverviewMode.OmittedIllegible,
+    FullPageOverviewMode.UnavailableIllegible,
+];
+
+/**
  * Say what the vision review actually looked at across the page.
  *
- * A review whose full-page overview was withheld as unreadable, or never captured on a page too
- * tall to read in one image, saw only the tile window, however complete that window's own coverage
- * proof is. Reporting `complete` there would tell a maintainer the whole page was inspected, so the
- * line says what was inspected instead and carries the plan's reason — which names the inspected
- * document range — beside it.
+ * The review reads detail only from the tiles, so when they cover a window of the document it saw
+ * only that window, however complete the window's own coverage proof is. Reporting `complete` there
+ * would tell a maintainer the whole page was inspected, so the line says what was inspected instead
+ * and carries the plan's reason — which names the inspected document range — beside it.
  *
  * @param review - Runner-bound visual review being rendered.
  * @returns The coverage value rendered after the label.
@@ -273,15 +282,13 @@ function renderFullPageCoverage(
     review: NonNullable<FixRunResult['candidateVisualReview']>,
 ): string {
     const evidence = review.fullPageOverviewEvidence;
-    const illegible = [evidence?.before, evidence?.after].filter(
-        (side) =>
-            side?.mode === FullPageOverviewMode.OmittedIllegible ||
-            side?.mode === FullPageOverviewMode.UnavailableIllegible,
+    const windowed = [evidence?.before, evidence?.after].filter(
+        (side) => side !== undefined && TILE_WINDOW_ONLY_MODES.includes(side.mode),
     );
-    if (illegible.length === 0) {
+    if (windowed.length === 0) {
         return `\`${review.coverageComplete ? 'complete' : 'incomplete'}\``;
     }
-    const reasons = [...new Set(illegible.map((side) => side?.reason ?? ''))]
+    const reasons = [...new Set(windowed.map((side) => side?.reason ?? ''))]
         .join(' ')
         .slice(0, MAX_OVERVIEW_OMISSION_REASON_CHARS);
     return `\`tile window only\` — ${reasons}`;

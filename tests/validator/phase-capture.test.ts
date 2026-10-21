@@ -2,13 +2,17 @@ import { describe, expect, it, vi } from 'vitest';
 import { runPhase } from '../../src/validator/phase-capture';
 import { BrowserFallbackReason } from '../../src/types/browser-fallback-reason';
 import { TraceEventType } from '../../src/types/trace';
-import { PhaseLabel } from '../../src/types/validation';
+import { PhaseLabel, type FullPageTileCoverage } from '../../src/types/validation';
+import type { Logger } from '../../src/logger/logger';
 import { mockPage } from './phase-fixtures';
 import type { BrowserToolHandlers } from '../../src/browser/browser-tools';
 import type { PageStateInspection } from '../../src/types/page-state-inspection';
 import type { TraceRecorder } from '../../src/tracer/trace-recorder';
 import type { Page } from 'playwright-core';
 import { runInNewContext } from 'node:vm';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { TrustedPageEvaluator } from '../../src/browser/trusted-page-evaluator';
 
 /**
@@ -120,6 +124,31 @@ function mockHandlers(
         get_console_log: vi.fn().mockResolvedValue({ messages: [] }),
         inspect_page_state: vi.fn().mockResolvedValue(EMPTY_PAGE_STATE),
         evaluate_js,
+    };
+}
+
+/**
+ * Tile coverage of a mobile page too tall for its overview to be read as one image.
+ */
+function tallCoverage(): FullPageTileCoverage {
+    return {
+        complete: true,
+        documentWidth: 375,
+        documentHeight: 10_334,
+        viewportWidth: 375,
+        viewportHeight: 812,
+        overlapPx: 0,
+        tiles: [
+            {
+                artifactId: 'tile-1',
+                index: 0,
+                x: 0,
+                y: 0,
+                width: 375,
+                height: 812,
+                landmark: 'Top of the page',
+            },
+        ],
     };
 }
 
@@ -292,6 +321,71 @@ describe('runPhase', () => {
         expect(result.domArtifactId).toBeDefined();
         expect(result.url).toBe('https://example.com');
         expect(result.error).toBeUndefined();
+    });
+
+    it.each([
+        { captureTileWindowMap: true, mapped: true },
+        { captureTileWindowMap: false, mapped: false },
+    ])(
+        'adds the tile window map of a page too tall to read only when asked: $captureTileWindowMap',
+        async ({ captureTileWindowMap, mapped }) => {
+            // Only the reviewed phases need the map; any other capture would take a clip and
+            // register an artifact nothing reads.
+            const handlers = mockHandlers({
+                screenshotResult: {
+                    artifactId: 'screenshot-uuid',
+                    tileCoverage: tallCoverage(),
+                },
+            });
+            const page = mockPage();
+            const screenshot = vi.fn().mockResolvedValue(Buffer.from('jpeg'));
+            Object.assign(page, { screenshot });
+            const artifactsDir = mkdtempSync(join(tmpdir(), 'phase-capture-map-'));
+            try {
+                const result = await runPhase({
+                    handlers,
+                    page,
+                    artifactsDir,
+                    phase: PhaseLabel.B,
+                    url: 'https://example.com',
+                    trustedPageEvaluator: trustedEvaluatorFromHandlers(handlers),
+                    captureVisualTiles: true,
+                    captureTileWindowMap,
+                    recorder: mockRecorder(),
+                });
+
+                expect(result.tileCoverage?.map !== undefined).toBe(mapped);
+                expect(screenshot).toHaveBeenCalledTimes(mapped ? 1 : 0);
+            } finally {
+                rmSync(artifactsDir, { recursive: true, force: true });
+            }
+        },
+    );
+
+    it('logs a refused tile window map capture', async () => {
+        const handlers = mockHandlers({
+            screenshotResult: { artifactId: 'screenshot-uuid', tileCoverage: tallCoverage() },
+        });
+        const page = mockPage();
+        Object.assign(page, {
+            screenshot: vi.fn().mockRejectedValue(new Error('Cannot take screenshot')),
+        });
+        const logger = { warn: vi.fn() };
+
+        await runPhase({
+            handlers,
+            page,
+            artifactsDir: '/tmp/test-artifacts',
+            phase: PhaseLabel.C,
+            url: 'https://example.com',
+            trustedPageEvaluator: trustedEvaluatorFromHandlers(handlers),
+            captureVisualTiles: true,
+            captureTileWindowMap: true,
+            recorder: mockRecorder(),
+            logger: logger as unknown as Logger,
+        });
+
+        expect(logger.warn).toHaveBeenCalledTimes(1);
     });
 
     it('traces why the phase captured no viewport screenshot', async () => {

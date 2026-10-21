@@ -2,9 +2,10 @@ import * as v from 'valibot';
 
 /**
  * How one page state's full-page overview took part in a candidate visual review, and the
- * runner-owned record of it. The overview is context: the browser cannot capture one of a very tall
- * document, and one no vision request can carry or read is withheld; the original-resolution tiles
- * carry the coverage proof either way. `planFullPageOverview` decides the mode.
+ * runner-owned record of it. The overview is context: the review shows it to vision only as the
+ * downscaled map in front of the tiles, which no observation can cite; the browser cannot capture
+ * one of a very tall document, and one no request can read is withheld. The original-resolution
+ * tiles carry the coverage proof either way. `planFullPageOverview` decides the mode.
  */
 
 /**
@@ -27,26 +28,22 @@ export const ArtifactIdSchema = v.pipe(
  */
 export const FullPageOverviewMode = {
     /**
-     * Sent to vision as captured.
+     * Shown as the map, and the original-resolution tiles cover the whole document.
      */
     Original: 'original',
 
     /**
-     * Too large for a vision request; complete document tiles stand in for it.
+     * Shown as the map, while the original-resolution tiles cover only a window of the document:
+     * the review answers for that window, and the reason names it.
      */
-    OmittedCompleteTiles: 'omitted_complete_tiles',
+    WindowedTiles: 'windowed_tiles',
 
     /**
-     * Withheld because the document is far taller than it is wide. Unlike the oversized modes it
-     * needs no tile-coverage proof and never blocks the review: an image the model cannot read
-     * protects nothing. See `planFullPageOverview`.
+     * Withheld because the document is far taller than it is wide; the map is the tile window
+     * instead. It needs no tile-coverage proof and never blocks the review: an image the model
+     * cannot read protects nothing. See `planFullPageOverview`.
      */
     OmittedIllegible: 'omitted_illegible',
-
-    /**
-     * Too large for a vision request, and no complete document tiles stand in for it.
-     */
-    BlockedOversizedIncompleteTiles: 'blocked_oversized_incomplete_tiles',
 
     /**
      * The browser captured no overview, and one would have been withheld as illegible anyway: the
@@ -72,6 +69,14 @@ export const FullPageOverviewMode = {
 export type FullPageOverviewMode = (typeof FullPageOverviewMode)[keyof typeof FullPageOverviewMode];
 
 /**
+ * Overview modes whose map, when one was shown, is the overview itself.
+ */
+const WHOLE_PAGE_MAP_MODES: readonly FullPageOverviewMode[] = [
+    FullPageOverviewMode.Original,
+    FullPageOverviewMode.WindowedTiles,
+];
+
+/**
  * Overview modes recorded for a page state the browser captured no overview of.
  */
 const UNAVAILABLE_OVERVIEW_MODES: readonly FullPageOverviewMode[] = [
@@ -81,7 +86,7 @@ const UNAVAILABLE_OVERVIEW_MODES: readonly FullPageOverviewMode[] = [
 ];
 
 /**
- * Runner-owned provenance for the full-page image used or safely omitted for vision.
+ * Runner-owned provenance for the full-page overview of one page state and the map it was shown as.
  */
 export const CandidateVisualFullPageOverviewEvidenceSchema = v.pipe(
     v.strictObject({
@@ -89,6 +94,8 @@ export const CandidateVisualFullPageOverviewEvidenceSchema = v.pipe(
         // Null exactly when the browser captured no overview of this state.
         originalArtifactId: v.nullable(ArtifactIdSchema),
         originalBytes: v.nullable(v.pipe(v.number(), v.integer(), v.minValue(0))),
+        // The artifact the map was downscaled from and the map's encoded size; null when the
+        // state was shown no map.
         visionArtifactId: v.nullable(ArtifactIdSchema),
         visionBytes: v.nullable(v.pipe(v.number(), v.integer(), v.minValue(0))),
         reason: v.nullable(v.pipe(v.string(), v.minLength(1), v.maxLength(1_000))),
@@ -98,23 +105,22 @@ export const CandidateVisualFullPageOverviewEvidenceSchema = v.pipe(
         if (UNAVAILABLE_OVERVIEW_MODES.includes(evidence.mode) === captured) {
             return false;
         }
-        if (evidence.mode === FullPageOverviewMode.Original) {
-            return (
-                evidence.visionArtifactId === evidence.originalArtifactId &&
-                evidence.visionBytes === evidence.originalBytes &&
-                evidence.reason === null
-            );
+        if ((evidence.visionArtifactId === null) !== (evidence.visionBytes === null)) {
+            return false;
         }
-        return (
-            evidence.visionArtifactId === null &&
-            evidence.visionBytes === null &&
-            evidence.reason !== null
-        );
-    }, 'Full-page overview provenance must bind original and vision artifacts consistently.'),
+        if (
+            WHOLE_PAGE_MAP_MODES.includes(evidence.mode) &&
+            evidence.visionArtifactId !== null &&
+            evidence.visionArtifactId !== evidence.originalArtifactId
+        ) {
+            return false;
+        }
+        return (evidence.mode === FullPageOverviewMode.Original) === (evidence.reason === null);
+    }, 'Full-page overview provenance must bind original and map artifacts consistently.'),
 );
 
 /**
- * Runner-owned provenance for one full-page overview supplied to or omitted from vision.
+ * Runner-owned provenance for one full-page overview and the map it was shown as.
  */
 export type CandidateVisualFullPageOverviewEvidence = v.InferOutput<
     typeof CandidateVisualFullPageOverviewEvidenceSchema

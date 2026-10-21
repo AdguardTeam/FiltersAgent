@@ -1,9 +1,11 @@
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import * as v from 'valibot';
 import { afterEach, describe, expect, it } from 'vitest';
 import { TraceRecorder } from '../../src/tracer/trace-recorder';
 import type { ArtifactRef } from '../../src/types/trace';
+import { FactualValidationResultSchema, ScreenshotArtifactType } from '../../src/types/validation';
 import { resolveCandidateVisualEvidence } from '../../src/validator/candidate-evidence-resolver';
 
 const temporaryDirectories: string[] = [];
@@ -275,6 +277,52 @@ describe('resolveCandidateVisualEvidence', () => {
         expect(result.afterCoverageComplete).toBe(true);
         expect(result.beforeDocumentCoverageComplete).toBe(false);
         expect(result.afterDocumentCoverageComplete).toBe(false);
+    });
+
+    it('binds the tile window map of a page too tall for its overview', () => {
+        const artifactsDir = temporaryDirectory('candidate-evidence-window-map-');
+        const recorder = createRecorder();
+        addScreenshotEvidence(recorder, artifactsDir);
+        const validation = v.parse(FactualValidationResultSchema, factualValidation());
+        for (const [state, phaseResult] of [
+            ['b', validation.phaseB],
+            ['c', validation.phaseC],
+        ] as const) {
+            const map = addFileArtifact(
+                recorder,
+                artifactsDir,
+                `${state}-window-map`,
+                ScreenshotArtifactType.TileWindowMap,
+                `${state}-window-map.jpg`,
+            );
+            phaseResult.tileCoverage = {
+                ...tileCoverage(`${state}-tile`),
+                documentWidth: 375,
+                documentHeight: 10_334,
+                map: { artifactId: map.id, y: 0, height: 3_000 },
+            };
+        }
+        addValidationArtifact(recorder, artifactsDir, '123456abcdef', validation);
+
+        const result = resolveCandidateVisualEvidence({
+            artifactsDir,
+            recorder,
+            validationArtifactId: 'validation-123456abcdef',
+        });
+
+        expect(result.beforeTileWindowMap).toMatchObject({
+            id: 'b-window-map',
+            y: 0,
+            height: 3_000,
+        });
+        expect(result.afterTileWindowMap).toMatchObject({
+            id: 'c-window-map',
+            y: 0,
+            height: 3_000,
+        });
+        expect(result.afterTileWindowMap?.path).toBe(
+            realpathSync(join(artifactsDir, 'c-window-map.jpg')),
+        );
     });
 
     it('rejects windowed coverage that leaves a gap inside its recorded window', () => {

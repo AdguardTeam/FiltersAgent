@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import type { Page } from 'playwright-core';
 import type { TraceRecorder } from '../tracer/trace-recorder';
 import {
+    ScreenshotArtifactType,
     type FullPageTileCoverage,
     type FullPageTileWindow,
     type CaptureState,
@@ -445,7 +446,7 @@ async function captureFullPageTileAttempt(
                 artifactsDir,
                 'png',
                 buffer,
-                'screenshot-tile',
+                ScreenshotArtifactType.Tile,
                 recorder,
             );
             tiles.push({

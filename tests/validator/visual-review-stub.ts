@@ -10,13 +10,13 @@ import { TraceRecorder } from '../../src/tracer/trace-recorder';
 import { reviewCandidateVisually } from '../../src/validator/candidate-visual-verifier';
 import type { CandidateVisualReview } from '../../src/types/candidate-visual-review';
 import type { TraceEvent } from '../../src/types/trace';
-import type { CaptureState } from '../../src/types/validation';
+import { CaptureState } from '../../src/types/validation';
 import type {
     CandidateVisualEvidenceImage,
     CandidateVisualVerifierOptions,
 } from '../../src/validator/candidate-visual-evidence';
 import { SingleShotResultKind, type SingleShotClient } from '../../src/pi/single-shot-types';
-import type { SingleShotMessage } from '../../src/pi/single-shot-input';
+import type { SingleShotImage, SingleShotMessage } from '../../src/pi/single-shot-input';
 import type { DomCheckRecord } from '../../src/types/dom-check';
 import { encodePng } from '../pi/fixtures/png-image';
 import type { CandidateVisualInstanceFootprint } from '../../src/types/candidate-visual-instance';
@@ -59,6 +59,11 @@ export interface StubInstance {
      * Whether it is only blank space.
      */
     footprint: CandidateVisualInstanceFootprint;
+
+    /**
+     * Image whose request reports the observation, when it is not the one the observation cites.
+     */
+    reportedOn?: string;
 }
 
 /**
@@ -234,6 +239,40 @@ interface ReviewOutcome {
      * The trace events the review recorded.
      */
     events: TraceEvent[];
+
+    /**
+     * Messages of every structured call the review made, in call order.
+     */
+    requests: SingleShotMessage[][];
+}
+
+/**
+ * One image a request carried, with the text of the message that carried it.
+ */
+export interface SentImage {
+    /**
+     * Text of the message the image was sent in.
+     */
+    text: string;
+
+    /**
+     * The image as sent: a file path, or bytes from memory.
+     */
+    image: SingleShotImage;
+}
+
+/**
+ * Every image one request carried, in order.
+ *
+ * @param messages - The request.
+ * @returns Each image with the text of its message.
+ */
+export function sentImages(messages: readonly SingleShotMessage[]): SentImage[] {
+    return messages.flatMap((message) =>
+        'images' in message
+            ? message.images.map((image) => ({ text: message.text ?? '', image }))
+            : [],
+    );
 }
 
 /**
@@ -262,10 +301,12 @@ function parsed(value: unknown): unknown {
  * every AFTER flaw it is shown regresses the page.
  *
  * @param script - What the stub reports and answers.
+ * @param requests - Collects the messages of every structured call.
  * @returns The client.
  */
-function stubVision(script: StubScript): SingleShotClient {
+function stubVision(script: StubScript, requests: SingleShotMessage[][]): SingleShotClient {
     const structured = async (options: StubRequest): Promise<unknown> => {
+        requests.push(options.messages);
         const text = requestText(options.messages);
         const hasImages = options.messages.some((message) => 'images' in message);
         if (text.includes('ITEM artifact=')) {
@@ -295,7 +336,9 @@ function stubVision(script: StubScript): SingleShotClient {
             return parsed({
                 coverageObserved: true,
                 symptomScope: 'Empty advertising slots between sections.',
-                instances: script.instances.filter((item) => labelled.has(item.artifactId)),
+                instances: script.instances
+                    .filter((item) => labelled.has(item.reportedOn ?? item.artifactId))
+                    .map(({ reportedOn: _reportedOn, ...instance }) => instance),
                 observedDamage: script.damage
                     .filter((item) => labelled.has(item.reportedOn ?? item.artifactId))
                     .map(({ artifactId, description }) => ({ artifactId, description })),
@@ -380,6 +423,21 @@ interface ReviewFixture {
      * Document height of each state, when the capture measured one.
      */
     documentHeights?: StatePair<number>;
+
+    /**
+     * Whether the browser captured a full-page overview of each state.
+     */
+    overviews?: boolean;
+
+    /**
+     * Whether each state carries a tile window map, as a page too tall for its overview does.
+     */
+    tileWindowMaps?: boolean;
+
+    /**
+     * Height the tile window maps were cut to, when shorter than the two stacked tiles.
+     */
+    tileWindowMapHeight?: number;
 }
 
 /**
@@ -420,14 +478,19 @@ function makeOptions(
             landmark: `${state} tile ${index + 1}`,
         }));
     const heights = fixture.documentHeights;
+    const tileWindowMap = (state: CaptureState) => ({
+        ...image(`${state}-tile-window-map`),
+        y: 0,
+        height: fixture.tileWindowMapHeight ?? TILE_HEIGHT * 2,
+    });
     return {
         candidateRule: CANDIDATE_RULE,
         validationArtifactId: 'validation-0123456789ab',
         evidence: {
             beforeViewport: image('before-viewport'),
             afterViewport: image('after-viewport'),
-            beforeTiles: tiles('before'),
-            afterTiles: tiles('after'),
+            beforeTiles: tiles(CaptureState.Before),
+            afterTiles: tiles(CaptureState.After),
             beforeCoverageComplete: true,
             afterCoverageComplete: true,
             ...(heights === undefined
@@ -436,6 +499,18 @@ function makeOptions(
                       beforeDocument: { width: 1_920, height: heights.before },
                       afterDocument: { width: 1_920, height: heights.after },
                   }),
+            ...(fixture.overviews === true
+                ? {
+                      beforeFullPage: image('before-full-page'),
+                      afterFullPage: image('after-full-page'),
+                  }
+                : {}),
+            ...(fixture.tileWindowMaps === true
+                ? {
+                      beforeTileWindowMap: tileWindowMap(CaptureState.Before),
+                      afterTileWindowMap: tileWindowMap(CaptureState.After),
+                  }
+                : {}),
         },
         reporterSymptom: 'Empty advertising slots between the sections of the home page.',
         artifactsDir: root,
@@ -458,10 +533,11 @@ export async function reviewWith(
 ): Promise<ReviewOutcome> {
     const root = mkdtempSync(join(tmpdir(), 'candidate-visual-settlement-'));
     try {
-        const vision = stubVision(script);
+        const requests: SingleShotMessage[][] = [];
+        const vision = stubVision(script, requests);
         const options = makeOptions(root, vision, fixture);
         const { review } = await reviewCandidateVisually(options);
-        return { review, events: options.recorder.toJSON().events };
+        return { review, events: options.recorder.toJSON().events, requests };
     } finally {
         rmSync(root, { recursive: true, force: true });
     }

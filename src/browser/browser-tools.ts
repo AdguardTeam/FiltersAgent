@@ -19,6 +19,7 @@ import {
     type HostnameResolver,
 } from './network-safety';
 import { isAgentRefusalFallback } from '../types/browser-fallback-origin';
+import { ScreenshotArtifactType } from '../types/validation';
 import {
     classifyNavigationFailure,
     extractBrowserNetworkErrorCode,
@@ -594,7 +595,7 @@ export function createBrowserToolHandlers(config: BrowserToolConfig): BrowserToo
                 artifactsDir,
                 'png',
                 viewportCapture.buffer,
-                'screenshot',
+                ScreenshotArtifactType.Viewport,
                 recorder,
             );
             const overview = await captureFullPageOverview(page, artifactsDir, recorder, logger);

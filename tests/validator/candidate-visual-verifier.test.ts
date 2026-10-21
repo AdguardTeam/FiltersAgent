@@ -1,5 +1,5 @@
 import { PROVIDER_CALL_CONCURRENCY } from '../../src/pi/call-limiter';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -26,7 +26,12 @@ import {
     SymptomKind,
 } from '../../src/validator/symptom-rubric';
 import { SingleShotResultKind, type SingleShotClient } from '../../src/pi/single-shot-types';
-import type { SingleShotMessage } from '../../src/pi/single-shot-input';
+import { MAX_VISION_IMAGE_BYTES, type SingleShotMessage } from '../../src/pi/single-shot-input';
+import {
+    MAP_LONG_EDGE_PX,
+    MAX_MAP_ENCODED_BYTES,
+} from '../../src/validator/candidate-visual-planning';
+import { sentImages } from './visual-review-stub';
 import { CandidateInstanceDisposition } from '../../src/types/candidate-visual-review';
 import { FullPageOverviewMode } from '../../src/types/full-page-overview-evidence';
 import { CaptureState } from '../../src/types/validation';
@@ -45,9 +50,15 @@ import {
     startHermeticProvider,
 } from '../pi/hermetic-provider';
 import { VISION_MODEL, createTestVisionClient } from '../pi/test-runtime';
-import { encodePng } from '../pi/fixtures/png-image';
+import { encodePng, imageSize } from '../pi/fixtures/png-image';
 
 const CANDIDATE_RULE = 'example.test##.advert';
+
+/**
+ * Size of a noise overview past the per-image byte cap, under the legible aspect, and longer than
+ * the map edge, so the map is downscaled in one pass.
+ */
+const OVERSIZED_OVERVIEW = { width: 4_000, height: 560 };
 const CANDIDATE_HASH = createHash('sha256').update(CANDIDATE_RULE).digest('hex');
 
 /**
@@ -273,7 +284,7 @@ function makeProvider(output: Record<string, unknown> | Error): {
             : [];
         const value = isBeforeTileBatch
             ? {
-                  coverageObserved: !prompt.includes(String(output.unreadableArtifactId)),
+                  coverageObserved: true,
                   symptomScope: String(output.symptomScope),
                   instances: beforeInstances,
                   observedDamage: [],
@@ -281,7 +292,7 @@ function makeProvider(output: Record<string, unknown> | Error): {
               }
             : isAfterTileBatch
               ? {
-                    coverageObserved: !prompt.includes(String(output.unreadableArtifactId)),
+                    coverageObserved: true,
                     symptomScope: String(output.symptomScope),
                     instances: remainingInstances,
                     observedDamage: Array.isArray(output.observedDamage)
@@ -727,9 +738,10 @@ describe('reviewCandidateVisually', () => {
                 beforeFullPageArtifactId: 'before-full-page',
                 afterFullPageArtifactId: 'after-full-page',
             });
-            expect(chat).toHaveBeenCalledTimes(7);
+            // Each tile batch carries the map in front of its tile; the overview is never asked.
+            expect(chat).toHaveBeenCalledTimes(5);
             const imageCounts = chat.mock.calls.map(([call]) => imagePartCount(call));
-            expect(imageCounts).toEqual([1, 1, 1, 1, 1, 1, 0]);
+            expect(imageCounts).toEqual([2, 2, 1, 1, 0]);
             expect(JSON.stringify(chat.mock.calls[0][0].messages)).toContain(
                 'A normal tile with no matching defect still counts as observed coverage',
             );
@@ -742,7 +754,6 @@ describe('reviewCandidateVisually', () => {
             const finalMessages = chat.mock.calls.at(-1)![0].messages;
             expect(JSON.stringify(finalMessages)).toContain('before-full-page');
             expect(JSON.stringify(finalMessages)).toContain('after-full-page');
-            expect(JSON.stringify(finalMessages)).toContain('full_page_overview');
             expect(JSON.stringify(finalMessages)).toMatch(
                 /set symptom=unclear, pageIntegrity=unclear, and coverageComplete=false/is,
             );
@@ -922,7 +933,7 @@ describe('reviewCandidateVisually', () => {
             expect(result.review.remainingInstances).toEqual([
                 expect.objectContaining({ artifactId: 'after-tile-1' }),
             ]);
-            expect(chat).toHaveBeenCalledTimes(8);
+            expect(chat).toHaveBeenCalledTimes(6);
             const auditPrompt = JSON.stringify(chat.mock.calls.at(-1)![0].messages);
             expect(auditPrompt).toMatch(/semantic self-critique.*AFTER.*not_same_symptom/is);
             expect(auditPrompt).toMatch(/strong image-grounded.*visually distinct/is);
@@ -943,9 +954,9 @@ describe('reviewCandidateVisually', () => {
             const result = await reviewCandidateVisually(makeOptions(root, vision, recorder));
 
             expect(result.review.verdict).toBe('verified');
-            expect(chat).toHaveBeenCalledTimes(8);
+            expect(chat).toHaveBeenCalledTimes(6);
             const imageCounts = chat.mock.calls.map(([call]) => imagePartCount(call));
-            expect(imageCounts).toEqual([1, 1, 1, 1, 1, 1, 0, 0]);
+            expect(imageCounts).toEqual([2, 2, 1, 1, 0, 0]);
             const retryPrompt = JSON.stringify(chat.mock.calls.at(-1)![0].messages);
             expect(retryPrompt).toContain('response did not contain a JSON object');
             expect(retryPrompt).toContain('BEFORE observationIndex range is exactly 1..1');
@@ -976,9 +987,9 @@ describe('reviewCandidateVisually', () => {
             const result = await reviewCandidateVisually(makeOptions(root, vision, recorder));
 
             expect(result.review.verdict).toBe('verified');
-            expect(chat).toHaveBeenCalledTimes(8);
+            expect(chat).toHaveBeenCalledTimes(6);
             const imageCounts = chat.mock.calls.map(([call]) => imagePartCount(call));
-            expect(imageCounts).toEqual([1, 1, 1, 1, 1, 1, 0, 0]);
+            expect(imageCounts).toEqual([2, 2, 1, 1, 0, 0]);
             const retryPrompt = JSON.stringify(chat.mock.calls.at(-1)![0].messages);
             expect(retryPrompt).toContain('unknown=7');
             expect(retryPrompt).toContain('BEFORE observationIndex range is exactly 1..1');
@@ -1000,7 +1011,7 @@ describe('reviewCandidateVisually', () => {
 
             expect(result.review.verdict).toBe('inconclusive');
             expect(result.review.rationale).toContain('failed after 3 attempts');
-            expect(chat).toHaveBeenCalledTimes(9);
+            expect(chat).toHaveBeenCalledTimes(7);
             const finalCalls = chat.mock.calls.filter(([options]) => imagePartCount(options) === 0);
             expect(finalCalls).toHaveLength(3);
             const retryEvents = recorder.toJSON().events.filter((event) => event.type === 'retry');
@@ -1038,7 +1049,7 @@ describe('reviewCandidateVisually', () => {
 
             expect(result.review.verdict).toBe('inconclusive');
             expect(result.review.symptom).toBe('unclear');
-            expect(chat).toHaveBeenCalledTimes(7);
+            expect(chat).toHaveBeenCalledTimes(5);
             expect(recorder.toJSON().events.filter((event) => event.type === 'retry')).toEqual([]);
         } finally {
             rmSync(root, { recursive: true, force: true });
@@ -1137,14 +1148,15 @@ describe('reviewCandidateVisually', () => {
             const result = await reviewCandidateVisually(options);
 
             expect(result.review.verdict).toBe('verified');
+            // Every tile batch carries the map beside at most three tiles.
             const imageCounts = chat.mock.calls.map(([call]) => imagePartCount(call));
-            expect(imageCounts).toEqual([3, 3, 1, 3, 2, 1, 1, 1, 1, 0]);
+            expect(imageCounts).toEqual([4, 4, 2, 4, 3, 1, 1, 0]);
         } finally {
             rmSync(root, { recursive: true, force: true });
         }
     });
 
-    it('never combines multi-megabyte full-page overviews in one provider request', async () => {
+    it('sends a multi-megabyte full-page overview only as a downscaled map', async () => {
         const root = mkdtempSync(join(tmpdir(), 'candidate-visual-review-large-overviews-'));
         const recorder = new TraceRecorder({ runId: 'visual-review', issueNumber: 3, mode: 'fix' });
         const { vision, chat } = makeProvider({
@@ -1165,19 +1177,34 @@ describe('reviewCandidateVisually', () => {
         });
         try {
             const options = makeOptions(root, vision, recorder);
-            writeFileSync(options.evidence.beforeFullPage.path, Buffer.alloc(5 * 1024 * 1024));
-            writeFileSync(options.evidence.afterFullPage.path, Buffer.alloc(5 * 1024 * 1024));
+            // Random noise does not compress, so the overview passes the per-image cap. Longer than
+            // the map edge, it is downscaled in one pass.
+            const width = OVERSIZED_OVERVIEW.width;
+            const noise = randomBytes(width * OVERSIZED_OVERVIEW.height * 3);
+            const overview = encodePng(width, OVERSIZED_OVERVIEW.height, (x, y) => {
+                const offset = (y * width + x) * 3;
+                return [noise[offset]!, noise[offset + 1]!, noise[offset + 2]!];
+            });
+            expect(overview.byteLength).toBeGreaterThan(MAX_VISION_IMAGE_BYTES);
+            writeFileSync(options.evidence.beforeFullPage.path, overview);
+            writeFileSync(options.evidence.afterFullPage.path, overview);
 
             const result = await reviewCandidateVisually(options);
 
             expect(result.review.verdict).toBe('verified');
-            const callsWithFullPage = chat.mock.calls.filter(([call]) => {
-                const prompt = JSON.stringify(call.messages);
-                return prompt.includes('FULL PAGE') && imagePartCount(call) > 0;
-            });
-            expect(callsWithFullPage).toHaveLength(2);
-            for (const [call] of callsWithFullPage) {
-                expect(imagePartCount(call)).toBe(1);
+            const sent = chat.mock.calls.flatMap(([call]) => sentImages(call.messages));
+            const sentPaths = sent.flatMap(({ image }) => ('path' in image ? [image.path] : []));
+            expect(sentPaths).not.toContain(options.evidence.beforeFullPage.path);
+            expect(sentPaths).not.toContain(options.evidence.afterFullPage.path);
+            const maps = sent.flatMap(({ image }) =>
+                'bytes' in image ? [Buffer.from(image.bytes)] : [],
+            );
+            // One map in front of each state's single tile batch.
+            expect(maps).toHaveLength(2);
+            for (const map of maps) {
+                expect(map.toString('base64').length).toBeLessThanOrEqual(MAX_MAP_ENCODED_BYTES);
+                const size = imageSize(map);
+                expect(Math.max(size.width, size.height)).toBeLessThanOrEqual(MAP_LONG_EDGE_PX);
             }
         } finally {
             rmSync(root, { recursive: true, force: true });
@@ -1232,13 +1259,14 @@ describe('reviewCandidateVisually', () => {
                 );
             });
             expect(beforeTileCalls).toHaveLength(2);
-            expect(beforeTileCalls.map(([call]) => imagePartCount(call))).toEqual([1, 1]);
+            // One tile each, beside the map every batch carries.
+            expect(beforeTileCalls.map(([call]) => imagePartCount(call))).toEqual([2, 2]);
         } finally {
             rmSync(root, { recursive: true, force: true });
         }
     });
 
-    it('omits oversized full-page overviews when complete original-resolution tiles exist', async () => {
+    it('reviews beside an oversized full-page overview without altering or sending it', async () => {
         const root = mkdtempSync(join(tmpdir(), 'candidate-visual-review-oversized-overview-'));
         const recorder = new TraceRecorder({ runId: 'visual-review', issueNumber: 3, mode: 'fix' });
         const { vision, chat } = makeProvider({
@@ -1274,22 +1302,23 @@ describe('reviewCandidateVisually', () => {
             expect(result.review.verdict).toBe('verified');
             expect(result.review.beforeFullPageArtifactId).toBe('before-full-page');
             expect(result.review.afterFullPageArtifactId).toBe('after-full-page');
+            // Bytes that decode to no image give no map, and the tiles still decide the review.
             expect(result.review.fullPageOverviewEvidence).toEqual({
                 before: {
-                    mode: 'omitted_complete_tiles',
+                    mode: 'original',
                     originalArtifactId: 'before-full-page',
                     originalBytes,
                     visionArtifactId: null,
                     visionBytes: null,
-                    reason: expect.stringContaining('complete original-resolution tiles'),
+                    reason: null,
                 },
                 after: {
-                    mode: 'omitted_complete_tiles',
+                    mode: 'original',
                     originalArtifactId: 'after-full-page',
                     originalBytes,
                     visionArtifactId: null,
                     visionBytes: null,
-                    reason: expect.stringContaining('complete original-resolution tiles'),
+                    reason: null,
                 },
             });
             expect(
@@ -1414,34 +1443,47 @@ describe('reviewCandidateVisually', () => {
         }
     });
 
-    it('fails closed for an oversized full-page overview without complete tiles', async () => {
-        const root = mkdtempSync(join(tmpdir(), 'candidate-visual-review-uncovered-overview-'));
+    it('says a review of a tile window answers only for that window', async () => {
+        // A selector-bounded capture tiles the neighborhood of the symptom on a page the overview
+        // can show whole. Only the tiles are read for detail, so the review saw the window alone,
+        // and its provenance has to say which range that was, or the report claims the whole page.
+        const root = mkdtempSync(join(tmpdir(), 'candidate-visual-review-windowed-tiles-'));
         const recorder = new TraceRecorder({ runId: 'visual-review', issueNumber: 3, mode: 'fix' });
         const { vision, chat } = makeProvider({
             symptom: 'resolved',
             symptomScope: 'The repeated advertising gap.',
             coverageComplete: true,
-            beforeInstances: [],
+            beforeInstances: [
+                {
+                    artifactId: 'before-tile-1',
+                    landmark: 'Above the article list.',
+                    description: 'A large empty advertising region.',
+                },
+            ],
             remainingInstances: [],
             pageIntegrity: 'intact',
-            rationale: 'The page appears intact.',
+            rationale: 'The gap disappeared across the inspected window.',
             observedDamage: [],
         });
         try {
             const options = makeOptions(root, vision, recorder);
-            options.evidence.beforeCoverageComplete = false;
+            options.evidence.beforeDocument = { width: 1_920, height: 4_000 };
+            options.evidence.afterDocument = { width: 1_920, height: 4_000 };
+            options.evidence.beforeDocumentCoverageComplete = false;
+            options.evidence.afterDocumentCoverageComplete = false;
+            // Past the vision byte cap: the overview no longer blocks the review either way.
             writeFileSync(options.evidence.beforeFullPage.path, Buffer.alloc(7 * 1024 * 1024));
 
             const result = await reviewCandidateVisually(options);
 
-            expect(result.review.verdict).toBe('inconclusive');
-            expect(result.review.rationale).toContain(
-                'complete original-resolution tiles are unavailable',
-            );
-            expect(result.review.fullPageOverviewEvidence?.before.mode).toBe(
-                'blocked_oversized_incomplete_tiles',
-            );
-            expect(JSON.stringify(chat.mock.calls)).not.toContain('artifact=before-full-page');
+            expect(result.review.verdict).toBe('verified');
+            for (const side of ['before', 'after'] as const) {
+                const evidence = result.review.fullPageOverviewEvidence?.[side];
+                expect(evidence?.mode).toBe(FullPageOverviewMode.WindowedTiles);
+                expect(evidence?.reason).toContain('y=0 to y=1080 of 4000 px');
+            }
+            const synthesis = JSON.stringify(chat.mock.calls.at(-1)![0].messages);
+            expect(synthesis).toContain('y=0 to y=1080 of 4000 px');
         } finally {
             rmSync(root, { recursive: true, force: true });
         }
@@ -1775,7 +1817,7 @@ describe('reviewCandidateVisually', () => {
             const result = await reviewCandidateVisually(options);
 
             expect(result.review.verdict).toBe('verified');
-            expect(chat.mock.calls).toHaveLength(7);
+            expect(chat.mock.calls).toHaveLength(5);
             expect(JSON.stringify(chat.mock.calls)).not.toContain(unrelatedArtifactId);
         } finally {
             rmSync(root, { recursive: true, force: true });
@@ -1917,36 +1959,6 @@ describe('reviewCandidateVisually', () => {
             const options = makeOptions(root, vision, recorder);
             options.evidence.afterCoverageComplete = false;
             const result = await reviewCandidateVisually(options);
-
-            expect(result.review.verdict).toBe('inconclusive');
-            expect(result.review.coverageComplete).toBe(false);
-        } finally {
-            rmSync(root, { recursive: true, force: true });
-        }
-    });
-
-    it('is inconclusive when one separately observed full-page overview is unreadable', async () => {
-        const root = mkdtempSync(join(tmpdir(), 'candidate-visual-review-overview-coverage-'));
-        const recorder = new TraceRecorder({ runId: 'visual-review', issueNumber: 3, mode: 'fix' });
-        const { vision } = makeProvider({
-            symptom: 'resolved',
-            symptomScope: 'All repeated advertising banner leftovers.',
-            coverageComplete: true,
-            beforeInstances: [
-                {
-                    artifactId: 'before-tile-1',
-                    landmark: 'Below the ticker.',
-                    description: 'An empty banner slot.',
-                },
-            ],
-            remainingInstances: [],
-            pageIntegrity: 'intact',
-            rationale: 'Every supplied observation is clear.',
-            observedDamage: [],
-            unreadableArtifactId: 'after-full-page',
-        });
-        try {
-            const result = await reviewCandidateVisually(makeOptions(root, vision, recorder));
 
             expect(result.review.verdict).toBe('inconclusive');
             expect(result.review.coverageComplete).toBe(false);
@@ -2389,15 +2401,7 @@ describe('reviewCandidateVisually on the single-shot client', () => {
             },
             {
                 kind: ScriptedReplyKind.Text,
-                text: hermeticInventoryJson('Before full page inventoried.'),
-            },
-            {
-                kind: ScriptedReplyKind.Text,
                 text: hermeticInventoryJson('After viewport inventoried.'),
-            },
-            {
-                kind: ScriptedReplyKind.Text,
-                text: hermeticInventoryJson('After full page inventoried.'),
             },
             { kind: ScriptedReplyKind.Text, text: hermeticFinalJson() },
         ];
@@ -2416,13 +2420,13 @@ describe('reviewCandidateVisually on the single-shot client', () => {
                 visionConcurrency: 1,
             });
 
-            expect(provider.requests).toHaveLength(7);
-            for (const request of provider.requests.slice(0, 6)) {
+            expect(provider.requests).toHaveLength(5);
+            for (const request of provider.requests.slice(0, 4)) {
                 expect(request.model).toBe(VISION_MODEL);
                 expect(JSON.stringify(request.messages)).toContain('image_url');
                 expect(JSON.stringify(request.messages)).toContain('data:image/png;base64,');
             }
-            expect(JSON.stringify(provider.requests[6]!.messages)).not.toContain('image_url');
+            expect(JSON.stringify(provider.requests[4]!.messages)).not.toContain('image_url');
             expect(result.review).toMatchObject({
                 verdict: 'verified',
                 symptom: 'resolved',
@@ -2450,15 +2454,7 @@ describe('reviewCandidateVisually on the single-shot client', () => {
                 },
                 {
                     kind: ScriptedReplyKind.Text,
-                    text: hermeticInventoryJson('Before full page inventoried.'),
-                },
-                {
-                    kind: ScriptedReplyKind.Text,
                     text: hermeticInventoryJson('After viewport inventoried.'),
-                },
-                {
-                    kind: ScriptedReplyKind.Text,
-                    text: hermeticInventoryJson('After full page inventoried.'),
                 },
                 { kind: ScriptedReplyKind.Text, text: hermeticFinalJson() },
             ],
@@ -2471,10 +2467,11 @@ describe('reviewCandidateVisually on the single-shot client', () => {
                 visionConcurrency: 1,
             });
 
-            expect(provider.requests).toHaveLength(8);
+            expect(provider.requests).toHaveLength(6);
             const repair = provider.requests[1]!;
             expect(repair.messages.map((message) => message.role)).toEqual([
                 'system',
+                'user',
                 'user',
                 'user',
                 'assistant',
@@ -2505,7 +2502,7 @@ describe('reviewCandidateVisually on the single-shot client', () => {
             });
 
             expect(result.review.verdict).toBe('verified');
-            expect(provider.requests).toHaveLength(7);
+            expect(provider.requests).toHaveLength(5);
         } finally {
             rmSync(root, { recursive: true, force: true });
         }
@@ -2590,7 +2587,7 @@ const VERBOSE_BATCH_RATIONALE_CHARS = 3_000;
  * Tiles per state whose inventory overflows the full synthesis context at the largest damage and
  * rationale a batch may report, but fits once every batch rationale is shortened.
  */
-const TILES_FITTING_ONLY_SHORTENED = 15;
+const TILES_FITTING_ONLY_SHORTENED = 18;
 
 /**
  * Tiles per state whose inventory overflows the synthesis context even with shortened rationales.
@@ -2934,7 +2931,7 @@ describe('reviewCandidateVisually blind inventory', () => {
                 });
 
                 const before = positionalInventoryRequests(chat, CaptureState.Before);
-                expect(before).toHaveLength(3);
+                expect(before).toHaveLength(2);
                 expect(positionalInventoryRequests(chat, CaptureState.After)).toEqual(before);
             } finally {
                 rmSync(root, { recursive: true, force: true });
@@ -2974,9 +2971,9 @@ describe('reviewCandidateVisually blind inventory', () => {
                     item.observedDamage.map((entry) => entry.description),
                 ) ?? [];
             expect(damageOf(CaptureState.Before)).toEqual(
-                Array.from({ length: 3 }, () => `${PRE_EXISTING_DAMAGE_PREFIX} ${damage}`),
+                Array.from({ length: 2 }, () => `${PRE_EXISTING_DAMAGE_PREFIX} ${damage}`),
             );
-            expect(damageOf(CaptureState.After)).toEqual(Array.from({ length: 3 }, () => damage));
+            expect(damageOf(CaptureState.After)).toEqual(Array.from({ length: 2 }, () => damage));
         } finally {
             rmSync(root, { recursive: true, force: true });
         }

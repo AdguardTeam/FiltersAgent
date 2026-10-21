@@ -1,6 +1,7 @@
 import * as v from 'valibot';
 import type { BrowserToolHandlers } from '../browser/browser-tools';
 import type { TraceRecorder } from '../tracer/trace-recorder';
+import type { Logger } from '../logger/logger';
 import { TraceEventType } from '../types/trace';
 import {
     PhaseLabel,
@@ -14,6 +15,7 @@ import type { Page } from 'playwright-core';
 import type { TrustedPageEvaluator } from '../browser/trusted-page-evaluator';
 import type { BrowserFallbackReason } from '../types/browser-fallback-reason';
 import { settleLazyContent, type PageMaterialization } from './page-materialization';
+import { withTileWindowMap } from '../browser/tile-window-map';
 
 /**
  * Trace phase naming a phase capture whose viewport screenshot failed.
@@ -63,8 +65,8 @@ export interface PhaseConfig {
      * Optional document-space vertical span restricting original-resolution tile capture.
      *
      * Candidate validations localize the symptom element first, so capturing the whole document is
-     * pure cost on tall pages; the span bounds the tile plan to the symptom neighborhood while the
-     * full-page overview keeps the global context.
+     * pure cost on tall pages; the span bounds the tile plan to the symptom neighborhood, and the
+     * candidate review answers for that span, with the full-page overview only as its map.
      */
     tileWindow?: FullPageTileWindow;
 
@@ -95,6 +97,17 @@ export interface PhaseConfig {
      * Whether this phase must capture overlapping original-resolution tiles for vision review.
      */
     captureVisualTiles?: boolean;
+
+    /**
+     * Whether this phase also captures the tile window map a candidate review shows in place of an
+     * overview too tall to read; only the baseline and candidate phases are reviewed.
+     */
+    captureTileWindowMap?: boolean;
+
+    /**
+     * Run logger that also gets a failed tile window map capture.
+     */
+    logger?: Logger;
 
     /**
      * Trace recorder for logging phase events.
@@ -188,7 +201,17 @@ export async function runPhase(config: PhaseConfig): Promise<PhaseResult> {
         FullPageTileCoverageSchema,
         screenshotRecord.tileCoverage,
     );
-    const tileCoverage = parsedTileCoverage.success ? parsedTileCoverage.output : undefined;
+    const capturedTileCoverage = parsedTileCoverage.success ? parsedTileCoverage.output : undefined;
+    const tileCoverage =
+        config.captureTileWindowMap === true && capturedTileCoverage !== undefined
+            ? await withTileWindowMap(
+                  config.page,
+                  config.artifactsDir,
+                  config.recorder,
+                  capturedTileCoverage,
+                  config.logger,
+              )
+            : capturedTileCoverage;
     const harArtifactValue = harRecord.artifactId;
     const domArtifactValue = domRecord.artifactId;
 

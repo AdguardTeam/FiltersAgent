@@ -119,6 +119,22 @@ reported problem is what the candidate had to clear, and nothing BEFORE
 records outweighs visible advertising. An incorrect-blocking review has no
 such rule: there an empty panel is the reported problem itself.
 
+The full-page overview is only a map. Every tile request carries it first,
+downscaled to 2,000 px on its long side, with a list of the tiles and where
+each sits, such as `TILE 2 of 5, y=1080–2160`; each tile carries the same
+label. The map has no artifact ID, so no observation can cite it, and an
+observation or a flaw cited on no image its request carried is dropped. A
+dropped AFTER observation may be the ad the candidate left, so it leaves the
+review inconclusive rather than passing the candidate. A weak vision model asked to inventory the downscaled overview on its own
+invented ads the tiles of the same state did not show, such as embedded
+videos, press photos, an ad label the page never had, and rejected correct
+candidates on them alone. A page more than eight times taller than wide would
+arrive too narrow to read, so its map is a screenshot of the top of the span
+its tiles cover, cut at that same ratio. A page state with no image to map it
+from is still reviewed from its tiles. Since details come only from the tiles,
+a review whose tiles cover a window of the page answers for that window, and
+the run report says `tile window only` with the range.
+
 Each inventory request is blind to the state it looks at: the BEFORE and AFTER
 images are asked the same question, and nothing in the prompt or the image
 labels names the state; the code knows which images it sent and files the

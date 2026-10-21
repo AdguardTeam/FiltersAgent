@@ -815,6 +815,42 @@ describe('renderLocalAgentReport', () => {
         expect(report).toContain('y=0 to y=4060 of 10334 px were inspected instead');
     });
 
+    it('does not claim full-page coverage when the tiles cover only a window of the page', () => {
+        // The overview is only a map, so a review whose tiles cover a window saw that window.
+        const review = record.result.candidateVisualReview!;
+        const reason =
+            'The full-page overview was shown only as a map; original-resolution tiles from ' +
+            'y=0 to y=1080 of 4000 px were inspected, and the rest of the page was not inspected.';
+        const windowed = {
+            mode: 'windowed_tiles' as const,
+            originalBytes: 300_000,
+            visionArtifactId: null,
+            visionBytes: null,
+            reason,
+        };
+
+        const report = renderLocalAgentReport({
+            ...record,
+            result: {
+                ...record.result,
+                candidateVisualReview: {
+                    ...review,
+                    fullPageOverviewEvidence: {
+                        before: {
+                            ...windowed,
+                            originalArtifactId: review.beforeFullPageArtifactId,
+                        },
+                        after: { ...windowed, originalArtifactId: review.afterFullPageArtifactId },
+                    },
+                },
+            },
+        });
+
+        expect(report).not.toContain('- Full-page coverage: `complete`');
+        expect(report).toContain('- Full-page coverage: `tile window only`');
+        expect(report).toContain('y=0 to y=1080 of 4000 px were inspected');
+    });
+
     it('keeps declared, observed, reported, actual, and rejected-selection audit fields separate', () => {
         const refinedIntent = {
             issueType: 'incorrect_blocking' as const,

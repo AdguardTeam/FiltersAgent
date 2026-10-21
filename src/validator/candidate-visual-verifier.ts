@@ -30,13 +30,13 @@ import {
 import { CandidateNetworkScope, deriveCandidateNetworkScope } from './candidate-network-scope';
 import {
     MAX_CANDIDATE_RULE_CHARS,
-    inventoryOverviewImage,
-    inventoryPlannedFullPageOverview,
     inventoryTileState,
+    inventoryViewportImage,
+    plannedFullPageOverviewInventory,
 } from './candidate-visual-inventory';
+import { buildStateMaps } from './candidate-visual-map';
 import { MAX_REPORTER_SYMPTOM_CHARS } from './reporter-symptom-scope';
 import {
-    CandidateVisualEvidenceSource,
     SHORTENED_RATIONALE_CHARS,
     TileInventoryContextFit,
     boundedModel,
@@ -170,14 +170,14 @@ function buildReviewMessages(
             'unclear to intact to get a rule through; report what the images show.',
             'Treat the reporter screenshot as an example of a possibly repeated symptom,',
             'not as a single coordinate. The same model already inspected every original-resolution',
-            'tile and each viewport in separate byte-bounded requests. A full-page overview was',
-            'also inspected when one request could carry and show it. An oversized original',
-            'overview is omitted only when the runner proved that the non-empty ordered tile',
-            'inventory covers the complete document; an overview too tall to be read as one image',
-            'is omitted whatever the tiles cover, and its recorded reason states the exact document',
-            'range that was inspected. So never read page-wide coverage into an omission: what was',
-            'inspected is the range its provenance states, and this review answers for that range.',
-            'An omission alone does not make coverage incomplete. This',
+            'tile and each viewport in separate byte-bounded requests. The full-page overview was',
+            'never inventoried: each tile request was shown a downscaled map in front of its tiles',
+            'for orientation only, and every observation cites a tile or a viewport. So this review',
+            'answers for the range the tiles cover: when the overview provenance gives a reason, it',
+            'states that range — tiles that cover only a window of the document, or an overview',
+            'too tall to be read as one image — and the rest of the page was not inspected. Never',
+            'read page-wide coverage into the map. A reason alone does not make coverage',
+            'incomplete. This',
             'final synthesis is text-only: reconcile the complete runner-bound observations and',
             'do not claim to inspect new pixels. coverageComplete may be true only when the runner',
             'and every visual-observation call report complete coverage and every repeated instance',
@@ -307,81 +307,61 @@ export async function reviewCandidateVisually(
     let fullPageOverviewEvidence: CandidateVisualFullPageOverviewEvidencePair | undefined;
     let settlement: CandidateVisualSettlement | undefined;
     try {
-        fullPageOverviewEvidence = {
-            before: planFullPageOverview(
-                options.evidence.beforeFullPage,
-                options.evidence.beforeDocumentCoverageComplete ??
-                    options.evidence.beforeCoverageComplete,
-                options.evidence.beforeTiles,
-                options.evidence.beforeDocument,
-            ),
-            after: planFullPageOverview(
-                options.evidence.afterFullPage,
-                options.evidence.afterDocumentCoverageComplete ??
-                    options.evidence.afterCoverageComplete,
-                options.evidence.afterTiles,
-                options.evidence.afterDocument,
-            ),
-        };
+        const { evidence } = options;
+        const beforePlan = planFullPageOverview(
+            evidence.beforeFullPage,
+            evidence.beforeDocumentCoverageComplete ?? evidence.beforeCoverageComplete,
+            evidence.beforeTiles,
+            evidence.beforeDocument,
+            evidence.beforeTileWindowMap,
+        );
+        const afterPlan = planFullPageOverview(
+            evidence.afterFullPage,
+            evidence.afterDocumentCoverageComplete ?? evidence.afterCoverageComplete,
+            evidence.afterTiles,
+            evidence.afterDocument,
+            evidence.afterTileWindowMap,
+        );
+        fullPageOverviewEvidence = { before: beforePlan.evidence, after: afterPlan.evidence };
+        // A plan that blocks the review fails it here, before any vision request is made.
+        const beforeOverviewInventory = plannedFullPageOverviewInventory(
+            options,
+            CaptureState.Before,
+            beforePlan.evidence,
+        );
+        const afterOverviewInventory = plannedFullPageOverviewInventory(
+            options,
+            CaptureState.After,
+            afterPlan.evidence,
+        );
+        const maps = await buildStateMaps(options, beforePlan, afterPlan);
+        fullPageOverviewEvidence = maps.evidence;
         // Every inventory below is its own vision completion over its own images, and none reads
         // another's answer, so they run side by side under one limiter; only the synthesis that
         // follows needs them all. Enqueued in a fixed order, and the limiter is first come first
         // served, so the calls START in that order.
         const limiter = createCallLimiter(options.visionConcurrency);
-        // Held in a constant: the closures below outlive this statement's narrowing of the `let`.
-        const overviewEvidence = fullPageOverviewEvidence;
+        const { beforeTiles, afterTiles, beforeViewport, afterViewport } = evidence;
         const [
             beforeTileInventory,
             afterTileInventory,
             beforeViewportInventory,
-            beforeFullPageInventory,
             afterViewportInventory,
-            afterFullPageInventory,
         ] = await Promise.all([
-            inventoryTileState(options, CaptureState.Before, options.evidence.beforeTiles, limiter),
-            inventoryTileState(options, CaptureState.After, options.evidence.afterTiles, limiter),
-            limiter.run(() =>
-                inventoryOverviewImage(
-                    options,
-                    CaptureState.Before,
-                    CandidateVisualEvidenceSource.ViewportOverview,
-                    options.evidence.beforeViewport,
-                ),
-            ),
-            limiter.run(() =>
-                inventoryPlannedFullPageOverview(
-                    options,
-                    CaptureState.Before,
-                    options.evidence.beforeFullPage,
-                    overviewEvidence.before,
-                ),
-            ),
-            limiter.run(() =>
-                inventoryOverviewImage(
-                    options,
-                    CaptureState.After,
-                    CandidateVisualEvidenceSource.ViewportOverview,
-                    options.evidence.afterViewport,
-                ),
-            ),
-            limiter.run(() =>
-                inventoryPlannedFullPageOverview(
-                    options,
-                    CaptureState.After,
-                    options.evidence.afterFullPage,
-                    overviewEvidence.after,
-                ),
-            ),
+            inventoryTileState(options, CaptureState.Before, beforeTiles, maps.before, limiter),
+            inventoryTileState(options, CaptureState.After, afterTiles, maps.after, limiter),
+            limiter.run(() => inventoryViewportImage(options, CaptureState.Before, beforeViewport)),
+            limiter.run(() => inventoryViewportImage(options, CaptureState.After, afterViewport)),
         ]);
         const beforeInventory = combineStateInventories(
-            [beforeTileInventory, beforeViewportInventory, beforeFullPageInventory],
+            [beforeTileInventory, beforeViewportInventory, beforeOverviewInventory],
             CaptureState.Before,
         );
         const settled = await settleAfterInventory(
             options,
             beforeInventory,
             combineStateInventories(
-                [afterTileInventory, afterViewportInventory, afterFullPageInventory],
+                [afterTileInventory, afterViewportInventory, afterOverviewInventory],
                 CaptureState.After,
             ),
             limiter,
@@ -411,15 +391,14 @@ export async function reviewCandidateVisually(
             fullPageOverviewEvidence,
             settlement,
         );
+        // The map carries no artifact, so only a viewport or a tile can be cited.
         const allowedBeforeArtifactIds = new Set([
-            options.evidence.beforeViewport.id,
-            ...(options.evidence.beforeFullPage ? [options.evidence.beforeFullPage.id] : []),
-            ...options.evidence.beforeTiles.map((tile) => tile.id),
+            beforeViewport.id,
+            ...beforeTiles.map((tile) => tile.id),
         ]);
         const allowedAfterArtifactIds = new Set([
-            options.evidence.afterViewport.id,
-            ...(options.evidence.afterFullPage ? [options.evidence.afterFullPage.id] : []),
-            ...options.evidence.afterTiles.map((tile) => tile.id),
+            afterViewport.id,
+            ...afterTiles.map((tile) => tile.id),
         ]);
         const normalized = await synthesizeFinalReview(
             options,
