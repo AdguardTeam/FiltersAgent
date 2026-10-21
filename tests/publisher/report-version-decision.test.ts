@@ -17,6 +17,7 @@ import {
     PreparedExtensionSource,
 } from '../../src/environment/extension-preparation';
 import { FixRunStatus, SymptomObservation } from '../../src/types/fix-run-result';
+import { ARTIFACTS_LINK, LIST_SOURCE } from './report-fixtures';
 
 // `Report`-shaped environment fixture mirroring the intake field this decision consumes
 // (`environment.version`, verbatim); the tests feed the plain string extracted from it below,
@@ -197,8 +198,6 @@ describe('renderVersionUpdateHint', () => {
     });
 });
 
-const ARTIFACTS_LINK = 'https://github.com/owner/repo/actions/runs/42#artifacts';
-
 /**
  * Fix the run shape the version-update hint decision rides on: an executor build whose version tag
  * the report names as the current version, with the symptom observation as the caller decides it.
@@ -230,6 +229,7 @@ describe('version update hint in the report', () => {
             olderReportedRun(SymptomObservation.NotReproduced),
             {},
             ARTIFACTS_LINK,
+            LIST_SOURCE,
             REPORTED_VERSION,
         );
         const values = buildReportTemplateValues(summary);
@@ -248,6 +248,7 @@ describe('version update hint in the report', () => {
             olderReportedRun(SymptomObservation.Reproduced),
             {},
             ARTIFACTS_LINK,
+            LIST_SOURCE,
             REPORTED_VERSION,
         );
         const values = buildReportTemplateValues(summary);
@@ -266,6 +267,7 @@ describe('version update hint in the report', () => {
             olderReportedRun(SymptomObservation.NotReproduced),
             {},
             ARTIFACTS_LINK,
+            LIST_SOURCE,
         );
 
         expect(summary.versionUpdateHint).toBe('');

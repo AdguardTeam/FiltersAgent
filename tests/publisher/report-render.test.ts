@@ -28,8 +28,7 @@ import {
 } from '../../src/publisher/report-render';
 import type { ReportOutcomeSummary, ReportRunResultInput } from '../../src/publisher/report-render';
 import { CHARACTER_REFERENCE_PATTERN, liveGitHubConstructs, readerView } from './rendered-markdown';
-
-const ARTIFACTS_LINK = 'https://github.com/owner/repo/actions/runs/42#artifacts';
+import { ARTIFACTS_LINK, LIST_SOURCE } from './report-fixtures';
 
 function patchProposedSummary(): ReportOutcomeSummary {
     return {
@@ -299,6 +298,7 @@ describe('buildReportTemplateValues', () => {
                         },
                     },
                     ARTIFACTS_LINK,
+                    LIST_SOURCE,
                 ),
             ),
         );
@@ -357,13 +357,14 @@ describe('buildReportTemplateValues', () => {
                     { ...analysisOnlyRun, candidateForReview },
                     decision,
                     ARTIFACTS_LINK,
+                    LIST_SOURCE,
                 ),
             ),
         );
         const bare = renderReportComment(
             BUILT_IN_REPORT_TEMPLATE,
             buildReportTemplateValues(
-                summarizeReportOutcome(analysisOnlyRun, decision, ARTIFACTS_LINK),
+                summarizeReportOutcome(analysisOnlyRun, decision, ARTIFACTS_LINK, LIST_SOURCE),
             ),
         );
 
@@ -407,6 +408,7 @@ describe('buildReportTemplateValues', () => {
                     },
                     decision,
                     ARTIFACTS_LINK,
+                    LIST_SOURCE,
                 ),
             ),
         );
@@ -417,6 +419,7 @@ describe('buildReportTemplateValues', () => {
                     { ...analysisOnlyRun, candidateVisualReview: { remainingInstances: [] } },
                     decision,
                     ARTIFACTS_LINK,
+                    LIST_SOURCE,
                 ),
             ),
         );
@@ -458,9 +461,14 @@ describe('summarizeReportOutcome', () => {
                 },
             },
             ARTIFACTS_LINK,
+            LIST_SOURCE,
         );
 
-        expect(summary).toEqual(focused);
+        // The place in the list links the file; its own suite pins the link.
+        expect(summary).toEqual({
+            ...focused,
+            listPlace: expect.stringContaining(`[${focused.listPlace}](`),
+        });
     });
 
     it('notes leftover advertising layout beside a verified rule', () => {
@@ -475,6 +483,7 @@ describe('summarizeReportOutcome', () => {
             },
             { summary: 'Ads reproduced; the host block removed them.' },
             ARTIFACTS_LINK,
+            LIST_SOURCE,
         );
 
         const comment = renderReportComment(
@@ -513,6 +522,7 @@ describe('summarizeReportOutcome', () => {
             },
             decision,
             ARTIFACTS_LINK,
+            LIST_SOURCE,
         );
 
         expect(summary.outcome).toBe('The reported defect was not reproduced');
@@ -550,11 +560,13 @@ describe('summarizeReportOutcome', () => {
                     },
                 },
                 ARTIFACTS_LINK,
+                LIST_SOURCE,
             );
             const analysisOnly = summarizeReportOutcome(
                 { runStatus: FixRunStatus.AnalysisOnly, candidatePatch: null },
                 {},
                 ARTIFACTS_LINK,
+                LIST_SOURCE,
             );
 
             expect(summary.outcome).not.toBe(analysisOnly.outcome);
@@ -583,11 +595,13 @@ describe('summarizeReportOutcome', () => {
                 policyDecision: { decision: PolicyDecisionKind.ProposeClose, reasons: [] },
             },
             ARTIFACTS_LINK,
+            LIST_SOURCE,
         );
         const undecided = summarizeReportOutcome(
             run,
             { summary: 'The page refused to load.' },
             ARTIFACTS_LINK,
+            LIST_SOURCE,
         );
 
         expect(decided.outcome).toBe(undecided.outcome);
@@ -615,6 +629,7 @@ describe('summarizeReportOutcome', () => {
             },
             decision,
             ARTIFACTS_LINK,
+            LIST_SOURCE,
         );
 
         expect(summary.symptom).toContain(evidenceSummary);
@@ -639,9 +654,16 @@ describe('summarizeReportOutcome', () => {
 
         const fromModel = renderReportComment(
             BUILT_IN_REPORT_TEMPLATE,
-            buildReportTemplateValues(summarizeReportOutcome(run, modelDecision, ARTIFACTS_LINK)),
+            buildReportTemplateValues(
+                summarizeReportOutcome(run, modelDecision, ARTIFACTS_LINK, LIST_SOURCE),
+            ),
         );
-        const fromHost = summarizeReportOutcome(run, { hostReasoning }, ARTIFACTS_LINK);
+        const fromHost = summarizeReportOutcome(
+            run,
+            { hostReasoning },
+            ARTIFACTS_LINK,
+            LIST_SOURCE,
+        );
 
         expect(readerView(fromModel)).not.toContain(modelReasoning);
         expect(fromHost.symptom).toContain(hostReasoning);
@@ -668,6 +690,7 @@ describe('summarizeReportOutcome', () => {
             },
             {},
             ARTIFACTS_LINK,
+            LIST_SOURCE,
         );
 
         const rendered = renderReportComment(
@@ -692,6 +715,7 @@ describe('summarizeReportOutcome', () => {
             },
             {},
             ARTIFACTS_LINK,
+            LIST_SOURCE,
         );
 
         expect(summary.outcome).toBe('The run failed');
@@ -724,6 +748,7 @@ describe('summarizeReportOutcome', () => {
             },
             {},
             ARTIFACTS_LINK,
+            LIST_SOURCE,
         );
 
         expect(summary.outcomeReason).not.toContain('unreachable');
@@ -759,6 +784,7 @@ describe('summarizeReportOutcome', () => {
                 },
                 {},
                 ARTIFACTS_LINK,
+                LIST_SOURCE,
             ).outcomeReason;
 
         const wallClock = reasonFor(AgentTerminationReason.WallClockExceeded);
@@ -779,6 +805,7 @@ describe('summarizeReportOutcome', () => {
             },
             { summary: 'geo-blocked' },
             ARTIFACTS_LINK,
+            LIST_SOURCE,
         );
 
         expect(summary.outcomeReason).toContain('The page host was unreachable');
@@ -796,6 +823,7 @@ describe('summarizeReportOutcome', () => {
             },
             {},
             ARTIFACTS_LINK,
+            LIST_SOURCE,
         );
 
         const rendered = renderReportComment(
@@ -817,6 +845,7 @@ describe('summarizeReportOutcome', () => {
             },
             {},
             ARTIFACTS_LINK,
+            LIST_SOURCE,
         );
 
         const rendered = renderReportComment(

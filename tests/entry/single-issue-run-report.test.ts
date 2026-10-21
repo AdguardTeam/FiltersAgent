@@ -8,11 +8,15 @@ import {
 } from '../../src/types/fix-run-result';
 import { FixOutcomeKind, ReproductionStatus } from '../../src/types/fix-outcome';
 import { PolicyDecisionKind } from '../../src/types/policy';
+import { PlacementBasis } from '../../src/types/placement-basis';
+import { RepositoryEditKind } from '../../src/types/repository-edit-kind';
+import { RuleType } from '../../src/types/rule-proposal';
 import { testCoreConfig } from '../config/test-core-config';
 import { runDefaultSingleIssue } from '../../src/entry/single-issue-run';
 import { readerView } from '../publisher/rendered-markdown';
 import {
     extractedReportSeam,
+    ISSUE_COMMIT_FIXTURE,
     issueCommentOctokit,
     preparedWorkspace,
     processedRunResult,
@@ -129,5 +133,57 @@ describe('runDefaultSingleIssue report content', () => {
             expect(posted).toContain(reason);
         }
         expect(posted).not.toContain(reasoning);
+    });
+
+    it('links the place in the list to its line at the commit the run analyzed', async () => {
+        // The lists come from the repository the action runs on, at the commit the run pinned: a
+        // permalink there shows the maintainer the exact line, in a fork as much as upstream.
+        const workspace = preparedWorkspace({ localSourceAvailable: true, withInstruction: false });
+        const artifactsDir = join(scratchDir('single-issue-artifacts-'), 'out');
+        const filePath = 'PolishFilter/sections/specific.txt';
+        const anchorRule = 'zywiecinfo.pl,bialobrzegi24.net,bilgoraj.com.pl##.baner';
+        const proposed: FixRunResult = {
+            ...processedRunResult(4),
+            runStatus: FixRunStatus.PatchProposed,
+            symptomObservation: SymptomObservation.Reproduced,
+            candidatePatch: {
+                rule: 'example.com##.ad',
+                ruleType: RuleType.Cosmetic,
+                filePath,
+                repositoryEdit: {
+                    kind: RepositoryEditKind.Insert,
+                    insertionPoint: 83,
+                    anchorRule,
+                    basis: PlacementBasis.DomainBlock,
+                },
+            },
+        };
+
+        await runDefaultSingleIssue(
+            {
+                config: testCoreConfig(),
+                slug: { owner: 'remote-owner', repo: 'remote-list' },
+                checkoutPath: workspace.localSourcePath,
+                issueNumber: 4,
+                commentsEnabled: false,
+                screenshotsBranch: 'filters-agent-screenshots',
+                artifactsDir,
+            },
+            {
+                preparationDependencies: workspace.dependencies,
+                ...extractedReportSeam(),
+                investigate: () => Promise.resolve(proposed),
+                fetchIssue: (config, issueNumber) => {
+                    void config;
+                    return Promise.resolve(rawIssueFixture(issueNumber));
+                },
+            },
+        );
+
+        const report = readFileSync(join(artifactsDir, 'report-comment.md'), 'utf8');
+        const fileUrl = `https://github.com/remote-owner/remote-list/blob/${ISSUE_COMMIT_FIXTURE}/${filePath}`;
+        expect(report).toContain(`](${fileUrl})`);
+        expect(report).toContain(`](${fileUrl}#L84)`);
+        expect(report).not.toContain(anchorRule);
     });
 });

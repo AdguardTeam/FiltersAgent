@@ -54,13 +54,17 @@ found, not only the one that decided.
 Names the file and, when the host planned the spot, the line. A bare line number would drift
 between rendering and reading, so a line is always a permalink to the AdguardFilters commit the
 analysis ran against (`https://github.com/AdguardTeam/AdguardFilters/blob/<full sha>/<file>#L<line>`)
-and points at the line as it was in that commit.
+and points at the line as it was in that commit. The file is always a permalink to the same
+commit. No neighbouring rule is quoted: a shared rule can be a wall of domains with its selector
+at the end.
 
-- **Insert with a planned spot:** the basis wording, then `before [line N](<permalink>)` and, when
-  known, the rule now on that line in backticks: the new rule goes right before it.
-- **Extending an existing rule's domains:** `adding this domain to the existing <body> rule on
+- **Insert with a planned spot:** the basis wording, then `before [line N](<permalink>)`: the new
+  rule goes right before that line.
+- **Extending an existing rule's domains:** `By adding the domain to the existing rule on
   [line N](<permalink>)`.
-- **Append at the end of the file, or no planned spot:** the file only, no link.
+- **Append at the end of the file:** `At the end of the file`, with no line link. An append behind
+  a comment line the run instruction declares quotes that comment in backticks.
+- **No planned spot:** the file only.
 
 ## Posting
 

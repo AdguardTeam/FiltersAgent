@@ -491,6 +491,9 @@ async function runInsideWorkspace(
         // carries the reasoning the host kept, which the report shows as what the run found.
         agentArtifacts.artifacts?.decision ?? { hostReasoning: runResult.reasoning },
         request.actionsRunUrl ?? '',
+        // The lists were cloned from this repository and pinned at this commit, so a line linked
+        // there is the line the run planned against.
+        { repository: slug, commit: prepared.provenance.commit },
         reportedVersion,
     );
     if (

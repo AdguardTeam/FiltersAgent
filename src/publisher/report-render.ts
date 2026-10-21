@@ -41,7 +41,11 @@ import {
 } from './report-labels';
 import { renderVersionUpdateHint } from './report-version-decision';
 import type { ReportTemplateValues } from './report-template';
-import { composeListPlace, type ReportRepositoryEdit } from './report-list-place';
+import {
+    composeListPlace,
+    type ReportListSource,
+    type ReportRepositoryEdit,
+} from './report-list-place';
 import { composeRepositoryLint } from './report-repository-lint';
 import type { RepositoryLintNote } from '../types/repository-lint';
 import { renderUntrustedRuleCodeSpan, renderUntrustedText } from './untrusted-text';
@@ -330,7 +334,9 @@ export interface ReportOutcomeSummary {
     remainingInstances?: readonly ReportRemainingInstance[];
 
     /**
-     * The filter file the rule lands in — the agreed "place in the list" reading.
+     * The "place in the list" fill, already rendered Markdown: the linked file and the sentence
+     * naming the linked line inside it. The fill build passes it through as is; escaping it would
+     * break its links.
      */
     listPlace: string;
 
@@ -595,14 +601,18 @@ function composeExecutorVersion(provenance: PreparedExtensionProvenance | undefi
  * @param decision - Model-authored decision fields under projection; a complete `FixOutcome` is
  *   assignable.
  * @param artifactsLink - Link to the run artifacts, provided by the caller that owns artifact URLs.
+ * @param listSource - The repository revision the run analyzed the lists at, which the place in the
+ *   list links to.
  * @param reportedVersion - The blocker version the report declares, verbatim from `Report` →
  *   `environment.version`, when the run carried the intake extraction.
- * @returns The outcome summary with raw text — escaping happens at fill-build time.
+ * @returns The outcome summary: raw text, escaped at fill-build time, except the place in the list,
+ *   which is already rendered Markdown.
  */
 export function summarizeReportOutcome(
     result: ReportRunResultInput,
     decision: ReportDecisionInput,
     artifactsLink: string,
+    listSource: ReportListSource,
     reportedVersion?: string,
 ): ReportOutcomeSummary {
     const executorVersion = composeExecutorVersion(result.extensionProvenance);
@@ -645,6 +655,7 @@ export function summarizeReportOutcome(
             : { remainingInstances: result.candidateVisualReview.remainingInstances }),
         listPlace: composeListPlace(
             result.candidatePatch?.filePath,
+            listSource,
             result.candidatePatch?.repositoryEdit,
         ),
         executor:
@@ -662,9 +673,9 @@ export function summarizeReportOutcome(
  * Build one report render's fill values from the projected outcome.
  *
  * Every fill is computed — model-adjacent text goes through the bounded untrusted renderer, while
- * host-owned fields (outcome labels, artifact links, repository paths) pass through as written. The
- * screenshots fill starts empty: the images get an address only once the publisher decides to post
- * (see `report-screenshots.ts`).
+ * host-owned fields (outcome labels, artifact links, the rendered place in the list) pass through
+ * as written. The screenshots fill starts empty: the images get an address only once the publisher
+ * decides to post (see `report-screenshots.ts`).
  *
  * @param summary - Projected outcome summary.
  * @returns Fill values covering every key of `REPORT_TEMPLATE_FILL`.

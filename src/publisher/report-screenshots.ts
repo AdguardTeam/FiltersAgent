@@ -13,6 +13,7 @@
  */
 
 import type { Octokit } from '@octokit/rest';
+import { GitHubFileView, gitHubFileUrl } from '../github/github-file-url';
 import type { Logger } from '../logger/logger';
 import type { FixRunResult, VerifiedCandidateScreenshotPaths } from '../types/fix-run-result';
 
@@ -255,7 +256,11 @@ export async function hostReportScreenshots(
             throw error;
         }
         const address = (path: string): string =>
-            `https://github.com/${owner}/${repo}/raw/${commit.sha}/${path}`;
+            gitHubFileUrl(GitHubFileView.Raw, {
+                repository: `${owner}/${repo}`,
+                commit: commit.sha,
+                filePath: path,
+            });
         return { beforeUrl: address(beforePath), afterUrl: address(afterPath) };
     }
 }

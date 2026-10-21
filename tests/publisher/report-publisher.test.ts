@@ -16,13 +16,12 @@ import {
     publishReportOnce,
     renderReportRevisionMarker,
 } from '../../src/publisher/report-publisher';
+import { ARTIFACTS_LINK, LIST_SOURCE } from './report-fixtures';
 
 /**
  * Link the caller of this flow is responsible for providing — the artifacts surface the report
  * points at, owned outside the publisher (the runner/action wiring slice).
  */
-const ARTIFACTS_LINK = 'https://github.com/owner/repo/actions/runs/42#artifacts';
-
 /**
  * GitHub's issue-comment body limit in characters; the publisher size guard must refuse at exactly
  * this platform contract (marker + body counted together).
@@ -424,6 +423,7 @@ describe('instruction template to posted comment', () => {
             },
             { summary: 'Ad banner reproduced, then resolved by the candidate.' },
             ARTIFACTS_LINK,
+            LIST_SOURCE,
         );
         const body = renderReportComment(resolved.template, buildReportTemplateValues(summary));
         const result = await publishReportOnce(octokit, {
@@ -438,7 +438,7 @@ describe('instruction template to posted comment', () => {
         expect(posted).toContain('Outcome: Candidate rule proposed');
         // The rule renders in a code span (a backtick fence) so Markdown never reinterprets it.
         expect(posted).toContain('Proposed rule: `example.com##.ad-banner`');
-        expect(posted).toContain('Where it lands: BaseFilter/sections/specific.txt');
+        expect(posted).toContain('Where it lands: [BaseFilter/sections/specific.txt](');
         expect(posted).toContain(`Artifacts: ${ARTIFACTS_LINK}`);
         expect(posted).not.toContain('Follow-up');
     });

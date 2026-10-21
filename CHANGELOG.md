@@ -195,6 +195,10 @@ The format is based on [Keep a Changelog], and this project adheres to
 - Fixed the outcome line of a run the filter policy decided reading
   "Analysis-only findings, no verified change": it now names the policy
   verdict.
+- Fixed the report's "Place in the list" quoting the neighbouring rule whole,
+  which for a shared rule is a wall of domains with the selector at the end:
+  it now links the file, and the line the rule goes before or extends, at the
+  commit the run analyzed.
 - Fixed runs ending as rejected after the `defaults_plus_required`
   comparison closed an unfinished reporter-profile session: `finish_fix` now
   asks to relaunch that profile instead of capturing in the closed session.

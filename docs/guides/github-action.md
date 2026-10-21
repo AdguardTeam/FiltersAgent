@@ -455,7 +455,7 @@ template can carry a heading for a case that rarely happens.
 | `{{stillVisible}}` | What the vision review still saw on the page after that rule — the locations the reporter named that it did not fix. Empty for a verified rule, since one leftover instance is what rejects a candidate. |
 | `{{executor}}`, `{{executorVersion}}` | The blocker the run actually drove, and its version. |
 | `{{policyRationale}}` | The reasons of the policy decision: which rule of your filter policy (in the instruction or a document it links) allowed a rule or ruled it out. Empty when the run carries no policy decision. |
-| `{{listPlace}}` | The file the rule goes into, and where inside it. |
+| `{{listPlace}}` | The file the rule goes into, and where inside it: the line the rule goes before or extends. Both are links to the file at the commit the run analyzed. |
 | `{{missingInformation}}` | What the report would need to be actionable, when something is missing. |
 | `{{screenshots}}` | The page without and with the verified rule, side by side. Empty when no rule was verified, and when the workflow lacks `contents: write` (see the example workflow). |
 | `{{artifactsLink}}` | Link to the workflow run holding the full evidence. |

@@ -8,8 +8,7 @@ import {
     summarizeReportOutcome,
     type ReportRunResultInput,
 } from '../../src/publisher/report-render';
-
-const ARTIFACTS_LINK = 'https://github.com/owner/repo/actions/runs/42#artifacts';
+import { ARTIFACTS_LINK, LIST_SOURCE } from './report-fixtures';
 
 describe('repository lint section', () => {
     it("carries the repository linter's objection to the rule, and nothing when it had none", () => {
@@ -22,7 +21,9 @@ describe('repository lint section', () => {
         const render = (run: ReportRunResultInput): string =>
             renderReportComment(
                 BUILT_IN_REPORT_TEMPLATE,
-                buildReportTemplateValues(summarizeReportOutcome(run, {}, ARTIFACTS_LINK)),
+                buildReportTemplateValues(
+                    summarizeReportOutcome(run, {}, ARTIFACTS_LINK, LIST_SOURCE),
+                ),
             );
         // Output that tries to close the code block and mention someone stays inside it.
         const output = 'filters/a.txt:1 error: modifier is excluded\n```\n@maintainer';

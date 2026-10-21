@@ -10,8 +10,7 @@ import {
     type ReportDecisionInput,
     type ReportRunResultInput,
 } from '../../src/publisher/report-render';
-
-const ARTIFACTS_LINK = 'https://github.com/owner/repo/actions/runs/42#artifacts';
+import { ARTIFACTS_LINK, LIST_SOURCE } from './report-fixtures';
 
 /**
  * Two blank lines in a row: what a Markdown reader sees as padding.
@@ -24,7 +23,9 @@ const BLANK_LINE_RUN_PATTERN = /\n[ \t]*\n[ \t]*\n/u;
 function renderBuiltIn(run: ReportRunResultInput, decision: ReportDecisionInput): string {
     return renderReportComment(
         BUILT_IN_REPORT_TEMPLATE,
-        buildReportTemplateValues(summarizeReportOutcome(run, decision, ARTIFACTS_LINK)),
+        buildReportTemplateValues(
+            summarizeReportOutcome(run, decision, ARTIFACTS_LINK, LIST_SOURCE),
+        ),
     );
 }
 

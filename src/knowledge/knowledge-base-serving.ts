@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { GitHubFileView, gitHubFileUrl } from '../github/github-file-url';
 import { GuidanceDocumentRole } from './guidance-source';
 import type {
     KnowledgeGuidanceCitation,
@@ -211,9 +212,15 @@ export function resolveDocument(
                 commit: source.filtersCommit,
                 filePath,
                 anchor: section.anchor,
-                url:
-                    `https://github.com/${source.filtersRepository}/blob/` +
-                    `${source.filtersCommit}/${filePath}#${section.anchor}`,
+                url: gitHubFileUrl(
+                    GitHubFileView.Blob,
+                    {
+                        repository: source.filtersRepository,
+                        commit: source.filtersCommit,
+                        filePath,
+                    },
+                    section.anchor,
+                ),
             },
         };
     }
@@ -230,9 +237,15 @@ export function resolveDocument(
             commit: source.knowledgeBaseCommit,
             filePath,
             anchor: section.anchor,
-            url:
-                `https://github.com/${source.knowledgeBaseRepository}/blob/` +
-                `${source.knowledgeBaseCommit}/${filePath}#${section.anchor}`,
+            url: gitHubFileUrl(
+                GitHubFileView.Blob,
+                {
+                    repository: source.knowledgeBaseRepository,
+                    commit: source.knowledgeBaseCommit,
+                    filePath,
+                },
+                section.anchor,
+            ),
         },
     };
 }
