@@ -110,6 +110,16 @@ const PACKAGE_VERSION_FIELD = 'version';
 const MANIFEST_VERSION_FIELD = 'manifest_version';
 
 /**
+ * The manifest field listing the permissions the extension requires at install.
+ */
+const PERMISSIONS_FIELD = 'permissions';
+
+/**
+ * The permission behind which Chromium shows an extension's "Allow User Scripts" toggle at all.
+ */
+const USER_SCRIPTS_PERMISSION = 'userScripts';
+
+/**
  * The parsed browser-relevant facts of one unpacked extension manifest.
  */
 export interface PreparedExtensionManifestFacts {
@@ -122,6 +132,12 @@ export interface PreparedExtensionManifestFacts {
      * The manifest generation the manifest declares.
      */
     manifestVersion: ExtensionManifestVersion;
+
+    /**
+     * Whether the manifest requires the `userScripts` permission, which is what gives the extension
+     * Chromium's "Allow User Scripts" toggle.
+     */
+    userScriptsPermission: boolean;
 }
 
 /**
@@ -138,7 +154,7 @@ function isKnownManifestVersion(value: unknown): value is ExtensionManifestVersi
  * Read and classify the manifest facts of one unpacked extension directory.
  *
  * @param extensionPath - Absolute unpacked directory (manifest.json at its root).
- * @returns The declared package version and manifest generation.
+ * @returns The declared package version, manifest generation and `userScripts` permission.
  * @throws When the directory is missing, the manifest is missing, or the manifest does not declare
  *   a known generation — a hosted directory the browser would refuse to load anyway.
  */
@@ -171,7 +187,13 @@ export function readPreparedExtensionManifest(
                 `(${EXTENSION_MANIFEST_VERSION_VALUES.join(' or ')}) is required.`,
         );
     }
-    return { packageVersion, manifestVersion };
+    // The browser itself refuses a manifest whose permissions are not a list of strings.
+    const permissions = (raw[PERMISSIONS_FIELD] as string[] | undefined) ?? [];
+    return {
+        packageVersion,
+        manifestVersion,
+        userScriptsPermission: permissions.includes(USER_SCRIPTS_PERMISSION),
+    };
 }
 
 /**
@@ -218,6 +240,7 @@ export async function loadPreparedExtensionFromDirectory(
     return {
         extensionPath,
         manifestVersion: manifest.manifestVersion,
+        userScriptsPermission: manifest.userScriptsPermission,
         source,
         extensionSourceSha256,
         ...(sourceTag === undefined ? {} : { extensionSourceTag: sourceTag }),

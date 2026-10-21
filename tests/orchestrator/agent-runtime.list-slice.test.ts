@@ -251,18 +251,13 @@ function launchRequest(slice?: ListSlice): Record<string, unknown> {
 
 /**
  * A runtime over an unpacked build with fake prepared-extension surfaces: every launched session
- * gets a fresh surface, the state read reflects it, and the toggle seam records when it ran.
+ * gets a fresh surface and the state read reflects it.
  */
 async function createSliceRuntime(overrides: Partial<AgentRuntimeDependencies> = {}) {
     const extensionPath = writeUnpackedBuild();
     const session = {
         surface: fakePreparedExtensionSurface({ initialEnabledFilterIds: [BASE_FILTER_ID] }),
-        messagesBeforeToggle: undefined as number | undefined,
     };
-    const allowUserScripts = vi.fn(async (_context: unknown, extensionId: string) => {
-        expect(extensionId).toBe(EXTENSION_ID);
-        session.messagesBeforeToggle = session.surface.messages.length;
-    });
     const validatorReached = vi.fn(() => ({ validationArtifactId: 'validation-1' }));
     const runtime = await AgentRuntime.create(
         {
@@ -283,6 +278,7 @@ async function createSliceRuntime(overrides: Partial<AgentRuntimeDependencies> =
             preparedExtension: {
                 extensionPath,
                 manifestVersion: ExtensionManifestVersion.Mv3,
+                userScriptsPermission: true,
                 source: PreparedExtensionSource.PinnedRelease,
                 extensionSourceSha256: 'e'.repeat(64),
                 extensionSourceTag: `v${APP_VERSION}`,
@@ -307,30 +303,26 @@ async function createSliceRuntime(overrides: Partial<AgentRuntimeDependencies> =
                 extensionId: EXTENSION_ID,
                 manifestVersion: ExtensionManifestVersion.Mv3,
             })),
-            allowUserScripts,
             ...overrides,
         },
     );
     await runtime.registry.dispatch('fetch_issue', { issueNumber: rawIssue.number });
-    return { runtime, session, allowUserScripts, validatorReached };
+    return { runtime, session, validatorReached };
 }
 
 describe('AgentRuntime list slice', () => {
     it('runs one list as a served slice, reports its facts and refuses to validate in it', async () => {
-        const { runtime, session, allowUserScripts, validatorReached } = await createSliceRuntime();
+        const { runtime, session, validatorReached } = await createSliceRuntime();
         try {
             const launched = await runtime.registry.dispatch(
                 'launch_browser',
                 launchRequest({ filterId: HEBREW_FILTER_ID, firstLine: 1, lastLine: 3 }),
             );
 
-            // The toggle is flipped before the import: without it the build runs no custom filter.
-            expect(allowUserScripts).toHaveBeenCalledTimes(1);
             const imported = session.surface.messages.findIndex(
                 (message) => message.type === AdGuardExtensionMessageType.ApplySettingsJson,
             );
             expect(imported).toBeGreaterThanOrEqual(0);
-            expect(session.messagesBeforeToggle).toBeLessThanOrEqual(imported);
 
             // The document installs the slice as one trusted custom filter served by the run, and
             // the built-in list it replaces is not among the enabled filters.

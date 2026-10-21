@@ -13,6 +13,8 @@ import { ConsoleCoverage, type IBrowserEngine } from '../../src/browser/browser-
 import type { ReproProfile } from '../../src/types/repro-profile';
 import { createPreparedStrictBrowserRoute } from '../../src/browser/strict-browser-route';
 import { buildFirefoxPolicies } from '../../src/browser/firefox-policies';
+import { ToggleReport } from '../../src/browser/chrome-user-scripts-toggle';
+import { ExtensionManifestVersion } from '../../src/environment/extension-preparation';
 
 function mockPage(overrides: Record<string, unknown> = {}) {
     return {
@@ -40,6 +42,14 @@ function mockContext(overrides: Record<string, unknown> = {}) {
         newPage: vi.fn().mockResolvedValue(mockPage()),
         close: vi.fn().mockResolvedValue(undefined),
         ...overrides,
+    };
+}
+
+function extensionsPage(toggleReport: ToggleReport) {
+    return {
+        ...mockPage(),
+        goto: vi.fn().mockResolvedValue(undefined),
+        evaluate: vi.fn().mockResolvedValue(toggleReport),
     };
 }
 
@@ -543,6 +553,125 @@ describe('BrowserSession', () => {
             }),
         );
         await session.close();
+    });
+
+    describe('Chromium "Allow User Scripts" at an MV3 extension launch', () => {
+        const extensionId = 'abcdefghijklmnopabcdefghijklmnop';
+        const extensionPath = '/tmp/adguard-extension-mv3';
+
+        /**
+         * A persistent context with the extension's service worker running, recording every page it
+         * opens; an extensions page reads the toggle back with the given report.
+         */
+        function extensionLaunch(
+            toggleReport: ToggleReport,
+            overrides: Record<string, unknown> = {},
+        ) {
+            const opened: ReturnType<typeof extensionsPage>[] = [];
+            const context = mockContext({
+                serviceWorkers: () => [
+                    {
+                        url: () => `chrome-extension://${extensionId}/background.js`,
+                        evaluate: vi.fn().mockResolvedValue(true),
+                    },
+                ],
+                newPage: vi.fn(async () => {
+                    const page = extensionsPage(toggleReport);
+                    opened.push(page);
+                    return page;
+                }),
+                ...overrides,
+            });
+            const eng = mockEngine({ launchPersistentContext: vi.fn().mockResolvedValue(context) });
+            return { eng, context, opened };
+        }
+
+        function create(eng: IBrowserEngine, userScriptsPermission: boolean) {
+            return BrowserSession.create({
+                engine: eng,
+                logger,
+                reproProfile: testProfile,
+                artifactsDir: '/tmp',
+                headless: true,
+                adguardExtensionPath: extensionPath,
+                adguardExtensionManifestVersion: ExtensionManifestVersion.Mv3,
+                adguardExtensionUserScriptsPermission: userScriptsPermission,
+                userScriptsToggleTimings: { pollMs: 1, deadlineMs: 5, attempts: 2 },
+                closeTimings: { deadlineMs: 5, settleMs: 5 },
+            });
+        }
+
+        it('turns the toggle on for the build before the session page opens', async () => {
+            const { eng, opened } = extensionLaunch(ToggleReport.Checked);
+
+            const session = await create(eng, true);
+
+            const [togglePage, sessionPage] = opened;
+            expect(togglePage?.goto).toHaveBeenCalledWith(
+                `chrome://extensions/?id=${extensionId}`,
+                expect.anything(),
+            );
+            expect(togglePage?.close).toHaveBeenCalledTimes(1);
+            expect(session.getPage()).toBe(sessionPage);
+            await session.close();
+        });
+
+        it('opens no extensions page for a build without the userScripts permission', async () => {
+            const { eng, opened } = extensionLaunch(ToggleReport.Checked);
+
+            const session = await create(eng, false);
+
+            expect(opened).toHaveLength(1);
+            expect(opened[0]?.goto).not.toHaveBeenCalled();
+            await session.close();
+        });
+
+        it('fails the launch and closes the browser when the toggle never turns on', async () => {
+            const { eng, context } = extensionLaunch(ToggleReport.RowNotFound);
+
+            await expect(create(eng, true)).rejects.toThrow(BrowserLaunchError);
+
+            expect(context.close).toHaveBeenCalled();
+        });
+
+        it('names the service worker, not the toggle, when the worker never starts', async () => {
+            const { eng, opened } = extensionLaunch(ToggleReport.Checked, {
+                serviceWorkers: () => [],
+                waitForEvent: vi.fn().mockRejectedValue(new Error('Timeout 15000ms exceeded')),
+            });
+
+            const launch = create(eng, true);
+
+            await expect(launch).rejects.toThrow(BrowserLaunchError);
+            await expect(launch).rejects.toThrow(/service worker did not start/);
+            await expect(launch).rejects.not.toThrow(/Allow User Scripts/);
+            expect(opened).toHaveLength(0);
+        });
+
+        it('kills the browser by its pid when its close hangs after a failed toggle', async () => {
+            const browserProcessPid = 424242;
+            const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
+            try {
+                const { eng } = extensionLaunch(ToggleReport.RowNotFound, {
+                    close: vi.fn(() => new Promise(() => undefined)),
+                    browser: () => ({
+                        _connection: {
+                            toImpl: () => ({
+                                options: {
+                                    browserProcess: { process: { pid: browserProcessPid } },
+                                },
+                            }),
+                        },
+                    }),
+                });
+
+                await expect(create(eng, true)).rejects.toThrow(BrowserLaunchError);
+
+                expect(kill).toHaveBeenCalledWith(-browserProcessPid, 'SIGKILL');
+            } finally {
+                kill.mockRestore();
+            }
+        });
     });
 
     it('rejects Firefox policies mixed with the Chromium extension channel without launching', async () => {

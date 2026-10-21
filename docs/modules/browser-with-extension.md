@@ -13,7 +13,8 @@ instead of dropping the configuration.
   extension's policies.
     - Firefox: signed XPI path (absolute, `file://` URL is built by `buildFirefoxPolicies`) and
       enterprise policies carrying `ExtensionSettings` plus `3rdparty.Extensions` managed storage.
-    - Chromium: unpacked extension directory path (`adguardExtensionPath`).
+    - Chromium: unpacked extension directory path (`adguardExtensionPath`), its manifest
+      generation and whether its manifest requires the `userScripts` permission.
 - **Output**: a `BrowserSession` whose page tools — `get_dom`, `screenshot`, `inspect_page_state`,
   `evaluate_js`, `get_console_log`, `stabilize_page` — work on top of either family.
   `get_console_log` alone differs in what it returns, and says so in its `consoleCoverage`: Firefox
@@ -26,6 +27,13 @@ instead of dropping the configuration.
 - **The browser did not start.** The launch path raises `BrowserLaunchError` before any tool is
   reachable. Callers escalate to analysis-only output; nothing extension-specific is diagnosable
   past this point.
+- **The started browser could not turn on "Allow User Scripts".** Chromium only: for an MV3 build
+  whose manifest requires the `userScripts` permission, the launch turns this toggle on before the
+  session page opens, because the build runs raw JavaScript user rules and custom filters only
+  through `chrome.userScripts`. The launch raises `BrowserLaunchError` and closes the browser when
+  the extension's service worker does not start, or when three attempts on `chrome://extensions`
+  leave the service worker unable to call `chrome.userScripts`. The message names which of the two
+  happened.
 - **The extension did not load.** The session is up, but the expected extension behavior is
   absent — the reporting page loads its ordinary content with no filtering. There is no
   extension-settings API reachable from the harness (see Firefox limitations below), so the proof

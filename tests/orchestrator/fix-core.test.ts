@@ -876,6 +876,7 @@ function cachedExtension(): PreparedExtension {
     return {
         extensionPath: '/tmp/extension-cache/extension',
         manifestVersion: ExtensionManifestVersion.Mv3,
+        userScriptsPermission: true,
         source: PreparedExtensionSource.PinnedRelease,
         extensionSourceSha256: 'e'.repeat(64),
         extensionSourceTag: 'v5.5.2.3',

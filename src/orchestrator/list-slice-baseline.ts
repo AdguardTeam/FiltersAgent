@@ -2,12 +2,13 @@
  * The launch-time Baseline of a session that runs a list slice (`settings.slice`): one selected
  * list is replaced by a line range of the build's own text of it, installed as a trusted custom
  * filter, while the built-in list stays off and every other selected list runs whole. The steps:
- * cut the slice from the build text, turn Chromium's "Allow User Scripts" on (without it the pinned
- * MV3 build runs no custom filter), serve the slice from the run's loopback text server, build the
+ * cut the slice from the build text, serve the slice from the run's loopback text server, build the
  * settings document with the common lists and the one custom filter, have the host runner import
  * and reconcile it, read the state back and verify it: the common lists on, exactly one custom
  * filter carrying the slice's title, no user rule, the expected Stealth state, the MV3 limits not
- * exceeded. `phase-application-launch.ts` delegates here after its own pre-read; the credit rule of
+ * exceeded. The custom filter runs only because the launch itself turned Chromium's "Allow User
+ * Scripts" on (`launch-wiring.ts`); a launch where it did not turn on never reaches this Baseline.
+ * `phase-application-launch.ts` delegates here after its own pre-read; the credit rule of
  * `blocker-state-credit.ts` is not used, because it would count the custom filter as a stray.
  */
 import type { BrowserContext } from 'playwright-core';
@@ -232,27 +233,15 @@ export async function launchListSliceBaseline(
             'The launch deadline aborted before the slice could be installed.',
         );
     }
-    const toggleStartedAt = Date.now();
-    try {
-        await host.listSlice.allowUserScripts(context, preRead.extensionId, logger);
-    } catch (error) {
-        logger.error(
-            { err: error, extensionId: preRead.extensionId },
-            'Chromium "Allow User Scripts" could not be turned on; the slice would not run',
-        );
-        return unverified(
-            logger,
-            'Chromium "Allow User Scripts" could not be turned on for the extension, so its ' +
-                'custom filter would be inert: ' +
-                (error instanceof Error ? error.message : String(error)),
-        );
-    }
+    // The launch already turned Chromium's "Allow User Scripts" on, without which the build runs
+    // no custom filter; a launch where it did not turn on never reaches this point.
+    const serveStartedAt = Date.now();
     let customUrl: string;
     try {
-        const server = await host.listSlice.textServer();
+        const server = await host.listSliceTextServer();
         customUrl = server.publish(sliceDocumentName(slice), text);
         logger.info(
-            { customUrl, port: server.port, toggleMs: Date.now() - toggleStartedAt },
+            { customUrl, port: server.port, serveMs: Date.now() - serveStartedAt },
             'the slice is served to the extension from the loopback text server',
         );
     } catch (error) {

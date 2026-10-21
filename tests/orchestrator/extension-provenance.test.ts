@@ -20,6 +20,7 @@ describe('serializeAgentExtensionProvenance', () => {
             source: PreparedExtensionSource.HistoricalBuild,
             extensionPath: '/tmp/extension',
             manifestVersion: ExtensionManifestVersion.Mv3,
+            userScriptsPermission: true,
             extensionSourceSha256: 'c'.repeat(64),
             extensionSourceTag: historicalBuild.autobuildTag,
             historicalBuild,

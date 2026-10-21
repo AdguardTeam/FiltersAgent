@@ -1,3 +1,4 @@
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -11,7 +12,10 @@ import {
     ExtensionManifestVersion,
     PreparedExtensionSource,
 } from '../../src/environment/extension-preparation';
-import type { PreparedExtension } from '../../src/local/prepared-extension';
+import {
+    loadPreparedExtensionFromDirectory,
+    type PreparedExtension,
+} from '../../src/local/prepared-extension';
 import { preparedPhaseSessionConfig } from '../../src/orchestrator/prepared-session-launch';
 import { ConsentStrategy, Viewport, type ReproProfile } from '../../src/types/repro-profile';
 import { PhaseLabel } from '../../src/types/validation';
@@ -98,7 +102,11 @@ describe('buildPreparedExtensionLaunchChannel', () => {
     it('launches a Chromium-family build through the unpacked directory and no policies', () => {
         const extensionPath = join(tmpdir(), 'prepared-extension');
         const channel = buildPreparedExtensionLaunchChannel({
-            launch: { extensionPath, manifestVersion: ExtensionManifestVersion.Mv3 },
+            launch: {
+                extensionPath,
+                manifestVersion: ExtensionManifestVersion.Mv3,
+                userScriptsPermission: false,
+            },
         });
 
         expect(channel.engine.browserType).toBe('cloakbrowser');
@@ -106,6 +114,7 @@ describe('buildPreparedExtensionLaunchChannel', () => {
         expect(channel.extensionChannel).toEqual({
             adguardExtensionPath: extensionPath,
             adguardExtensionManifestVersion: ExtensionManifestVersion.Mv3,
+            adguardExtensionUserScriptsPermission: false,
         });
     });
 
@@ -174,4 +183,45 @@ describe('preparedPhaseSessionConfig', () => {
                 ?.installation_mode,
         ).toBe('force_installed');
     });
+
+    it.each([
+        [['storage', 'userScripts'], true],
+        [['storage'], false],
+    ])(
+        'tells a Chromium phase launch whether the prepared manifest %j requires userScripts',
+        async (permissions, expected) => {
+            const extensionPath = mkdtempSync(join(tmpdir(), 'prepared-extension-'));
+            try {
+                writeFileSync(
+                    join(extensionPath, 'manifest.json'),
+                    JSON.stringify({ manifest_version: 3, version: '5.4.3.1', permissions }),
+                );
+                const extension = await loadPreparedExtensionFromDirectory(
+                    extensionPath,
+                    PreparedExtensionSource.PinnedRelease,
+                    'e'.repeat(64),
+                );
+
+                const config = preparedPhaseSessionConfig(
+                    {
+                        hostStateRoot: tmpdir(),
+                        artifactsDir: tmpdir(),
+                        headless: true,
+                        verbose: false,
+                    },
+                    {
+                        extension,
+                        phase: PhaseLabel.C,
+                        extensionRoot: extensionPath,
+                        reproProfile: REPRO_PROFILE,
+                        readinessBudgetMs: 1_000,
+                    },
+                );
+
+                expect(config.adguardExtensionUserScriptsPermission).toBe(expected);
+            } finally {
+                rmSync(extensionPath, { recursive: true, force: true });
+            }
+        },
+    );
 });

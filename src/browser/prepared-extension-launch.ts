@@ -100,6 +100,12 @@ export type PreparedExtensionChannelFields =
            * Manifest generation of the unpacked build, for the Chromium family.
            */
           adguardExtensionManifestVersion: ExtensionManifestVersion;
+
+          /**
+           * Whether the unpacked build requires the `userScripts` permission, for the Chromium
+           * family.
+           */
+          adguardExtensionUserScriptsPermission: boolean;
       }
     | {
           /**
@@ -167,6 +173,7 @@ export function buildPreparedExtensionLaunchChannel(
         extensionChannel: {
             adguardExtensionPath: launch.extensionPath,
             adguardExtensionManifestVersion: launch.manifestVersion,
+            adguardExtensionUserScriptsPermission: launch.userScriptsPermission,
         },
     };
 }

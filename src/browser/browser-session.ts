@@ -18,6 +18,7 @@ import type { PreparedStrictBrowserRoute } from './strict-browser-route';
 import type { ExtensionManifestVersion } from '../environment/extension-preparation';
 import type { ReproProfile } from '../types/repro-profile';
 import type { FirefoxPolicies } from './firefox-policies';
+import type { AllowUserScriptsOptions } from './chrome-user-scripts-toggle';
 import { launchSessionBrowser, type LaunchedSessionPieces } from './launch-wiring';
 import { BrowserConfigurationError } from './browser-launch-errors';
 
@@ -73,6 +74,12 @@ export interface BrowserSessionConfig {
     adguardExtensionManifestVersion?: ExtensionManifestVersion;
 
     /**
+     * Whether the unpacked build's manifest requires the `userScripts` permission; an MV3 launch
+     * turns Chromium's "Allow User Scripts" on only then.
+     */
+    adguardExtensionUserScriptsPermission?: boolean;
+
+    /**
      * Firefox enterprise policies that force-install a signed XPI with managed storage.
      *
      * Engines load their extensions through the family channel: Firefox takes a signed XPI through
@@ -107,6 +114,14 @@ export interface BrowserSessionConfig {
      * waiting out the production bounds.
      */
     closeTimings?: BrowserCloseTimings;
+
+    /**
+     * Pacing of the "Allow User Scripts" attempts an MV3 extension launch makes.
+     *
+     * Unset keeps the module defaults; tests inject tiny values to exercise a toggle that never
+     * turns on without waiting out the production deadlines.
+     */
+    userScriptsToggleTimings?: AllowUserScriptsOptions;
 
     /**
      * Accept the route proxy's own interception authority for every host in the session.

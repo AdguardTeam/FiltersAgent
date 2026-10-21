@@ -1,7 +1,6 @@
 import type { BrowserContext } from 'playwright-core';
 import type { AdGuardExtensionStateRead } from '../browser/adguard-extension-state-shapes';
 import type { readAdGuardExtensionState as readAdGuardExtensionStateDefault } from '../browser/adguard-extension-state-read';
-import type { allowUserScripts as allowUserScriptsDefault } from '../browser/chrome-user-scripts-toggle';
 import type { findExtensionRuntime as findExtensionRuntimeDefault } from '../browser/extension-runtime-location';
 import type { IBrowserSession } from '../browser/browser-interfaces';
 import type { LoopbackTextServer } from '../local/loopback-text-server';
@@ -84,24 +83,6 @@ export interface PhaseApplicationModelRunnerDependencies {
 export type PhaseApplicationModelRunnerFactory = (
     depends: PhaseApplicationModelRunnerDependencies,
 ) => PhaseApplicationRunner;
-
-/**
- * What a launch that runs a list slice needs from the run beyond the application flow: somewhere to
- * serve the slice's text from, and the Chromium toggle without which the build runs no custom
- * filter.
- */
-export interface ListSliceLaunchSupport {
-    /**
-     * The run's loopback text server, created on first use and living for the run: the extension
-     * may re-download a custom filter after the launch.
-     */
-    textServer: () => Promise<LoopbackTextServer>;
-
-    /**
-     * Turn Chromium's "Allow User Scripts" on for the prepared extension; tests inject one.
-     */
-    allowUserScripts: typeof allowUserScriptsDefault;
-}
 
 /**
  * The runtime seam the between-phases application flow acts through: the run's leaf options and
@@ -187,10 +168,11 @@ export interface PhaseApplicationFlowHost {
     readAdGuardExtensionState?: typeof readAdGuardExtensionStateDefault;
 
     /**
-     * What a launch with `settings.slice` acts through beyond this flow: the run's text server and
-     * the Chromium toggle. Only the launch-time Baseline reads it.
+     * The run's loopback text server a launch with `settings.slice` serves the slice from, created
+     * on first use and living for the run: the extension may re-download a custom filter after the
+     * launch. Only the launch-time Baseline reads it.
      */
-    listSlice: ListSliceLaunchSupport;
+    listSliceTextServer: () => Promise<LoopbackTextServer>;
 }
 
 /**

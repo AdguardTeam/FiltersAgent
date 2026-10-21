@@ -48,7 +48,6 @@ import {
     recordPreflightDiagnostic,
 } from '../local/preflight-diagnostic-log';
 import { CloakBrowserEngine } from '../browser/cloakbrowser-engine';
-import { allowUserScripts as allowUserScriptsDefault } from '../browser/chrome-user-scripts-toggle';
 import { createLoopbackTextServer, type LoopbackTextServer } from '../local/loopback-text-server';
 import { CHROMIUM_USER_AGENT_PROFILE } from '../browser/prepared-extension-launch';
 import type { IBrowserSession } from '../browser/browser-interfaces';
@@ -522,13 +521,6 @@ export interface AgentRuntimeDependencies {
      * to drive the application read-back without a browser.
      */
     readAdGuardExtensionState?: typeof readAdGuardExtensionStateDefault;
-
-    /**
-     * Turn Chromium's "Allow User Scripts" on for the prepared extension before a list slice is
-     * imported as a custom filter. Defaults to the production toggle over `chrome://extensions`;
-     * tests inject one to prove the order without a browser.
-     */
-    allowUserScripts?: typeof allowUserScriptsDefault;
 
     /**
      * Start the run's loopback text server the list slices are served from. Defaults to the
@@ -3311,10 +3303,7 @@ export class AgentRuntime {
             createPhaseApplicationModelRunner: this.dependencies.createPhaseApplicationModelRunner,
             findExtensionRuntime: this.dependencies.findExtensionRuntime,
             readAdGuardExtensionState: this.dependencies.readAdGuardExtensionState,
-            listSlice: {
-                textServer: () => this.textServer(),
-                allowUserScripts: this.dependencies.allowUserScripts ?? allowUserScriptsDefault,
-            },
+            listSliceTextServer: () => this.textServer(),
         };
     }
 

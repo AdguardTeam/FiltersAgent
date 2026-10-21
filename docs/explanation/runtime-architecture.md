@@ -383,14 +383,22 @@ mismatched ownership, manifest, or visibility state. There is no cleanup CLI.
   session launches and keeps it for the session — before the Baseline application, because the
   build keeps Chrome's declarative-match log only when that page is open while its engine is
   configured.
+- "Allow User Scripts": `src/browser/chrome-user-scripts-toggle.ts` turns on Chromium's
+  per-extension toggle on `chrome://extensions` at every Chromium launch of an MV3 build that
+  requires the `userScripts` permission (`src/browser/launch-wiring.ts`), before the session page
+  opens. Chromium 138+ exposes `chrome.userScripts` only behind it, and the pinned MV3 build runs
+  raw JavaScript user rules and custom filters only through that API; built-in lists do not take
+  that path. Chrome ships the toggle off, so a raw JavaScript rule can work here and not for a
+  reporter. The toggle is a click in the browser's own WebUI, not a profile setting: a launch makes
+  three bounded attempts on fresh pages, counts one only when the extension's service worker can
+  call `chrome.userScripts` the way the build checks it, and fails when none does. Whether the manifest requires `userScripts` is
+  read once, when the build is prepared, and reaches the launch with the session configuration.
 - List slices (`settings.slice` of `launch_browser`): `src/browser/extension-list-text.ts` reads a
   list's text from the build's own declarative ruleset (`metadata.filterContent` in 5.5 or
   `metadata.rawFilterList` in 5.4, byte-identical to the published list) and cuts a line range from
   it, checksum lines dropped;
   `src/local/loopback-text-server.ts` serves the slice on `127.0.0.1`;
-  `src/browser/chrome-user-scripts-toggle.ts` flips Chromium's per-extension "Allow User Scripts"
-  (Chromium 138+ exposes `chrome.userScripts` only behind it, and the pinned MV3 build runs no
-  custom filter without that API); `src/orchestrator/list-slice-baseline.ts` runs the slice
+  `src/orchestrator/list-slice-baseline.ts` runs the slice
   session's Baseline and `src/orchestrator/list-slice-launch.ts` refuses a bad slice before any
   launch. A slice session refuses `apply_rule`.
 - `src/browser/page-state-probe.ts`, `src/browser/page-state-budget.ts` — the bounded

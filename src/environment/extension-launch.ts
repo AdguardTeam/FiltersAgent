@@ -69,6 +69,13 @@ export interface ChromiumExtensionLaunch {
      * Manifest generation the unpacked build ships, read from its own manifest.
      */
     manifestVersion: ExtensionManifestVersion;
+
+    /**
+     * Whether the build's manifest requires the `userScripts` permission, read from its own
+     * manifest when the build is prepared; a launch turns Chromium's "Allow User Scripts" on only
+     * then.
+     */
+    userScriptsPermission: boolean;
 }
 
 /**

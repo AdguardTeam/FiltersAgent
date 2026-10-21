@@ -1,16 +1,19 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { Browser, BrowserContext, Page } from 'playwright-core';
+import type { Browser, BrowserContext, Page, Worker } from 'playwright-core';
 import type { Logger } from 'pino';
 import type { BrowserSessionConfig } from './browser-session';
 import { buildBrowserSubprocessEnvironment } from './browser-subprocess-environment';
 import { ExtensionManifestVersion } from '../environment/extension-preparation';
 import { Viewport, type ReproProfile } from '../types/repro-profile';
 import { launchStrictRoutePieces } from './strict-route-launch';
-import { readBrowserProcessPid } from './browser-kill-handle';
 import { BrowserLaunchError, BrowserConfigurationError } from './browser-launch-errors';
 import { CHROMIUM_VERSION, chromiumUserAgent, DESKTOP_PLATFORM } from './browser-identity';
+import { allowUserScripts } from './chrome-user-scripts-toggle';
+import { runBoundedBrowserClose, forceKillBrowserProcessesByMarker } from './bounded-close';
+import { findExtensionWorker } from './extension-runtime-location';
+import { forceKillBrowserProcessTree, readBrowserProcessPid } from './browser-kill-handle';
 
 /**
  * The launched browser artifacts a family launch hands back to {@link BrowserSession.create}.
@@ -213,17 +216,101 @@ async function launchFirefoxPoliciesPieces(
 }
 
 /**
+ * Tear down a persistent extension context whose launch failed after the browser started.
+ *
+ * Bounded like a session close, since no session exists yet to close it. The forced kill reaches
+ * the browser through its pid on every platform, and through the profile directory marker on Linux
+ * for the strays; the directory goes away afterwards.
+ *
+ * @param inputs - Session-level launch inputs; their close timings and logger apply.
+ * @param context - The launched context to close.
+ * @param profileDir - The profile directory the context launched with.
+ * @returns Resolves once the context is closed or abandoned and the directory removed.
+ */
+async function closeFailedExtensionLaunch(
+    inputs: SessionLaunchInputs,
+    context: BrowserContext,
+    profileDir: string,
+): Promise<void> {
+    const { logger } = inputs;
+    const browserProcessPid = readBrowserProcessPid(context, logger);
+    await runBoundedBrowserClose({
+        gracefulClose: () => context.close(),
+        forceKill: () =>
+            (browserProcessPid === undefined
+                ? 0
+                : forceKillBrowserProcessTree(browserProcessPid, logger)) +
+            forceKillBrowserProcessesByMarker(profileDir, logger),
+        logger,
+        deadlineMs: inputs.config.closeTimings?.deadlineMs,
+        settleMs: inputs.config.closeTimings?.settleMs,
+    });
+    rmSync(profileDir, { recursive: true, force: true });
+}
+
+/**
+ * Turn Chromium's "Allow User Scripts" on for the MV3 build a launch just loaded.
+ *
+ * Runs before the session page opens and before any rule is applied: the build runs raw JavaScript
+ * user rules and custom filters through `chrome.userScripts`, which Chromium exposes only while the
+ * toggle is on. A launch that cannot turn it on closes its browser and fails, with the service
+ * worker that never started told apart from the toggle that did not turn on.
+ *
+ * @param inputs - Session-level launch inputs.
+ * @param context - The persistent context the build was launched in.
+ * @param profileDir - The profile directory the context launched with.
+ * @returns Resolves once the extension's service worker can use `chrome.userScripts`.
+ * @throws {BrowserLaunchError} When the extension's service worker does not start, or the toggle
+ *   does not turn on.
+ */
+async function turnOnUserScripts(
+    inputs: SessionLaunchInputs,
+    context: BrowserContext,
+    profileDir: string,
+): Promise<void> {
+    const { config, logger } = inputs;
+    const browserType = config.engine.browserType;
+    let worker: Worker;
+    try {
+        worker = await findExtensionWorker(context);
+    } catch (err) {
+        logger.error({ err }, 'the launched extension service worker did not start');
+        await closeFailedExtensionLaunch(inputs, context, profileDir);
+        throw new BrowserLaunchError(
+            `Launched ${browserType} with AdGuard, but the extension's service worker did not ` +
+                `start: ${(err as Error).message}`,
+            err,
+        );
+    }
+    try {
+        await allowUserScripts(context, worker, logger, config.userScriptsToggleTimings);
+    } catch (err) {
+        logger.error({ err }, 'Chromium "Allow User Scripts" could not be turned on');
+        await closeFailedExtensionLaunch(inputs, context, profileDir);
+        throw new BrowserLaunchError(
+            `Launched ${browserType} with AdGuard, but Chromium "Allow User Scripts" could not ` +
+                'be turned on, so no raw JavaScript rule could run in it: ' +
+                (err as Error).message,
+            err,
+        );
+    }
+}
+
+/**
  * Launch a persistent context with the unpacked prepared extension and nothing else.
  *
  * The launch applies no settings and captures no evidence pieces — the session boots the
- * extension's own defaults, and the run's application instruction (performed against the lease
- * session) is the one mechanism that brings the blocker to the prepared state. The host reads the
- * blocker state back itself over the returned context.
+ * extension's own defaults, with Chromium's "Allow User Scripts" turned on for an MV3 build that
+ * has it, and the run's application instruction (performed against the lease session) is the one
+ * mechanism that brings the blocker to the prepared state. The host reads the blocker state back
+ * itself over the returned context.
  *
  * @param inputs - Session-level launch inputs shared by every family branch.
  * @returns The launched context, page, profile directory, and the persistent context itself.
  * @throws {BrowserConfigurationError} When no extension build was supplied.
- * @throws {BrowserLaunchError} When the engine fails to launch the persistent context.
+ * @throws {BrowserLaunchError} When the engine fails to launch the persistent context, or, for an
+ *   MV3 build with the `userScripts` permission, the extension's service worker does not start or
+ *   the "Allow User Scripts" toggle does not turn on.
  */
 async function launchAdGuardExtensionPieces(
     inputs: SessionLaunchInputs,
@@ -263,6 +350,13 @@ async function launchAdGuardExtensionPieces(
             `Failed to launch ${engine.browserType} with AdGuard: ${(err as Error).message}`,
             err,
         );
+    }
+
+    if (
+        config.adguardExtensionManifestVersion === ExtensionManifestVersion.Mv3 &&
+        config.adguardExtensionUserScriptsPermission === true
+    ) {
+        await turnOnUserScripts(inputs, context, profileDir);
     }
 
     const page = await context.newPage();

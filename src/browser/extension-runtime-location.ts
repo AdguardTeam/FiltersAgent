@@ -127,7 +127,7 @@ function isChromeExtensionPage(page: Page): boolean {
  * @param context - Persistent Playwright context launched with AdGuard MV3.
  * @returns The AdGuard extension service worker.
  */
-async function findExtensionWorker(context: BrowserContext): Promise<Worker> {
+export async function findExtensionWorker(context: BrowserContext): Promise<Worker> {
     const existingWorkers = context.serviceWorkers().filter(isChromeExtensionWorker);
     if (existingWorkers.length > 1) {
         throw new Error('Multiple Chromium extension service workers were found.');
@@ -159,7 +159,7 @@ async function findExtensionWorker(context: BrowserContext): Promise<Worker> {
  * @param worker - Located extension service worker.
  * @returns Chromium extension ID.
  */
-function getExtensionId(worker: Worker): string {
+export function getExtensionId(worker: Worker): string {
     const extensionId = new URL(worker.url()).hostname;
     if (!CHROMIUM_EXTENSION_ID_PATTERN.test(extensionId)) {
         throw new Error('AdGuard MV3 service worker has an invalid extension ID.');

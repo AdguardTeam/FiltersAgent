@@ -78,6 +78,12 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Fixed
 
+- Fixed raw JavaScript candidates (`#%#` without `//scriptlet`) never running
+  in the AdGuard MV3 extension: every Chromium launch of a build with the
+  `userScripts` permission now turns on Chrome's "Allow User Scripts", which
+  Chrome ships off. A launch fails, naming the cause, when the extension's
+  service worker does not start or three attempts of up to 10 seconds each
+  leave the extension unable to call `chrome.userScripts`.
 - Fixed a run crashing when its browser closed while the network guard was
   still checking a request: the process died on an unhandled `route.abort`
   rejection.
