@@ -21,11 +21,6 @@ const MANIFEST_VERSION_PARAMETER = 'ext.manifest_version';
  */
 interface GoldenReporterEnvironment {
     /**
-     * Exact browser-extension version reported by the user.
-     */
-    extensionVersion: string;
-
-    /**
      * Browser extension manifest generation reported by the user.
      */
     manifestVersion: number;
@@ -115,7 +110,6 @@ function readGoldenReporterEnvironment(issue: RawIssue): GoldenReporterEnvironme
         );
     }
     return {
-        extensionVersion: expectations.productVersion,
         manifestVersion,
         enabledFilterIds: expectations.enabledFilterIds,
         stealthEnabled: expectations.stealthEnabled,

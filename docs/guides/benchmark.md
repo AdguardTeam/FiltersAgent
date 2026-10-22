@@ -162,7 +162,7 @@ The command prints one entry per case:
 ```text
 nettg-pl-235988: verified
     cost: $0.0412
-sochi-camera-234715: site_unreachable (https://sochi.camera/ did not answer: fetch failed: UND_ERR_CONNECT_TIMEOUT)
+example-com-123456: site_unreachable (https://example.com/ did not answer: fetch failed: UND_ERR_CONNECT_TIMEOUT)
     cost: unknown, the run wrote no usage summary
 ```
 

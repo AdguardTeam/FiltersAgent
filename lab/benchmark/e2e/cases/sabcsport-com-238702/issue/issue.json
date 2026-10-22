@@ -1,0 +1,25 @@
+{
+    "schemaVersion": 1,
+    "rawIssue": {
+        "number": 238702,
+        "reporterAuthor": "adguard-bot",
+        "url": "https://github.com/AdguardTeam/AdguardFilters/issues/238702",
+        "title": "www.sabcsport.com",
+        "body": "### Issue URL (Ads)\n[https://www.sabcsport.com/soccer/news/atletico-coach-diego-simeone-drops-julian-alvarez-amid-barcelona-transfer-links](https://adguardteam.github.io/AnonymousRedirect/redirect.html?url=https%3A%2F%2Fwww.sabcsport.com%2Fsoccer%2Fnews%2Fatletico-coach-diego-simeone-drops-julian-alvarez-amid-barcelona-transfer-links)\n\n\n\n\n### Screenshots\n<details>\n  <summary>Screenshot 1</summary>\n\n  ![Screenshot 1](https://cdn.adguardcdn.com/sitereports/d7p07d1i514wog848444ggc0swc0o0k3dk01dlq7zk.jpg?nc=1)\n</details>\n\n\n### System configuration\n\n| Information | Value |\n|-------------|-------|\nAdGuard product: | AdGuard Browser Extension v5.4.3.129 MV3\nSystem version: | `Windows 10`\nBrowser: | Chrome\nFilters: | **Ad Blocking:**<br>AdGuard Base filter<br><br>**Privacy:**<br>AdGuard Tracking Protection filter, <br>AdGuard URL Tracking filter<br><br>**Social Widgets:**<br>AdGuard Social Media filter<br><br>**Annoyances:**<br>AdGuard Cookie Notices filter, <br>AdGuard Popups filter, <br>AdGuard Mobile App Banners filter, <br>AdGuard Other Annoyances filter, <br>AdGuard Widgets filter<br><br>**Security:**<br>Online Malicious URL Blocklist<br><br>**Language-specific:**<br>AdGuard Russian filter, <br>AdGuard Turkish filter\nFilters last update: | 2026-08-17T09:01:01Z\n\n\n\n### Issue configuration\n[Import](https://reports.adguard.com/settings/import.html?scheme_version=4&amp;product_type=ext&amp;product_version=5.4.3.129&amp;system_version=Windows+10&amp;ext.manifest_version=3&amp;browser=chrome&amp;regular_filters=1%2C2%2C3%2C4%2C13%2C17%2C18%2C19%2C20%2C21%2C22%2C208&amp;filters_last_update=2026-08-17T09%3A01%3A01Z&amp;stealth.enabled=1&amp;stealth.block_trackers=1&amp;stealth.x_client=1&amp;stealth.referrer=&amp;stealth.strip_url=1&amp;stealth.hide_search_queries=1&amp;stealth.send_dnt=1)\n",
+        "state": "closed",
+        "labels": ["T: Ads", "A: Resolved", "P3: Medium", "N: AdGuard Browser Extension"],
+        "assignee": "AdamWr",
+        "comments": []
+    },
+    "reporterComments": [],
+    "attachments": [
+        {
+            "kind": "issue_screenshot",
+            "sourceUrl": "https://cdn.adguardcdn.com/sitereports/d7p07d1i514wog848444ggc0swc0o0k3dk01dlq7zk.jpg?nc=1",
+            "localPath": "attachments/01-8c0877be993357c9.jpg",
+            "sha256": "8c0877be993357c9d039cef3e471de3c382164d59a565c59086f18543cdcb21d",
+            "promptVisible": true,
+            "source": "body"
+        }
+    ]
+}

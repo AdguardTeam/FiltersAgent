@@ -1,0 +1,31 @@
+{
+    "schemaVersion": 1,
+    "rawIssue": {
+        "number": 238417,
+        "reporterAuthor": "adguard-bot",
+        "url": "https://github.com/AdguardTeam/AdguardFilters/issues/238417",
+        "title": "www.r10.net",
+        "body": "### Issue URL (Ads)\n[https://www.r10.net/](https://adguardteam.github.io/AnonymousRedirect/redirect.html?url=https%3A%2F%2Fwww.r10.net%2F)\n\n### Comment\n> İşaretlediğim alanda reklam var, eklenti reklamı engelliyor ancak boşluk kalıyor.\n\n\n\n### Screenshots\n<details>\n  <summary>Screenshot 1</summary>\n\n  ![Screenshot 1](https://cdn.adguardcdn.com/sitereports/f756759ljvkggo0gw0w0ww48gkggsg82wlrrg4zkzk.png?nc=1)\n</details>\n\n\n### System configuration\n\n| Information | Value |\n|-------------|-------|\nAdGuard product: | AdGuard Browser Extension v5.4.3.127 MV3\nSystem version: | `Mac OS 26.5.2`\nBrowser: | Chrome\nFilters: | **Ad Blocking:**<br>AdGuard Base filter<br><br>**Other:**<br>Filter unblocking search ads and self-promotion<br><br>**Language-specific:**<br>AdGuard Turkish filter\nFilters last update: | 2026-08-15T08:00:55Z\n\n\n\n### Issue configuration\n[Import](https://reports.adguard.com/settings/import.html?scheme_version=4&amp;product_type=ext&amp;product_version=5.4.3.127&amp;system_version=Mac+OS+26.5.2&amp;ext.manifest_version=3&amp;browser=chrome&amp;regular_filters=2%2C10%2C13&amp;filters_last_update=2026-08-15T08%3A00%3A55Z&amp;stealth.enabled=0)\n",
+        "state": "closed",
+        "labels": ["T: Ads", "A: Resolved", "P3: Medium", "N: AdGuard Browser Extension"],
+        "assignee": "AdamWr",
+        "comments": [
+            {
+                "author": "github-actions[bot]",
+                "body": "This issue has been automatically marked as stale because it has been open for 3 days with no activity.\nUnfortunately, our resources are limited and we can not always take the time to respond to requests about websites that are not popular enough. The issue will be closed if no further activity occurs.\nPlease note, that AdGuard Filters is an open-source project that is used by different content blockers and we welcome contributions. If you have some technical knowledge about how websites work, you are welcome to create a pull request following [these instructions](https://github.com/AdguardTeam/AdguardFilters/blob/master/CONTRIBUTING.md).",
+                "createdAt": "2026-08-19T04:13:17Z"
+            }
+        ]
+    },
+    "reporterComments": [],
+    "attachments": [
+        {
+            "kind": "issue_screenshot",
+            "sourceUrl": "https://cdn.adguardcdn.com/sitereports/f756759ljvkggo0gw0w0ww48gkggsg82wlrrg4zkzk.png?nc=1",
+            "localPath": "attachments/01-bcbbd4fa2cb85856.png",
+            "sha256": "bcbbd4fa2cb8585680b14f2985a8cf0cd9a697a88529fea5b4b60f10fbe7c4c3",
+            "promptVisible": true,
+            "source": "body"
+        }
+    ]
+}

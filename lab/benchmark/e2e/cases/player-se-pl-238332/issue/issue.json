@@ -1,0 +1,30 @@
+{
+    "schemaVersion": 1,
+    "rawIssue": {
+        "number": 238332,
+        "reporterAuthor": "adguard-bot",
+        "url": "https://github.com/AdguardTeam/AdguardFilters/issues/238332",
+        "title": "player.se.pl",
+        "body": "### Issue URL (Anti Adblock Script)\n[https://player.se.pl/](https://adguardteam.github.io/AnonymousRedirect/redirect.html?url=https%3A%2F%2Fplayer.se.pl%2F)\n\n\n\n\n### Screenshots\n<details>\n  <summary>Screenshot 1</summary>\n\n  ![Screenshot 1](https://cdn.adguardcdn.com/sitereports/5nupw9lu22kg880sksk4kg0c04owg4sfonlrn6gnso.png?nc=1)\n</details>\n\n\n### System configuration\n\n| Information | Value |\n|-------------|-------|\nAdGuard product: | AdGuard Browser Extension v5.4.3.126 MV3\nSystem version: | `Windows 11`\nBrowser: | Chrome\nFilters: | **Ad Blocking:**<br>AdGuard Base filter<br><br>**Other:**<br>Filter unblocking search ads and self-promotion<br><br>**Language-specific:**<br>Official Polish filters for AdBlock, uBlock Origin & AdGuard, <br>Polish Anti Adblock Filters\nFilters last update: | 2026-08-14T09:01:03Z\nOther extensions used: | `Windows Defender`\n\n\n\n### Issue configuration\n[Import](https://reports.adguard.com/settings/import.html?scheme_version=4&amp;product_type=ext&amp;product_version=5.4.3.126&amp;system_version=Windows+11&amp;ext.manifest_version=3&amp;browser=chrome&amp;regular_filters=2%2C10%2C216%2C238&amp;filters_last_update=2026-08-14T09%3A01%3A03Z&amp;stealth.enabled=0)\n",
+        "state": "closed",
+        "labels": [
+            "T: Anti Adblock Script",
+            "A: Resolved",
+            "P4: Low",
+            "N: AdGuard Browser Extension"
+        ],
+        "assignee": "AdamWr",
+        "comments": []
+    },
+    "reporterComments": [],
+    "attachments": [
+        {
+            "kind": "issue_screenshot",
+            "sourceUrl": "https://cdn.adguardcdn.com/sitereports/5nupw9lu22kg880sksk4kg0c04owg4sfonlrn6gnso.png?nc=1",
+            "localPath": "attachments/01-b140c7e6ddce04a4.png",
+            "sha256": "b140c7e6ddce04a48cdff3b944b7b57864f7efdb800919d7d73408142947ae8d",
+            "promptVisible": true,
+            "source": "body"
+        }
+    ]
+}

@@ -63,6 +63,9 @@ The format is based on [Keep a Changelog], and this project adheres to
 - Changed the AdGuard CLI module to install the stable AdGuard CLI 1.4.13
   instead of 1.5.0-rc.1, and to refuse a pre-release `releaseUrl`. Seed the
   CLI home again after upgrading.
+- Changed the benchmark case set to 20 cases: added 15 historical cases and
+  removed 8 whose site no longer answers, whose reported problem no longer
+  appears, or whose reported state the benchmark cannot reach.
 - Changed the candidate visual review to ask the baseline and candidate
   screenshots the same inventory question without naming which state they
   show, so the baseline inventory no longer reports the reporter's symptom on

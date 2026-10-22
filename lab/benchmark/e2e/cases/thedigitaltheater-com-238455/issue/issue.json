@@ -1,0 +1,30 @@
+{
+    "schemaVersion": 1,
+    "rawIssue": {
+        "number": 238455,
+        "reporterAuthor": "adguard-bot",
+        "url": "https://github.com/AdguardTeam/AdguardFilters/issues/238455",
+        "title": "thedigitaltheater.com",
+        "body": "### Issue URL (Anti Adblock Script)\n[https://thedigitaltheater.com/](https://adguardteam.github.io/AnonymousRedirect/redirect.html?url=https%3A%2F%2Fthedigitaltheater.com%2F)\n\n### Comment\n> Even when the Adguard protection is temporarily disable it is detected by the site.\n\n\n\n### Screenshots\n<details>\n  <summary>Screenshot 1</summary>\n\n  ![Screenshot 1](https://cdn.adguardcdn.com/sitereports/55pmg7kiekcgscg0o84sccosg8w0gk0jwhjv99tyls.png?nc=1)\n</details>\n\n\n### System configuration\n\n| Information | Value |\n|-------------|-------|\nAdGuard product: | AdGuard Browser Extension v5.4.3.128 MV3\nSystem version: | `Windows 11`\nBrowser: | Chrome\nFilters: | **Ad Blocking:**<br>AdGuard Base filter<br><br>**Other:**<br>Filter unblocking search ads and self-promotion<br><br>**Language-specific:**<br>AdGuard Spanish/Portuguese filter\nFilters last update: | 2026-08-16T08:00:58Z\nOther extensions used: | `https://thedigitaltheater.com/`\n\n\n\n### Issue configuration\n[Import](https://reports.adguard.com/settings/import.html?scheme_version=4&amp;product_type=ext&amp;product_version=5.4.3.128&amp;system_version=Windows+11&amp;ext.manifest_version=3&amp;browser=chrome&amp;regular_filters=2%2C9%2C10&amp;filters_last_update=2026-08-16T08%3A00%3A58Z&amp;stealth.enabled=0)\n",
+        "state": "closed",
+        "labels": [
+            "T: Anti Adblock Script",
+            "A: Resolved",
+            "P4: Low",
+            "N: AdGuard Browser Extension"
+        ],
+        "assignee": "AdamWr",
+        "comments": []
+    },
+    "reporterComments": [],
+    "attachments": [
+        {
+            "kind": "issue_screenshot",
+            "sourceUrl": "https://cdn.adguardcdn.com/sitereports/55pmg7kiekcgscg0o84sccosg8w0gk0jwhjv99tyls.png?nc=1",
+            "localPath": "attachments/01-320f6e4af03a9010.png",
+            "sha256": "320f6e4af03a9010ea8224c87402de53d42755e5f3c39606d183b34b38a6136f",
+            "promptVisible": true,
+            "source": "body"
+        }
+    ]
+}

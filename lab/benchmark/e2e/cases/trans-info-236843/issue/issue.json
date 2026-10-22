@@ -1,0 +1,25 @@
+{
+    "schemaVersion": 1,
+    "rawIssue": {
+        "number": 236843,
+        "reporterAuthor": "adguard-bot",
+        "url": "https://github.com/AdguardTeam/AdguardFilters/issues/236843",
+        "title": "trans.info",
+        "body": "### Issue URL (Ads)\n[https://trans.info/pl/zwrot-w-sprawie-kar-e-toll-ministerstwo-szykuje-nowy-mechanizm-sankcji-491915](https://adguardteam.github.io/AnonymousRedirect/redirect.html?url=https%3A%2F%2Ftrans.info%2Fpl%2Fzwrot-w-sprawie-kar-e-toll-ministerstwo-szykuje-nowy-mechanizm-sankcji-491915)\n\n\n\n\n### Screenshots\n<details>\n  <summary>Screenshot 1</summary>\n\n  ![Screenshot 1](https://cdn.adguardcdn.com/sitereports/5uxw8wg0mr8c8k8ow0808kk8kkw408g67kvkje5x3g.png?nc=1)\n</details>\n\n\n### System configuration\n\n| Information | Value |\n|-------------|-------|\nAdGuard product: | AdGuard Browser Extension v5.4.3.110 MV3\nBrowser: | Chrome\nFilters: | **Ad Blocking:**<br>AdGuard Base filter<br><br>**Privacy:**<br>AdGuard Tracking Protection filter, <br>AdGuard URL Tracking filter<br><br>**Social Widgets:**<br>AdGuard Social Media filter<br><br>**Annoyances:**<br>AdGuard Cookie Notices filter, <br>AdGuard Popups filter, <br>AdGuard Mobile App Banners filter, <br>AdGuard Other Annoyances filter, <br>AdGuard Widgets filter<br><br>**Security:**<br>Online Malicious URL Blocklist, <br>Phishing URL Blocklist, <br>Scam Blocklist by DurableNapkin, <br>uBlock Origin – Badware risks, <br>Dandelion Sprout's Anti-Malware List<br><br>**Language-specific:**<br>Official Polish filters for AdBlock, uBlock Origin & AdGuard, <br>Polish GDPR-Cookies Filters, <br>Polish Anti Adblock Filters\nFilters last update: | 2026-07-27T08:00:52Z\n\n\n\n### Issue configuration\n[Import](https://reports.adguard.com/settings/import.html?scheme_version=4&amp;product_type=ext&amp;product_version=5.4.3.110&amp;system_version=&amp;ext.manifest_version=3&amp;browser=chrome&amp;regular_filters=2%2C3%2C4%2C17%2C18%2C19%2C20%2C21%2C22%2C208%2C216%2C217%2C238%2C255%2C256%2C257%2C259&amp;filters_last_update=2026-07-27T08%3A00%3A52Z&amp;stealth.enabled=0)\n",
+        "state": "closed",
+        "labels": ["T: Ads", "A: Resolved", "P3: Medium", "N: AdGuard Browser Extension"],
+        "assignee": "AdamWr",
+        "comments": []
+    },
+    "reporterComments": [],
+    "attachments": [
+        {
+            "kind": "issue_screenshot",
+            "sourceUrl": "https://cdn.adguardcdn.com/sitereports/5uxw8wg0mr8c8k8ow0808kk8kkw408g67kvkje5x3g.png?nc=1",
+            "localPath": "attachments/01-6f2beeed8a16881b.png",
+            "sha256": "6f2beeed8a16881b524abd61ae2dde8a857046f0604506bb60dddf790e9523ca",
+            "promptVisible": true,
+            "source": "body"
+        }
+    ]
+}

@@ -135,20 +135,13 @@ function lockedRecord(): LocalRunRecord {
 }
 
 /**
- * Retarget a locked record to one tracked case's reporter build and filter selection.
+ * Retarget a locked record to one tracked case's reporter filter selection.
  *
  * @param filterIds - Exact reporter filter IDs.
- * @param version - Reporter extension version.
- * @param commit - Exact autobuild commit for the reporter version.
  * @returns Updated locked record.
  */
-function trackedCaseRecord(filterIds: number[], version: string, commit: string): LocalRunRecord {
+function trackedCaseRecord(filterIds: number[]): LocalRunRecord {
     const record = lockedRecord();
-    Object.assign(record.result.extensionProvenance!.historicalBuild!, {
-        version,
-        autobuildTag: `autobuild-v${version}`,
-        autobuildCommit: commit,
-    });
     const listKeys = filterIds.map((filterId) => `adguard:${filterId}`);
     record.result.settingsEvidence!.enabledListKeys = [...listKeys];
     record.result.settingsEvidence!.activeRulesetListKeys = [...listKeys];
@@ -158,19 +151,13 @@ function trackedCaseRecord(filterIds: number[], version: string, commit: string)
 // The filter selections each tracked case's report carries in its settings import link.
 const TRACKED_CASE_SETTINGS = {
     'nettg-pl-235988': {
-        version: '5.4.3.99',
-        commit: '856783eb784fc5f1cb9bc39e156e94ee1ede210b',
         filterIds: [2, 3, 4, 17, 18, 19, 20, 21, 22, 208, 216, 217, 238, 255, 256, 257, 259],
     },
     'wpoznaniu-pl-235403': {
-        version: '5.4.3.91',
-        commit: 'abc2ca544734957f5d58d8125f53eaef21d4d989',
         filterIds: [2, 3, 4, 17, 18, 19, 20, 21, 22, 208, 216, 217, 238, 255, 256, 257, 259],
     },
-    'sochi-camera-234715': {
-        version: '5.4.3.83',
-        commit: 'ac94c3d327ac366f3cd04d78955560bb8e916a78',
-        filterIds: [1, 2, 10],
+    'r10-net-238417': {
+        filterIds: [2, 10, 13],
     },
 } as const;
 
@@ -184,11 +171,7 @@ describe('assessGoldenAgentEnvironment', () => {
     it.each(Object.entries(TRACKED_CASE_SETTINGS))(
         'reads the reporter settings of tracked case %s from its report without a model',
         (caseName, tracked) => {
-            const record = trackedCaseRecord(
-                [...tracked.filterIds],
-                tracked.version,
-                tracked.commit,
-            );
+            const record = trackedCaseRecord([...tracked.filterIds]);
 
             expect(assessGoldenAgentEnvironment(record, trackedIssue(caseName))).toMatchObject({
                 status: GoldenAgentEnvironmentStatus.Matched,

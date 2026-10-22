@@ -296,11 +296,12 @@ pnpm test tests/repo   # one directory or file
 ```
 
 Paths that use Octokit are mocked, so the suite needs no `GITHUB_TOKEN`. The
-pilot corpus integrity test reads ten public human commits to prove that their
-rules are absent from agent-visible input, so the complete suite needs network
-access. The test makes ten sequential shallow fetches from the public
-AdguardFilters remote; an anonymous fetch has taken 18–27 seconds, so this one
-test can take several minutes, and its timeout is ten minutes.
+pilot corpus integrity test reads the public human commit of every benchmark
+case to prove that its rules are absent from agent-visible input, so the
+complete suite needs network access. The test makes one shallow fetch per case
+from the public AdguardFilters remote, one after another; an anonymous fetch
+has taken 18–27 seconds, so this one test can take several minutes, and its
+timeout is ten minutes.
 
 CI runs `pnpm vitest run` without
 `tests/browser/strict-route-proxy-contract.test.ts`: that suite launches a real

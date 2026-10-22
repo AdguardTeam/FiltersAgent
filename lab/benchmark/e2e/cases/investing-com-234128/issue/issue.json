@@ -1,0 +1,25 @@
+{
+    "schemaVersion": 1,
+    "rawIssue": {
+        "number": 234128,
+        "reporterAuthor": "adguard-bot",
+        "url": "https://github.com/AdguardTeam/AdguardFilters/issues/234128",
+        "title": "www.investing.com",
+        "body": "### Issue URL (Ads)\n[https://www.investing.com/rates-bonds/u.s.-2-year-bond-yield](https://adguardteam.github.io/AnonymousRedirect/redirect.html?url=https%3A%2F%2Fwww.investing.com%2Frates-bonds%2Fu.s.-2-year-bond-yield)\n\n\n\n\n### Screenshots\n<details>\n  <summary>Screenshot 1</summary>\n\n  ![Screenshot 1](https://cdn.adguardcdn.com/sitereports/73ly3hfsgd0c4400480swscco0go8okogqw6huc1u8.png?nc=1)\n</details>\n\n\n### System configuration\n\n| Information | Value |\n|-------------|-------|\nAdGuard product: | AdGuard Browser Extension v5.4.3.74 MV3\nSystem version: | `Mac OS 26.6.0`\nBrowser: | Chrome\nFilters: | **Ad Blocking:**<br>AdGuard Base filter<br><br>**Social Widgets:**<br>AdGuard Social Media filter<br><br>**Annoyances:**<br>AdGuard Cookie Notices filter, <br>AdGuard Popups filter, <br>AdGuard Mobile App Banners filter, <br>AdGuard Other Annoyances filter, <br>AdGuard Widgets filter<br><br>**Language-specific:**<br>AdGuard Japanese filter, <br>AdGuard Chinese filter\nCustom filters: | `CJX's Annoyance List (url: https://raw.githubusercontent.com/cjx82630/cjxlist/master/cjx-annoyance.txt)`\nFilters last update: | 2026-06-21T19:00:48Z\n\n\n\n### Issue configuration\n[Import](https://reports.adguard.com/settings/import.html?scheme_version=4&amp;product_type=ext&amp;product_version=5.4.3.74&amp;system_version=Mac+OS+26.6.0&amp;ext.manifest_version=3&amp;browser=chrome&amp;regular_filters=2%2C4%2C7%2C18%2C19%2C20%2C21%2C22%2C224&amp;custom_filters=CJX%27s+Annoyance+List+%28url%3A+https%3A%2F%2Fraw.githubusercontent.com%2Fcjx82630%2Fcjxlist%2Fmaster%2Fcjx-annoyance.txt%29&amp;filters_last_update=2026-06-21T19%3A00%3A48Z&amp;stealth.enabled=0)\n",
+        "state": "closed",
+        "labels": ["T: Ads", "A: Resolved", "P1: Critical", "N: AdGuard Browser Extension"],
+        "assignee": "AdamWr",
+        "comments": []
+    },
+    "reporterComments": [],
+    "attachments": [
+        {
+            "kind": "issue_screenshot",
+            "sourceUrl": "https://cdn.adguardcdn.com/sitereports/73ly3hfsgd0c4400480swscco0go8okogqw6huc1u8.png?nc=1",
+            "localPath": "attachments/01-78289f058b116b06.png",
+            "sha256": "78289f058b116b06ca6c9187fdcdf0dde6dc1db4e51da7e5ee7a32a0f19de37c",
+            "promptVisible": true,
+            "source": "body"
+        }
+    ]
+}

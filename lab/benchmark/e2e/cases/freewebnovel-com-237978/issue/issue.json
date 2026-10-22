@@ -1,0 +1,25 @@
+{
+    "schemaVersion": 1,
+    "rawIssue": {
+        "number": 237978,
+        "reporterAuthor": "adguard-bot",
+        "url": "https://github.com/AdguardTeam/AdguardFilters/issues/237978",
+        "title": "freewebnovel.com",
+        "body": "### Issue URL (Ads)\n[https://freewebnovel.com/novel/after-going-viral-on-a-dating-show-im-pampered-by-all/chapter-68](https://adguardteam.github.io/AnonymousRedirect/redirect.html?url=https%3A%2F%2Ffreewebnovel.com%2Fnovel%2Fafter-going-viral-on-a-dating-show-im-pampered-by-all%2Fchapter-68)\n\n### Comment\n> J&#039;étais en train de lite quand il est apparue, au début, ADBLOCK galérait à le bloquer, donc quand je changeais de chapitre, ça apparaissait brièvement avant de disparaître, mais maintenant c&#039;est toujours affiché.\n> \n> Par contre, les sites de lectures en ligne anglais sont assez spéciaux, il faut que vous utilisiez un bloqueur de pub et de pop up, car sinon il vous redirigeront vers des sites aléatoires.  Si vous avez de la chance, vous ouvrirez aliexpress, sinon vous risquez de tomber sur des pub sale (X)\n\n\n\n### Screenshots\n<details>\n  <summary>Screenshot 1</summary>\n\n  ![Screenshot 1](https://cdn.adguardcdn.com/sitereports/re2bykkt82s0gsk8s8w0080wswgskccjwwj7lgi9rk.png?nc=1)\n</details>\n\n\n### System configuration\n\n| Information | Value |\n|-------------|-------|\nAdGuard product: | AdGuard Browser Extension v5.4.3.121 MV3\nSystem version: | `Chromium OS 14541.0.0`\nBrowser: | Chrome\nFilters: | **Ad Blocking:**<br>AdGuard Base filter<br><br>**Annoyances:**<br>AdGuard Cookie Notices filter, <br>AdGuard Popups filter, <br>AdGuard Mobile App Banners filter, <br>AdGuard Other Annoyances filter, <br>AdGuard Widgets filter<br><br>**Security:**<br>Online Malicious URL Blocklist\nFilters last update: | 2026-08-09T09:00:47Z\nOther extensions used: | `adbloc pour youtube, bloqueur de pop up pour chrome`\n\n\n\n### Issue configuration\n[Import](https://reports.adguard.com/settings/import.html?scheme_version=4&amp;product_type=ext&amp;product_version=5.4.3.121&amp;system_version=Chromium+OS+14541.0.0&amp;ext.manifest_version=3&amp;browser=chrome&amp;regular_filters=2%2C18%2C19%2C20%2C21%2C22%2C208&amp;filters_last_update=2026-08-09T09%3A00%3A47Z&amp;stealth.enabled=0)\n",
+        "state": "closed",
+        "labels": ["T: Ads", "A: Resolved", "P1: Critical", "N: AdGuard Browser Extension"],
+        "assignee": "AdamWr",
+        "comments": []
+    },
+    "reporterComments": [],
+    "attachments": [
+        {
+            "kind": "issue_screenshot",
+            "sourceUrl": "https://cdn.adguardcdn.com/sitereports/re2bykkt82s0gsk8s8w0080wswgskccjwwj7lgi9rk.png?nc=1",
+            "localPath": "attachments/01-01f19c6b413eec17.png",
+            "sha256": "01f19c6b413eec175e80e204bc0371fac144b1b0f3ffb21afdaa523b61a14c15",
+            "promptVisible": true,
+            "source": "body"
+        }
+    ]
+}

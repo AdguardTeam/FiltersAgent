@@ -1,0 +1,25 @@
+{
+    "schemaVersion": 1,
+    "rawIssue": {
+        "number": 235175,
+        "reporterAuthor": "adguard-bot",
+        "url": "https://github.com/AdguardTeam/AdguardFilters/issues/235175",
+        "title": "histmag.org",
+        "body": "### Issue URL (Ads)\n[https://histmag.org/Wielka-Schizma-Zachodnia-czyli-jak-papieze-podzielili-Europe-8427](https://adguardteam.github.io/AnonymousRedirect/redirect.html?url=https%3A%2F%2Fhistmag.org%2FWielka-Schizma-Zachodnia-czyli-jak-papieze-podzielili-Europe-8427)\n\n\n\n\n### Screenshots\n<details>\n  <summary>Screenshot 1</summary>\n\n  ![Screenshot 1](https://cdn.adguardcdn.com/sitereports/dxj0k8fayvscoksk8cok8sogo0owow4t80z5jm33es.png?nc=1)\n</details>\n\n\n### System configuration\n\n| Information | Value |\n|-------------|-------|\nAdGuard product: | AdGuard Browser Extension v5.4.3.89 MV3\nBrowser: | Chrome\nFilters: | **Ad Blocking:**<br>AdGuard Base filter<br><br>**Privacy:**<br>AdGuard Tracking Protection filter, <br>AdGuard URL Tracking filter<br><br>**Social Widgets:**<br>AdGuard Social Media filter<br><br>**Annoyances:**<br>AdGuard Cookie Notices filter, <br>AdGuard Popups filter, <br>AdGuard Mobile App Banners filter, <br>AdGuard Other Annoyances filter, <br>AdGuard Widgets filter<br><br>**Security:**<br>Online Malicious URL Blocklist, <br>Phishing URL Blocklist, <br>Scam Blocklist by DurableNapkin, <br>uBlock Origin – Badware risks, <br>Dandelion Sprout's Anti-Malware List<br><br>**Language-specific:**<br>Official Polish filters for AdBlock, uBlock Origin & AdGuard, <br>Polish GDPR-Cookies Filters, <br>Polish Anti Adblock Filters\nFilters last update: | 2026-07-06T09:00:46Z\n\n\n\n### Issue configuration\n[Import](https://reports.adguard.com/settings/import.html?scheme_version=4&amp;product_type=ext&amp;product_version=5.4.3.89&amp;system_version=&amp;ext.manifest_version=3&amp;browser=chrome&amp;regular_filters=2%2C3%2C4%2C17%2C18%2C19%2C20%2C21%2C22%2C208%2C216%2C217%2C238%2C255%2C256%2C257%2C259&amp;filters_last_update=2026-07-06T09%3A00%3A46Z&amp;stealth.enabled=0)\n",
+        "state": "closed",
+        "labels": ["T: Ads", "A: Resolved", "P1: Critical", "N: AdGuard Browser Extension"],
+        "assignee": "AdamWr",
+        "comments": []
+    },
+    "reporterComments": [],
+    "attachments": [
+        {
+            "kind": "issue_screenshot",
+            "sourceUrl": "https://cdn.adguardcdn.com/sitereports/dxj0k8fayvscoksk8cok8sogo0owow4t80z5jm33es.png?nc=1",
+            "localPath": "attachments/01-b1df3f7b8f5db0cb.png",
+            "sha256": "b1df3f7b8f5db0cbfd26d7407adea727e1161c410d37f2eec80b35824ac83781",
+            "promptVisible": true,
+            "source": "body"
+        }
+    ]
+}

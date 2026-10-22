@@ -1,0 +1,25 @@
+{
+    "schemaVersion": 1,
+    "rawIssue": {
+        "number": 238450,
+        "reporterAuthor": "adguard-bot",
+        "url": "https://github.com/AdguardTeam/AdguardFilters/issues/238450",
+        "title": "finance.eastmoney.com",
+        "body": "### Issue URL (Ads)\n[https://finance.eastmoney.com/a/202608153842242593.html](https://adguardteam.github.io/AnonymousRedirect/redirect.html?url=https%3A%2F%2Ffinance.eastmoney.com%2Fa%2F202608153842242593.html)\n\n\n\n\n### Screenshots\n<details>\n  <summary>Screenshot 1</summary>\n\n  ![Screenshot 1](https://cdn.adguardcdn.com/sitereports/e3cqog5kb4g8oso4sk40c8g040s8swwoigfn7pb0o0.png?nc=1)\n</details>\n\n\n### System configuration\n\n| Information | Value |\n|-------------|-------|\nAdGuard product: | AdGuard Browser Extension v5.4.3.127 MV3\nSystem version: | `Mac OS 27.0.0`\nBrowser: | Chrome\nFilters: | **Ad Blocking:**<br>AdGuard Base filter<br><br>**Social Widgets:**<br>AdGuard Social Media filter<br><br>**Annoyances:**<br>AdGuard Cookie Notices filter, <br>AdGuard Popups filter, <br>AdGuard Mobile App Banners filter, <br>AdGuard Other Annoyances filter, <br>AdGuard Widgets filter<br><br>**Language-specific:**<br>AdGuard Japanese filter, <br>AdGuard Chinese filter\nCustom filters: | `CJX's Annoyance List (url: https://raw.githubusercontent.com/cjx82630/cjxlist/master/cjx-annoyance.txt)`\nFilters last update: | 2026-08-15T08:00:55Z\n\n\n\n### Issue configuration\n[Import](https://reports.adguard.com/settings/import.html?scheme_version=4&amp;product_type=ext&amp;product_version=5.4.3.127&amp;system_version=Mac+OS+27.0.0&amp;ext.manifest_version=3&amp;browser=chrome&amp;regular_filters=2%2C4%2C7%2C18%2C19%2C20%2C21%2C22%2C224&amp;custom_filters=CJX%27s+Annoyance+List+%28url%3A+https%3A%2F%2Fraw.githubusercontent.com%2Fcjx82630%2Fcjxlist%2Fmaster%2Fcjx-annoyance.txt%29&amp;filters_last_update=2026-08-15T08%3A00%3A55Z&amp;stealth.enabled=0)\n",
+        "state": "closed",
+        "labels": ["T: Ads", "A: Resolved", "P1: Critical", "N: AdGuard Browser Extension"],
+        "assignee": "AdamWr",
+        "comments": []
+    },
+    "reporterComments": [],
+    "attachments": [
+        {
+            "kind": "issue_screenshot",
+            "sourceUrl": "https://cdn.adguardcdn.com/sitereports/e3cqog5kb4g8oso4sk40c8g040s8swwoigfn7pb0o0.png?nc=1",
+            "localPath": "attachments/01-59bdee69579b886a.png",
+            "sha256": "59bdee69579b886ab90b9519f1dad70f0e0851cf801a52e7958c747a97d44b84",
+            "promptVisible": true,
+            "source": "body"
+        }
+    ]
+}

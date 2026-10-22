@@ -3,7 +3,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { loadLocalIssueSnapshot } from '../../../src/local/issue-snapshot';
-import { FULL_COMMIT_SHA_PATTERN } from '../../../src/environment/environment-proofs';
+import {
+    EXTENSION_BUILD_VERSION_PATTERN,
+    FULL_COMMIT_SHA_PATTERN,
+} from '../../../src/environment/environment-proofs';
 import {
     GoldenRunSchemaVersion,
     loadGoldenHumanOracle,
@@ -13,6 +16,7 @@ import {
     writeGoldenRunDocument,
     type GoldenE2ERun,
 } from '../../../lab/e2e/golden-case';
+import { listGoldenCaseNames } from '../../../lab/e2e/golden-suite';
 
 /**
  * Build the complete public run document with its historical extension identity.
@@ -239,65 +243,35 @@ describe('golden E2E case loading', () => {
         expect(() => loadGoldenRunCase(caseDir)).toThrow(/attachment path/i);
     });
 
-    it('loads ISO human timestamps from every tracked case', () => {
+    it('loads every tracked v3 case and its separate human oracle', () => {
         const casesRoot = join(process.cwd(), 'lab', 'benchmark', 'e2e', 'cases');
-        for (const caseName of readdirSync(casesRoot)) {
-            const oracle = loadGoldenHumanOracle(join(casesRoot, caseName));
-            expect(Number.isFinite(Date.parse(oracle.issueCreatedAt))).toBe(true);
-            expect(Number.isFinite(Date.parse(oracle.fixCommittedAt))).toBe(true);
-        }
-    });
-
-    it.each([
-        [
-            'nettg-pl-235988',
-            235988,
-            'eda7d86824118ca0152c67dcff1ed0a75f2beee9ff642645d79c031c85b7ff8a',
-            '8e9ba459a4552df35b3edb1a4e4d8dd240095ce8',
-            '5.4.3.99',
-        ],
-        [
-            'wpoznaniu-pl-235403',
-            235403,
-            'dbedc727d48cd82f8b80a6c9f676a1b6b815795c4572750d4ed01bb984c35bd0',
-            '9a9a950e196d746ae2ed8d1f1a61d61a1ffaae8b',
-            '5.4.3.91',
-        ],
-        [
-            'sochi-camera-234715',
-            234715,
-            'f51fe5e9300fa9e3acac5999514ad81f4fa0454c12d0f348bbc67bd44ef035ee',
-            'e741a790d92e7f4e326195bd2fbac3d1a567f434',
-            '5.4.3.83',
-        ],
-    ] as const)(
-        'loads tracked v3 case %s and its separate human oracle',
-        (caseName, issueNumber, screenshotSha, humanFixCommit, extensionVersion) => {
-            const caseDir = join(process.cwd(), 'lab', 'benchmark', 'e2e', 'cases', caseName);
+        const caseNames = listGoldenCaseNames(casesRoot);
+        expect(caseNames.length).toBeGreaterThan(0);
+        for (const caseName of caseNames) {
+            const caseDir = join(casesRoot, caseName);
             const run = loadGoldenRunCase(caseDir);
             const oracle = loadGoldenHumanOracle(caseDir);
             const snapshot = loadLocalIssueSnapshot(run.issueFile);
 
             expect(run.config).toEqual({
                 schemaVersion: GoldenRunSchemaVersion.Current,
-                issueNumber,
+                issueNumber: snapshot.rawIssue.number,
                 issueFile: 'issue/issue.json',
-                filtersBaseSha: expect.stringMatching(/^[0-9a-f]{40}$/),
+                filtersBaseSha: expect.stringMatching(FULL_COMMIT_SHA_PATTERN),
                 extensionBuild: {
-                    version: extensionVersion,
-                    releaseTag: 'v5.4.3.1',
+                    version: expect.stringMatching(EXTENSION_BUILD_VERSION_PATTERN),
+                    releaseTag: expect.any(String),
                     autobuildCommit: expect.stringMatching(FULL_COMMIT_SHA_PATTERN),
                 },
             });
-            expect(snapshot.rawIssue.number).toBe(issueNumber);
-            expect(snapshot.attachments[0]?.sha256).toBe(screenshotSha);
+            expect(snapshot.attachments.length).toBeGreaterThan(0);
             expect(oracle).toEqual({
-                humanFixCommit,
+                humanFixCommit: expect.stringMatching(FULL_COMMIT_SHA_PATTERN),
                 issueCreatedAt: expect.any(String),
                 fixCommittedAt: expect.any(String),
             });
             expect(Number.isFinite(Date.parse(oracle.issueCreatedAt))).toBe(true);
             expect(Number.isFinite(Date.parse(oracle.fixCommittedAt))).toBe(true);
-        },
-    );
+        }
+    });
 });
