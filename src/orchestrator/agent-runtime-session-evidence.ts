@@ -15,13 +15,14 @@ import {
     DISABLE_STEALTH_SETTING,
     type AdGuardExtensionSettingsProfile,
 } from '../browser/adguard-extension-settings';
+import type * as v from 'valibot';
 import type { CliAdapterProof } from '../environment/environment-proofs';
 import type { FilterListKey } from '../environment/filter-list-ref';
 import type { ListSliceFacts } from '../environment/list-slice';
 import type { PreparedExtension } from '../local/prepared-extension';
 import type { CandidateVisualReview } from '../types/candidate-visual-review';
 import type { PageObstruction } from '../types/page-obstruction';
-import { ExtensionMode } from '../types/fix-run-result';
+import { type AgentCandidateArtifactEvidenceSchema, ExtensionMode } from '../types/fix-run-result';
 import type { ReproProfile } from '../types/repro-profile';
 import { ReporterSymptomPresence } from '../types/reporter-symptom-presence';
 
@@ -42,18 +43,13 @@ export interface AgentRuntimeScreenshotEvidence {
 
 /**
  * One recorder-owned candidate artifact with its exact non-null local path.
+ *
+ * Typed by the strict schema the locked result parses it with, so a field cannot be added here
+ * without the schema, where it would compile and then fail every result parse.
  */
-export interface AgentRuntimeCandidateArtifactEvidence {
-    /**
-     * Opaque artifact identity emitted by the trusted candidate validator.
-     */
-    artifactId: string;
-
-    /**
-     * Exact recorder path registered for this artifact identity.
-     */
-    path: string;
-}
+export type AgentRuntimeCandidateArtifactEvidence = v.InferOutput<
+    typeof AgentCandidateArtifactEvidenceSchema
+>;
 
 /**
  * Complete verified-candidate evidence bound to one prepared-extension browser session.

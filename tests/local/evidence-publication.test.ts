@@ -1,6 +1,10 @@
+import { AgentCandidateArtifactEvidenceSchema } from '../../src/types/fix-run-result';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { BlockerVerificationMethod } from '../../src/environment/environment-proofs';
+import {
+    BlockerVerificationMethod,
+    PreparedExtensionProvenanceSchema,
+} from '../../src/environment/environment-proofs';
 import {
     chmodSync,
     existsSync,
@@ -17,6 +21,10 @@ import { dirname, join } from 'node:path';
 import { deflateSync } from 'node:zlib';
 import { describe, expect, it } from 'vitest';
 import * as v from 'valibot';
+import {
+    PreparedExtensionSource,
+    ExtensionManifestVersion,
+} from '../../src/environment/extension-preparation';
 import { publishLocalRun } from '../../src/local/evidence-publication';
 import { publishVerifiedLocalResult } from '../../lab/local/local-evidence-publish-step';
 import { LocalPublicationManifestSchema } from '../../src/local/local-publication-manifest';
@@ -360,13 +368,13 @@ function createPublicationFixture(candidate: CandidatePatch | null) {
         productVersion: '5.5.2.3',
         browser: 'CloakBrowser Chromium',
     });
-    const extensionProvenance = {
-        source: 'pinned_release' as const,
+    const extensionProvenance = v.parse(PreparedExtensionProvenanceSchema, {
+        source: PreparedExtensionSource.PinnedRelease,
         extensionPath: '/tmp/cache/extensions/prebuilt/v5.5.2.3/unpacked',
-        manifestVersion: 3 as const,
+        manifestVersion: ExtensionManifestVersion.Mv3,
         extensionSourceSha256: 'e'.repeat(64),
         extensionSourceTag: 'v5.5.2.3',
-    };
+    });
     const settingsEvidence = {
         profileKind: 'agent_selected' as const,
         enabledListKeys: ['adguard:2'],
@@ -422,30 +430,30 @@ function createPublicationFixture(candidate: CandidatePatch | null) {
                 sessionId: 'prepared-session',
                 extensionProvenance,
                 settingsEvidence,
-                validationArtifact: {
+                validationArtifact: v.parse(AgentCandidateArtifactEvidenceSchema, {
                     artifactId: validationArtifactId,
                     path: join(collectionDir, `factual-validation-${candidateShortHash}.json`),
-                },
-                visualReviewArtifact: {
+                }),
+                visualReviewArtifact: v.parse(AgentCandidateArtifactEvidenceSchema, {
                     artifactId: `visual-review-${candidateShortHash}`,
                     path: join(collectionDir, `candidate-visual-review-${candidateShortHash}.json`),
-                },
-                beforeViewport: {
+                }),
+                beforeViewport: v.parse(AgentCandidateArtifactEvidenceSchema, {
                     artifactId: 'before-viewport',
                     path: verifiedScreenshots.before,
-                },
-                afterViewport: {
+                }),
+                afterViewport: v.parse(AgentCandidateArtifactEvidenceSchema, {
                     artifactId: 'after-viewport',
                     path: verifiedScreenshots.after,
-                },
-                beforeFullPage: {
+                }),
+                beforeFullPage: v.parse(AgentCandidateArtifactEvidenceSchema, {
                     artifactId: 'before-full-page',
                     path: verifiedScreenshots.beforeFullPage,
-                },
-                afterFullPage: {
+                }),
+                afterFullPage: v.parse(AgentCandidateArtifactEvidenceSchema, {
                     artifactId: 'after-full-page',
                     path: verifiedScreenshots.afterFullPage,
-                },
+                }),
             },
             candidateVisualReview: {
                 verdict: 'verified' as const,
@@ -600,13 +608,13 @@ function attachPendingPublicationExecution(record: LocalRunRecord): void {
      */
     const candidateRule = 'example.test##.ad';
     const candidateDigest = createHash('sha256').update(candidateRule, 'utf8').digest('hex');
-    const provenance = {
-        source: 'pinned_release' as const,
+    const provenance = v.parse(PreparedExtensionProvenanceSchema, {
+        source: PreparedExtensionSource.PinnedRelease,
         extensionPath: '/tmp/cache/extensions/prebuilt/v5.5.2.3/unpacked',
-        manifestVersion: 3 as const,
+        manifestVersion: ExtensionManifestVersion.Mv3,
         extensionSourceSha256: 'e'.repeat(64),
         extensionSourceTag: 'v5.5.2.3',
-    };
+    });
     const execution: FilteringEnvironmentExecution = {
         recorderVersion: 1,
         runId: 'run-42',

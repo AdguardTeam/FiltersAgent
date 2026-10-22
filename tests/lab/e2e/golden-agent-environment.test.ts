@@ -1,3 +1,9 @@
+import * as v from 'valibot';
+import {
+    PreparedExtensionSource,
+    ExtensionManifestVersion,
+} from '../../../src/environment/extension-preparation';
+import { PreparedExtensionProvenanceSchema } from '../../../src/environment/environment-proofs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { RawIssue } from '../../../src/github/fetch-issue';
@@ -62,10 +68,10 @@ function trackedIssue(caseName: string): RawIssue {
  * @returns Comparable local run record.
  */
 function lockedRecord(): LocalRunRecord {
-    const extension = {
-        source: 'historical_build' as const,
+    const extension = v.parse(PreparedExtensionProvenanceSchema, {
+        source: PreparedExtensionSource.HistoricalBuild,
         extensionPath: '/tmp/cache/extensions/historical/build',
-        manifestVersion: 3 as const,
+        manifestVersion: ExtensionManifestVersion.Mv3,
         extensionSourceSha256: 'e'.repeat(64),
         historicalBuild: {
             version: '5.4.3.99',
@@ -74,7 +80,7 @@ function lockedRecord(): LocalRunRecord {
             autobuildTag: 'autobuild-v5.4.3.99',
             autobuildCommit: 'b'.repeat(40),
         },
-    };
+    });
     return {
         result: {
             issueNumber: 235988,

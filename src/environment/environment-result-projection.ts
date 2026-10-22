@@ -1,5 +1,7 @@
 import type {
     AgentBrowserSessionEvidence,
+    AgentCandidateArtifactEvidence,
+    AgentCandidateArtifactEvidenceFields,
     AgentCandidateValidationEvidence,
     AgentExtensionProvenance,
     AgentSettingsEvidence,
@@ -141,13 +143,13 @@ function observedCompletion(
  * @param artifact - Canonical phase-owned artifact.
  * @returns Compatibility artifact identity and path.
  */
-function projectArtifact(
-    artifact: EnvironmentArtifactReference,
-): AgentCandidateValidationEvidence['validationArtifact'] {
+function projectArtifact(artifact: EnvironmentArtifactReference): AgentCandidateArtifactEvidence {
+    // The reference carries `kind` too, which the strict result schema refuses: the brand cast
+    // accepts only this literal of exactly the two schema fields.
     return {
         artifactId: artifact.artifactId,
         path: artifact.path,
-    };
+    } satisfies AgentCandidateArtifactEvidenceFields as AgentCandidateArtifactEvidence;
 }
 
 /**

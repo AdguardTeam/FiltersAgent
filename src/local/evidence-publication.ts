@@ -15,7 +15,9 @@ import { RunUsageSummarySchema, type RunUsageSummary } from '../types/usage-summ
 import {
     inspectBoundReviewCandidate,
     type ReviewCandidateBindingOutcome,
+    type ReviewCandidateOperation,
 } from '../repo/repository-edit';
+import { CandidateOperation } from '../environment/filtering-environment';
 import { AgentRunArtifactsSchema, type AgentRunArtifacts } from '../types/agent-run-artifacts';
 import { redactText } from '../tracer/redact-text';
 import { redactPayload, type RedactPayloadOptions } from '../tracer/redactor';
@@ -43,6 +45,7 @@ import {
     type LocalPublicationCandidateDisposition,
     type LocalPublicationFailure,
     type LocalPublicationManifest,
+    type LocalPublicationOperation,
 } from './local-publication-manifest';
 import {
     LocalPublicationTrustError,
@@ -584,6 +587,54 @@ function publicationArtifact(path: string, bytes: Buffer): LocalPublicationArtif
 }
 
 /**
+ * Copy one source-bound operation into the manifest, field by field.
+ *
+ * The repository's operation is its own interface, not the manifest schema's output, so every field
+ * is named: a field the repository adds would otherwise compile and fail the manifest parse.
+ *
+ * @param operation - Exact operation the repository bound the candidate to.
+ * @returns The manifest's operation record.
+ */
+function projectCandidateOperation(operation: ReviewCandidateOperation): LocalPublicationOperation {
+    const base = {
+        sourceCommit: operation.sourceCommit,
+        filePath: operation.filePath,
+        targetBlobOid: operation.targetBlobOid,
+        targetFileSha256: operation.targetFileSha256,
+        targetBytes: operation.targetBytes,
+        targetLines: operation.targetLines,
+        line: operation.line,
+    } satisfies Omit<LocalPublicationOperation, 'operation'>;
+    switch (operation.operation) {
+        case CandidateOperation.Add:
+            return {
+                operation: operation.operation,
+                ...base,
+                beforeLine: operation.beforeLine,
+                afterLine: operation.afterLine,
+                insertionBoundarySha256: operation.insertionBoundarySha256,
+                addedRule: operation.addedRule,
+                ...(operation.precedingComment === undefined
+                    ? {}
+                    : { precedingComment: operation.precedingComment }),
+            };
+        case CandidateOperation.Edit:
+            return {
+                operation: operation.operation,
+                ...base,
+                originalRule: operation.originalRule,
+                replacementRule: operation.replacementRule,
+            };
+        case CandidateOperation.Remove:
+            return {
+                operation: operation.operation,
+                ...base,
+                originalRule: operation.originalRule,
+            };
+    }
+}
+
+/**
  * Project an opaque or tagged binding into a serializable immutable manifest disposition.
  *
  * @param binding - Exact runner-provided binding result.
@@ -593,12 +644,22 @@ function projectCandidateBinding(
     binding: ReviewCandidateBindingOutcome,
 ): LocalPublicationCandidateDisposition {
     if (binding.kind === 'bound') {
-        return { kind: 'bound', operation: inspectBoundReviewCandidate(binding.candidate) };
+        return {
+            kind: 'bound',
+            operation: projectCandidateOperation(inspectBoundReviewCandidate(binding.candidate)),
+        };
     }
     if (binding.kind === 'not_applicable') {
         return { kind: 'not_applicable', disposition: binding.disposition };
     }
-    return { kind: 'failed', failure: { ...binding.failure } };
+    return {
+        kind: 'failed',
+        failure: {
+            code: binding.failure.code,
+            stage: binding.failure.stage,
+            detail: binding.failure.detail,
+        },
+    };
 }
 
 /**
@@ -811,7 +872,15 @@ export function publishLocalRun(
             outcome,
             createdAt,
             issue: projectIssueIdentity(input.revision),
-            source: { ...input.source.provenance },
+            // Every copied value names its fields: each lands in a strict schema, so a field its
+            // source type gains would otherwise compile and fail the manifest parse.
+            source: {
+                environment: input.source.provenance.environment,
+                source: input.source.provenance.source,
+                sourceLocation: input.source.provenance.sourceLocation,
+                requestedRevision: input.source.provenance.requestedRevision,
+                commit: input.source.provenance.commit,
+            },
             bindings: projectRunBindings(publicationRecord, {
                 issueInputSha256: sha256(issueInputBytes),
                 runRecordSha256: sha256(runRecordBytes),
@@ -821,6 +890,7 @@ export function publishLocalRun(
             candidate,
             failure,
             artifacts,
+            // The sanitizer records images in the manifest's own image types.
             images: sanitizedEvidence.images.map((image) => ({ ...image })),
             review,
         };

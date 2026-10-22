@@ -1,3 +1,4 @@
+import * as v from 'valibot';
 import { BrowserFallbackReason } from '../../src/types/browser-fallback-reason';
 import { APPLY_RULE_TOOL_DEADLINE_MS } from '../../src/orchestrator/browser-tool-deadlines';
 import { MAX_CANDIDATE_ATTEMPTS } from '../../src/orchestrator/agent-runtime-candidate-context';
@@ -10,7 +11,10 @@ import * as vitest from 'vitest';
 import type { BrowserContext } from 'playwright-core';
 import { ToolRegistry } from '../../src/agent/tool-registry';
 import { normalizeRule } from '../../src/repo/rule-normalizer';
-import { BlockerVerificationMethod } from '../../src/environment/environment-proofs';
+import {
+    BlockerVerificationMethod,
+    PreparedExtensionProvenanceSchema,
+} from '../../src/environment/environment-proofs';
 import { AdGuardExtensionMessageType } from '../../src/browser/adguard-extension-message-types';
 import {
     exceededRulesLimitsFixture,
@@ -1033,13 +1037,13 @@ async function extensionExperimentRuntime(scenario: ExtensionExperimentRuntimeOp
                     appliedRules: request.phase === 'C' ? [request.candidate!.rule] : [],
                     actionLog: [],
                 },
-                provenance: {
+                provenance: v.parse(PreparedExtensionProvenanceSchema, {
                     source: PreparedExtensionSource.PinnedRelease,
                     extensionPath: '/tmp/cache/extension',
-                    manifestVersion: 3 as const,
+                    manifestVersion: ExtensionManifestVersion.Mv3,
                     extensionSourceSha256: 'e'.repeat(64),
                     extensionSourceTag: 'v5.5.2.3',
-                },
+                }),
             };
             return {
                 ready: true,

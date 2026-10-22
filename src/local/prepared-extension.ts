@@ -59,9 +59,9 @@ export interface PreparedExtensionIdentity {
 /**
  * A Chromium-family prepared build: today's unpacked directory, validated to carry `manifest.json`.
  *
- * This is exactly the record every run carried before the families were distinguished — its
- * discriminant stays absent — so the launch wiring, the run-record provenance and the build digest
- * of the Chromium route read the same fields they always did.
+ * Its discriminant stays absent, as in every record before the families were distinguished. The
+ * record also carries launch input, so the run-record provenance and the build digest come from its
+ * projection (`serializeAgentExtensionProvenance`), never from the record itself.
  */
 export type ChromiumPreparedExtension = PreparedExtensionIdentity & ChromiumExtensionLaunch;
 

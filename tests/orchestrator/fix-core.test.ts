@@ -35,7 +35,11 @@ import * as fixCoreContext from '../../src/orchestrator/fix-core-context';
 import type * as fixCoreInputs from '../../src/orchestrator/fix-core-inputs';
 import * as agenticRunEvidence from '../../src/orchestrator/agentic-run-evidence';
 import { candidatePatchVerificationRefusal } from '../../src/orchestrator/candidate-verdict';
-import { FixRunResultSchema, type CandidatePatch } from '../../src/types/fix-run-result';
+import {
+    FixRunResultSchema,
+    type CandidatePatch,
+    AgentCandidateArtifactEvidenceSchema,
+} from '../../src/types/fix-run-result';
 import { calculateTrustedBaselineHash } from '../../src/validator/trusted-validation-context';
 import * as fixEnvironmentLifecycle from '../../src/orchestrator/fix-environment-lifecycle';
 import { ENVIRONMENT_PROJECTION_DECISION_PHASE } from '../../src/orchestrator/environment-projection-refusal-report';
@@ -1142,24 +1146,30 @@ function candidateBindingFixture(baseline: 'read_back' | 'declared' = 'read_back
         ...(baseline === 'declared' ? {} : { settingsEvidence }),
         environment,
         visualReview,
-        validationArtifact: {
+        validationArtifact: v.parse(AgentCandidateArtifactEvidenceSchema, {
             artifactId: validationArtifactId,
             path: `/tmp/artifacts/factual-validation-${validationHash}.json`,
-        },
-        visualReviewArtifact: {
+        }),
+        visualReviewArtifact: v.parse(AgentCandidateArtifactEvidenceSchema, {
             artifactId: `visual-review-${validationHash}`,
             path: `/tmp/artifacts/candidate-visual-review-${validationHash}.json`,
-        },
-        beforeViewport: { artifactId: 'candidate-before', path: screenshots.before },
-        afterViewport: { artifactId: 'candidate-after', path: screenshots.after },
-        beforeFullPage: {
+        }),
+        beforeViewport: v.parse(AgentCandidateArtifactEvidenceSchema, {
+            artifactId: 'candidate-before',
+            path: screenshots.before,
+        }),
+        afterViewport: v.parse(AgentCandidateArtifactEvidenceSchema, {
+            artifactId: 'candidate-after',
+            path: screenshots.after,
+        }),
+        beforeFullPage: v.parse(AgentCandidateArtifactEvidenceSchema, {
             artifactId: 'candidate-before-full-page',
             path: screenshots.beforeFullPage,
-        },
-        afterFullPage: {
+        }),
+        afterFullPage: v.parse(AgentCandidateArtifactEvidenceSchema, {
             artifactId: 'candidate-after-full-page',
             path: screenshots.afterFullPage,
-        },
+        }),
     };
     const selection: CandidateValidationSelection = {
         validationArtifactId,

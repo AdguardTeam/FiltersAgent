@@ -32,7 +32,9 @@ import {
     type BoundReviewCandidate,
     type ReviewCandidateOperation,
 } from '../repo/repository-edit';
+import type * as v from 'valibot';
 import type { PreparedFiltersCheckout } from './filters-preparer';
+import type { LocalPublicationReviewSchema } from './local-publication-manifest';
 import { RepositoryEditKind } from '../types/repository-edit-kind';
 
 /**
@@ -97,69 +99,10 @@ export class ReviewCheckoutError extends Error {
 }
 
 /**
- * Integrity receipt for one detached standalone review checkout.
+ * Integrity receipt for one detached standalone review checkout, typed by the strict manifest
+ * schema that persists it, so a field cannot be added here without that schema.
  */
-export interface ReviewWorkspaceReceipt {
-    /**
-     * Publication-relative checkout path.
-     */
-    checkoutPath: 'review';
-
-    /**
-     * Exact locked source commit.
-     */
-    sourceCommit: string;
-
-    /**
-     * Exact detached checkout HEAD.
-     */
-    headCommit: string;
-
-    /**
-     * Exact HEAD tree proving an unchanged index.
-     */
-    indexTreeDigest: string;
-
-    /**
-     * SHA-256 digest of the source file before candidate application.
-     */
-    candidatePreimageDigest: string;
-
-    /**
-     * SHA-256 digest of the canonical unstaged patch.
-     */
-    patchSha256: string;
-
-    /**
-     * Canonical patch byte length.
-     */
-    patchBytes: number;
-
-    /**
-     * Sole repository-relative changed file.
-     */
-    changedPath: string;
-
-    /**
-     * Number of regular files retained in the standalone checkout.
-     */
-    checkoutFiles: number;
-
-    /**
-     * Aggregate regular-file bytes retained in the standalone checkout.
-     */
-    checkoutBytes: number;
-
-    /**
-     * Stable creation timestamp supplied by the Host clock.
-     */
-    createdAt: string;
-
-    /**
-     * Whether the exact owned checkout is eligible for explicit cleanup.
-     */
-    cleanupEligible: true;
-}
+export type ReviewWorkspaceReceipt = v.InferOutput<typeof LocalPublicationReviewSchema>;
 
 /**
  * Successful review materialization output.

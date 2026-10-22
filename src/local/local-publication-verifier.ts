@@ -27,7 +27,6 @@ import {
     type LocalPublicationIssueIdentity,
     type LocalPublicationManifest,
     type LockedPublicationRunProjection,
-    type NotApplicableLocalPublicationCandidateDisposition,
 } from './local-publication-manifest';
 import {
     hasUnsafeControl,
@@ -118,7 +117,7 @@ function persistedValuesEqual(left: unknown, right: unknown): boolean {
  */
 function expectedNoCandidateDisposition(
     record: LockedPublicationRunProjection,
-): NotApplicableLocalPublicationCandidateDisposition['disposition'] {
+): ReviewCandidateDisposition {
     if (record.result.runStatus === FixRunStatus.UnsupportedProductCase) {
         return ReviewCandidateDisposition.Unsupported;
     }

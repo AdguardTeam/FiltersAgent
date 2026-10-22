@@ -6,6 +6,8 @@ import {
     RepositoryEditSchema,
     noPatchVerdictIsSessionBound,
     type FixRunResult,
+    type AgentCandidateArtifactEvidence,
+    AgentCandidateArtifactEvidenceSchema,
 } from '../../src/types/fix-run-result';
 import { MAX_MISSING_INFORMATION_ENTRIES } from '../../src/types/missing-information';
 import { EnvironmentSelectionHost } from '../../src/environment/environment-selection';
@@ -14,11 +16,19 @@ import {
     extensionExecutorDescriptor,
 } from '../environment/test-filtering-environment-fixtures';
 import type {
+    EnvironmentArtifactReference,
     EnvironmentPhaseEvidence,
     FilteringEnvironmentExecution,
 } from '../../src/environment/filtering-environment';
-import { BlockerVerificationMethod } from '../../src/environment/environment-proofs';
+import {
+    BlockerVerificationMethod,
+    PreparedExtensionProvenanceSchema,
+} from '../../src/environment/environment-proofs';
 import { projectEnvironmentResult } from '../../src/environment/environment-result-projection';
+import {
+    ExtensionManifestVersion,
+    PreparedExtensionSource,
+} from '../../src/environment/extension-preparation';
 import type { IssueFacts } from '../../src/types/issue-facts';
 import type { UpstreamSourceDrift } from '../../src/types/upstream-source-drift';
 
@@ -29,6 +39,14 @@ const sessionProfile = {
     userAgentProfile: 'Chromium',
     consentStrategy: 'untouched' as const,
 };
+
+const extensionProvenance = v.parse(PreparedExtensionProvenanceSchema, {
+    source: PreparedExtensionSource.PinnedRelease,
+    extensionPath: '/tmp/run/prepared-extension',
+    manifestVersion: ExtensionManifestVersion.Mv3,
+    extensionSourceSha256: 'e'.repeat(64),
+    extensionSourceTag: 'v5.5.2.3',
+});
 
 describe('RepositoryEditSchema', () => {
     it.each([
@@ -313,21 +331,14 @@ function alreadyFixedResult(
     const preparedFullPage = '/tmp/run/prepared-full-page.png';
     const preparedTile = '/tmp/run/prepared-tile.png';
     result.artifactPaths.screenshots.push(preparedViewport, preparedFullPage, preparedTile);
-    const currentExtension = {
-        source: 'pinned_release' as const,
-        extensionPath: '/tmp/run/prepared-extension',
-        manifestVersion: 3 as const,
-        extensionSourceSha256: 'e'.repeat(64),
-        extensionSourceTag: 'v5.5.2.3',
-    };
-    result.extensionProvenance = currentExtension;
+    result.extensionProvenance = extensionProvenance;
     result.browserSessions!.push({
         sessionId: 'prepared-session',
         targetUrl: 'https://example.com/article',
         extensionMode: 'prepared',
         profile: sessionProfile,
         selectedSettingsProfileKind: 'agent_selected',
-        extensionProvenance: currentExtension,
+        extensionProvenance,
         settingsEvidence: {
             profileKind: 'agent_selected',
             enabledListKeys: ['adguard:2'],
@@ -359,13 +370,6 @@ function configurationSpecificResult(
 ): FixRunResult {
     // Verified configuration_specific binds both prepared sessions to the run's single
     // pinned-release provenance; only current-build profile kinds qualify on the reporter side.
-    const extensionProvenance = {
-        source: 'pinned_release' as const,
-        extensionPath: '/tmp/run/prepared-extension',
-        manifestVersion: 3 as const,
-        extensionSourceSha256: 'e'.repeat(64),
-        extensionSourceTag: 'v5.5.2.3',
-    };
     const result = resultWithSession({
         runStatus: 'configuration_specific',
         verificationStatus: 'verified',
@@ -483,13 +487,6 @@ function resultWithCandidateBinding(
         stealthEnabled: false,
         limitsExceeded: false,
     };
-    const extensionProvenance = {
-        source: 'pinned_release' as const,
-        extensionPath: '/tmp/run/prepared-extension',
-        manifestVersion: 3 as const,
-        extensionSourceSha256: 'e'.repeat(64),
-        extensionSourceTag: 'v5.5.2.3',
-    };
     const paths = {
         before: '/tmp/run/candidate-before.png',
         after: '/tmp/run/candidate-after.png',
@@ -559,24 +556,30 @@ function resultWithCandidateBinding(
             sessionId: 'prepared-session',
             extensionProvenance,
             settingsEvidence,
-            validationArtifact: {
+            validationArtifact: v.parse(AgentCandidateArtifactEvidenceSchema, {
                 artifactId: validationArtifactId,
                 path: `/tmp/run/factual-validation-${validationHash}.json`,
-            },
-            visualReviewArtifact: {
+            }),
+            visualReviewArtifact: v.parse(AgentCandidateArtifactEvidenceSchema, {
                 artifactId: `visual-review-${validationHash}`,
                 path: `/tmp/run/candidate-visual-review-${validationHash}.json`,
-            },
-            beforeViewport: { artifactId: 'candidate-before', path: paths.before },
-            afterViewport: { artifactId: 'candidate-after', path: paths.after },
-            beforeFullPage: {
+            }),
+            beforeViewport: v.parse(AgentCandidateArtifactEvidenceSchema, {
+                artifactId: 'candidate-before',
+                path: paths.before,
+            }),
+            afterViewport: v.parse(AgentCandidateArtifactEvidenceSchema, {
+                artifactId: 'candidate-after',
+                path: paths.after,
+            }),
+            beforeFullPage: v.parse(AgentCandidateArtifactEvidenceSchema, {
                 artifactId: 'candidate-before-full-page',
                 path: paths.beforeFullPage,
-            },
-            afterFullPage: {
+            }),
+            afterFullPage: v.parse(AgentCandidateArtifactEvidenceSchema, {
                 artifactId: 'candidate-after-full-page',
                 path: paths.afterFullPage,
-            },
+            }),
         },
         artifactPaths: {
             screenshots: Object.values(paths),
@@ -593,6 +596,20 @@ function resultWithCandidateBinding(
 }
 
 describe('FixRunResultSchema browser session evidence', () => {
+    it('refuses an environment artifact reference as candidate artifact evidence', () => {
+        const reference: EnvironmentArtifactReference = {
+            artifactId: 'before-viewport',
+            kind: 'screenshot',
+            path: '/tmp/before.png',
+        };
+        // The reference's `kind` fails the strict result parse, so it must also fail to compile;
+        // `pnpm typecheck` fails if this line starts compiling.
+        // @ts-expect-error A wider reference is not candidate artifact evidence.
+        const evidence: AgentCandidateArtifactEvidence = reference;
+
+        expect(v.safeParse(AgentCandidateArtifactEvidenceSchema, evidence).success).toBe(false);
+    });
+
     it('accepts exact canonical projections and rejects an independently edited legacy copy', () => {
         const facts: IssueFacts = {
             issueNumber: 4,
@@ -909,10 +926,13 @@ describe('FixRunResultSchema browser session evidence', () => {
         expect(v.safeParse(FixRunResultSchema, missingControlled).success).toBe(false);
 
         const mismatchedProvenance = configurationSpecificResult();
-        mismatchedProvenance.browserSessions![1].extensionProvenance = {
-            ...mismatchedProvenance.browserSessions![1].extensionProvenance!,
-            extensionSourceSha256: 'f'.repeat(64),
-        };
+        mismatchedProvenance.browserSessions![1].extensionProvenance = v.parse(
+            PreparedExtensionProvenanceSchema,
+            {
+                ...mismatchedProvenance.browserSessions![1].extensionProvenance!,
+                extensionSourceSha256: 'f'.repeat(64),
+            },
+        );
         expect(v.safeParse(FixRunResultSchema, mismatchedProvenance).success).toBe(false);
 
         const symptomRemains = configurationSpecificResult();
@@ -999,10 +1019,13 @@ describe('FixRunResultSchema browser session evidence', () => {
 
     it('rejects candidate extension provenance borrowed from another prepared session', () => {
         const result = resultWithCandidateBinding();
-        result.browserSessions![0].extensionProvenance = {
-            ...result.browserSessions![0].extensionProvenance!,
-            extensionSourceSha256: 'f'.repeat(64),
-        };
+        result.browserSessions![0].extensionProvenance = v.parse(
+            PreparedExtensionProvenanceSchema,
+            {
+                ...result.browserSessions![0].extensionProvenance!,
+                extensionSourceSha256: 'f'.repeat(64),
+            },
+        );
 
         expect(v.safeParse(FixRunResultSchema, result).success).toBe(false);
     });
@@ -1194,14 +1217,6 @@ const pendingPublicationCandidateDigest = createHash('sha256')
 // A prepared release build records one version string — manifest.json's own.
 const pendingPublicationPackageVersion = '5.5.2.3';
 
-const pendingPublicationExtension = {
-    source: 'pinned_release' as const,
-    extensionPath: '/tmp/run/prepared-extension',
-    manifestVersion: 3 as const,
-    extensionSourceSha256: 'e'.repeat(64),
-    extensionSourceTag: 'v5.5.2.3',
-};
-
 function pendingPublicationPhase(
     value: 'A' | 'B' | 'C',
     actualContext: FilteringEnvironmentExecution['actualContext'],
@@ -1245,7 +1260,7 @@ function pendingPublicationPhase(
                               appliedRules: value === 'C' ? [pendingPublicationCandidateRule] : [],
                               actionLog: [],
                           },
-                          provenance: pendingPublicationExtension,
+                          provenance: extensionProvenance,
                       },
         },
         completion: {

@@ -1,3 +1,5 @@
+import * as v from 'valibot';
+import { PreparedExtensionProvenanceSchema } from '../../../src/environment/environment-proofs';
 import {
     existsSync,
     mkdirSync,
@@ -14,7 +16,10 @@ import type { CoreConfig } from '../../../src/config/config';
 import { EnvironmentSelectionHost } from '../../../src/environment/environment-selection';
 import { extensionExecutorDescriptor } from '../../environment/test-filtering-environment-fixtures';
 import { ToolRegistry } from '../../../src/agent/tool-registry';
-import { ExtensionManifestVersion } from '../../../src/environment/extension-preparation';
+import {
+    ExtensionManifestVersion,
+    PreparedExtensionSource,
+} from '../../../src/environment/extension-preparation';
 import {
     GuidanceDocumentOrigin,
     GuidanceDocumentRole,
@@ -35,7 +40,11 @@ import {
     ScriptedReplyKind,
     startHermeticProvider,
 } from '../../pi/hermetic-provider';
-import { FixRunStatus, type FixRunResult } from '../../../src/types/fix-run-result';
+import {
+    FixRunStatus,
+    type FixRunResult,
+    AgentCandidateArtifactEvidenceSchema,
+} from '../../../src/types/fix-run-result';
 import { BrowserMode } from '../../../src/types/browser-mode';
 import { ExtensionEnvironmentKind } from '../../../src/types/extension-environment-kind';
 import { InfrastructureFailureReason } from '../../../src/types/infrastructure-failure-reason';
@@ -343,13 +352,13 @@ function coreResult(overrides: Partial<FixRunResult> = {}): FixRunResult {
  * @returns Core-owned extension provenance consumed by the local report adapter.
  */
 function agentExtensionProvenance(tag: string, commit: string) {
-    return {
-        source: 'pinned_release' as const,
+    return v.parse(PreparedExtensionProvenanceSchema, {
+        source: PreparedExtensionSource.PinnedRelease,
         extensionPath: '/tmp/cache/extensions/prebuilt/v5.5.2.3/unpacked',
-        manifestVersion: 3 as const,
+        manifestVersion: ExtensionManifestVersion.Mv3,
         extensionSourceSha256: createHash('sha256').update(`${tag}@${commit}`).digest('hex'),
         extensionSourceTag: tag,
-    };
+    });
 }
 
 /**
@@ -1653,30 +1662,30 @@ describe('runLocalFix', () => {
                 sessionId: 'prepared-session',
                 extensionProvenance,
                 settingsEvidence,
-                validationArtifact: {
+                validationArtifact: v.parse(AgentCandidateArtifactEvidenceSchema, {
                     artifactId: validationArtifactId,
                     path: `/tmp/factual-validation-${candidateShortHash}.json`,
-                },
-                visualReviewArtifact: {
+                }),
+                visualReviewArtifact: v.parse(AgentCandidateArtifactEvidenceSchema, {
                     artifactId: `visual-review-${candidateShortHash}`,
                     path: `/tmp/candidate-visual-review-${candidateShortHash}.json`,
-                },
-                beforeViewport: {
+                }),
+                beforeViewport: v.parse(AgentCandidateArtifactEvidenceSchema, {
                     artifactId: 'before-viewport',
                     path: verifiedScreenshots.before,
-                },
-                afterViewport: {
+                }),
+                afterViewport: v.parse(AgentCandidateArtifactEvidenceSchema, {
                     artifactId: 'after-viewport',
                     path: verifiedScreenshots.after,
-                },
-                beforeFullPage: {
+                }),
+                beforeFullPage: v.parse(AgentCandidateArtifactEvidenceSchema, {
                     artifactId: 'before-full-page',
                     path: verifiedScreenshots.beforeFullPage,
-                },
-                afterFullPage: {
+                }),
+                afterFullPage: v.parse(AgentCandidateArtifactEvidenceSchema, {
                     artifactId: 'after-full-page',
                     path: verifiedScreenshots.afterFullPage,
-                },
+                }),
             },
             candidatePatch: {
                 rule: candidateRule,

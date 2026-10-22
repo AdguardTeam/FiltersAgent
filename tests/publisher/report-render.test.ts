@@ -1,3 +1,5 @@
+import * as v from 'valibot';
+import { PreparedExtensionProvenanceSchema } from '../../src/environment/environment-proofs';
 import { describe, expect, it } from 'vitest';
 import { PromptRenderError } from '../../src/prompts/template';
 import {
@@ -445,13 +447,13 @@ describe('summarizeReportOutcome', () => {
                 fallbackDetail: null,
                 symptomObservation: SymptomObservation.Reproduced,
                 candidatePatch: { rule: focused.rule, filePath: focused.listPlace },
-                extensionProvenance: {
+                extensionProvenance: v.parse(PreparedExtensionProvenanceSchema, {
                     source: PreparedExtensionSource.PinnedRelease,
                     extensionPath: '/run/extension',
                     manifestVersion: ExtensionManifestVersion.Mv3,
                     extensionSourceSha256: 'a'.repeat(64),
                     extensionSourceTag: '1.2.89',
-                },
+                }),
             },
             {
                 summary: 'Ad banner reproduced with the prepared extension.',
@@ -513,12 +515,12 @@ describe('summarizeReportOutcome', () => {
                 fallbackDetail: null,
                 symptomObservation: SymptomObservation.NotReproduced,
                 candidatePatch: null,
-                extensionProvenance: {
+                extensionProvenance: v.parse(PreparedExtensionProvenanceSchema, {
                     source: PreparedExtensionSource.PinnedRelease,
                     extensionPath: '/run/extension',
                     manifestVersion: ExtensionManifestVersion.Mv3,
                     extensionSourceSha256: 'b'.repeat(64),
-                },
+                }),
             },
             decision,
             ARTIFACTS_LINK,
@@ -681,12 +683,12 @@ describe('summarizeReportOutcome', () => {
                 fallbackDetail: null,
                 symptomObservation: SymptomObservation.NotReproduced,
                 candidatePatch: null,
-                extensionProvenance: {
+                extensionProvenance: v.parse(PreparedExtensionProvenanceSchema, {
                     source: PreparedExtensionSource.PinnedRelease,
                     extensionPath: '/run/extension',
                     manifestVersion: ExtensionManifestVersion.Mv2,
                     extensionSourceSha256: 'd'.repeat(64),
-                },
+                }),
             },
             {},
             ARTIFACTS_LINK,

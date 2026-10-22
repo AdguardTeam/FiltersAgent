@@ -296,6 +296,19 @@ another.
 
 **Schemas.** Valibot for all validation; types derived with `v.InferOutput`.
 
+- A value typed by a `v.strictObject` schema MUST be that schema's own output: a parse, a copy of
+  another value of the same schema, or a literal that names every field. TypeScript checks excess
+  keys only on a literal, so any other value — a runtime record, a twin interface, a spread, a
+  non-strict model reply — compiles with extra fields and fails every later parse.
+    - Do not spread a value of another type into such a literal; name each field.
+    - Do not keep a hand-written interface or a second schema with the same fields: derive the type
+      with `v.InferOutput`, or reuse the schema (`AgentBrowserCaptureEvidenceSchema` is
+      `EnvironmentBrowserCaptureSchema`).
+    - When a wider type of the same shape exists, brand the output (`v.brand`) and build it as
+      `{ ... } satisfies Fields as Output`, where `Fields` lists every key as required
+      (`serializeAgentExtensionProvenance`): a missing key, an extra key and a spread of the wider
+      value then all fail to compile.
+
 **CLI.** The local CLI uses `commander`; `buildProgram(onCommand, opts)` is the factory that keeps
 it testable.
 

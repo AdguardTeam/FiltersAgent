@@ -127,7 +127,11 @@ import { SINGLE_LINE_RULE_MESSAGE, isSingleLineRule, normalizeRule } from '../re
 import type { TraceRecorder } from '../tracer/trace-recorder';
 import { TraceEventType } from '../types/trace';
 import { Viewport, ConsentStrategy, type ReproProfile } from '../types/repro-profile';
-import { ExtensionMode, type SymptomObservation } from '../types/fix-run-result';
+import {
+    ExtensionMode,
+    type AgentCandidateArtifactEvidenceFields,
+    type SymptomObservation,
+} from '../types/fix-run-result';
 import {
     CandidateVisualVerdict,
     CandidateVisualReviewSchema,
@@ -4582,7 +4586,10 @@ export class AgentRuntime {
         if (paths.size !== 1) {
             return undefined;
         }
-        return { artifactId, path: artifacts.at(-1)!.path };
+        return {
+            artifactId,
+            path: artifacts.at(-1)!.path,
+        } satisfies AgentCandidateArtifactEvidenceFields as AgentRuntimeCandidateArtifactEvidence;
     }
 
     /**

@@ -1,3 +1,9 @@
+import * as v from 'valibot';
+import {
+    PreparedExtensionSource,
+    ExtensionManifestVersion,
+} from '../../../src/environment/extension-preparation';
+import { PreparedExtensionProvenanceSchema } from '../../../src/environment/environment-proofs';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -149,10 +155,10 @@ export function writeRunSide(caseDirectory: string): void {
  * @returns Locked local run record.
  */
 export function analysisOnlyRecord(): LocalRunRecord {
-    const extension = {
-        source: 'historical_build' as const,
+    const extension = v.parse(PreparedExtensionProvenanceSchema, {
+        source: PreparedExtensionSource.HistoricalBuild,
         extensionPath: '/tmp/cache/extensions/prebuilt/v5.5.2.3/unpacked',
-        manifestVersion: 3 as const,
+        manifestVersion: ExtensionManifestVersion.Mv3,
         extensionSourceSha256: 'e'.repeat(64),
         historicalBuild: {
             version: '5.4.3.99',
@@ -161,7 +167,7 @@ export function analysisOnlyRecord(): LocalRunRecord {
             autobuildTag: 'autobuild-v5.4.3.99',
             releaseSha256: 'f'.repeat(64),
         },
-    };
+    });
     return {
         result: {
             issueNumber: 235988,

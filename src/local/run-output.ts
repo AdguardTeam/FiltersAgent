@@ -134,7 +134,7 @@ export type LocalRunRecord = {
     artifacts: v.InferOutput<typeof LocalArtifactLinkSchema>[];
 };
 
-export const LocalRunRecordSchema: v.GenericSchema<LocalRunRecord> = v.pipe(
+export const LocalRunRecordSchema: v.GenericSchema<unknown, LocalRunRecord> = v.pipe(
     v.object({
         result: FixRunResultSchema,
         provenance: LocalRunProvenanceSchema,

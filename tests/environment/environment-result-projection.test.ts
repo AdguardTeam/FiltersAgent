@@ -1,3 +1,8 @@
+import * as v from 'valibot';
+import {
+    PreparedExtensionSource,
+    ExtensionManifestVersion,
+} from '../../src/environment/extension-preparation';
 import { describe, expect, it } from 'vitest';
 import type { CandidateVisualReview } from '../../src/types/candidate-visual-review';
 import type {
@@ -6,7 +11,10 @@ import type {
     FilteringEnvironmentExecution,
     ValidatorObservedPhaseCompletion,
 } from '../../src/environment/filtering-environment';
-import { BlockerVerificationMethod } from '../../src/environment/environment-proofs';
+import {
+    BlockerVerificationMethod,
+    PreparedExtensionProvenanceSchema,
+} from '../../src/environment/environment-proofs';
 import { projectEnvironmentResult } from '../../src/environment/environment-result-projection';
 import { ExtensionLaunchFamily } from '../../src/environment/extension-launch';
 import { SIGNED_XPI_BUILD_MARKER } from '../../src/environment/firefox-phase-evidence';
@@ -32,13 +40,13 @@ const cliActualContext = {
     productVersion: '1.4.13',
 };
 
-const provenance = {
-    source: 'pinned_release' as const,
+const provenance = v.parse(PreparedExtensionProvenanceSchema, {
+    source: PreparedExtensionSource.PinnedRelease,
     extensionPath: '/tmp/cache/extensions/prebuilt/v5.5.2.3/unpacked',
-    manifestVersion: 3 as const,
+    manifestVersion: ExtensionManifestVersion.Mv3,
     extensionSourceSha256: 'e'.repeat(64),
     extensionSourceTag: 'v5.5.2.3',
-};
+});
 
 /**
  * Build a schema-valid visual decision bound to the canonical B/C screenshots.
@@ -383,13 +391,13 @@ function firefoxShaped(
             extension.manifestVersion = SIGNED_XPI_BUILD_MARKER;
             extension.activeRulesetListKeys = null;
             extension.stealthEnabled = null;
-            extension.provenance = {
-                source: 'instruction',
+            extension.provenance = v.parse(PreparedExtensionProvenanceSchema, {
+                source: PreparedExtensionSource.Instruction,
                 launchFamily: ExtensionLaunchFamily.Firefox,
                 extensionId: 'uBlock0@raymondhill.net',
                 xpiPath: '/tmp/cache/ublock-origin.firefox.signed.xpi',
                 extensionSourceSha256: 'e'.repeat(64),
-            };
+            });
         }
     }
     return input;

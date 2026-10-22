@@ -11,28 +11,23 @@ import {
     EnvironmentCleanupReceiptSchema,
     FilteringEnvironmentExecutionSchema,
 } from '../environment/filtering-environment';
-import { type ReviewCandidateOperation } from '../repo/repository-edit';
 import { GIT_OBJECT_ID_PATTERN } from '../types/git-object-id';
 import { CandidatePatchSchema, FixRunStatusSchema } from '../types/fix-run-result';
 import { REPOSITORY_SLUG_PATTERN } from '../types/repository-slug';
-import type { PreparedFiltersCheckout } from './filters-preparer';
 import {
     LOCAL_PUBLICATION_OWNERSHIP_MARKER,
     LOCAL_PUBLICATION_VISIBLE_MARKER,
 } from './output-directory';
-import { type ReviewWorkspaceReceipt } from './review-checkout';
-import { type LocalRunRecord } from './run-output';
+import {
+    LocalEnabledFilterEvidenceSchema,
+    LocalSettingsProfileEvidenceSchema,
+    type LocalRunRecord,
+} from './run-output';
 import { EXTENSION_ENVIRONMENT_KIND_VALUES } from '../types/extension-environment-kind';
 import { CHECKOUT_SOURCE_VALUES } from '../types/checkout-source';
-import { INPUT_ORIGIN_VALUES, type InputOrigin } from '../types/input-origin';
-import {
-    ReviewCandidateDisposition,
-    REVIEW_CANDIDATE_DISPOSITION_VALUES,
-} from '../types/review-candidate-disposition';
-import { PublicationOutcome, PUBLICATION_OUTCOME_VALUES } from '../types/publication-outcome';
-import { SETTINGS_APPLICATION_STATUS_VALUES } from '../types/settings-application-status';
-import { ACTIVATION_PROOF_VALUES } from '../types/activation-proof';
-import { SETTINGS_PROFILE_KIND_VALUES } from '../types/settings-profile-kind';
+import { INPUT_ORIGIN_VALUES } from '../types/input-origin';
+import { REVIEW_CANDIDATE_DISPOSITION_VALUES } from '../types/review-candidate-disposition';
+import { PUBLICATION_OUTCOME_VALUES } from '../types/publication-outcome';
 import { CANDIDATE_BINDING_FAILURE_CODE_VALUES } from '../types/candidate-binding-failure-code';
 import {
     LocalPublicationTrustError,
@@ -41,8 +36,6 @@ import {
     MAX_EVIDENCE_FILE_BYTES,
     normalizeEvidencePath,
     schemaIssueDetail,
-    type PublishedImageCapture,
-    type PublishedImageOmission,
 } from './local-publication-trust';
 import { MAX_EVIDENCE_FILES } from './evidence-sanitizer';
 
@@ -59,26 +52,6 @@ import { MAX_EVIDENCE_FILES } from './evidence-sanitizer';
  * digest, the trust failure codes and their error — are one layer below in
  * `local-publication-trust`, which this module imports and which imports nothing back.
  */
-
-/**
- * Digest entry for every exact file covered by a local publication manifest.
- */
-export interface LocalPublicationArtifactDigest {
-    /**
-     * Normalized generation-relative path.
-     */
-    path: string;
-
-    /**
-     * Lowercase SHA-256 of exact persisted bytes.
-     */
-    sha256: string;
-
-    /**
-     * Exact persisted byte count.
-     */
-    bytes: number;
-}
 
 /**
  * Stage at which a sanitized publication failure occurred.
@@ -100,259 +73,6 @@ export const LocalPublicationFailureStage = {
  */
 export type LocalPublicationFailureStage =
     (typeof LocalPublicationFailureStage)[keyof typeof LocalPublicationFailureStage];
-
-/**
- * Sanitized stable failure retained by an evidence-only publication.
- */
-export interface LocalPublicationFailure {
-    /**
-     * Stable bounded failure code.
-     */
-    code: string;
-
-    /**
-     * Stable failure stage.
-     */
-    stage: LocalPublicationFailureStage;
-
-    /**
-     * Bounded sanitized human-readable detail.
-     */
-    detail: string;
-}
-
-/**
- * Bound candidate disposition serialized in a strict local publication manifest.
- */
-export interface BoundLocalPublicationCandidateDisposition {
-    /**
-     * Bound candidate discriminator.
-     */
-    kind: 'bound';
-
-    /**
-     * Exact source-bound add, edit, or remove operation.
-     */
-    operation: ReviewCandidateOperation;
-}
-
-/**
- * Legitimate no-candidate disposition serialized in a strict manifest.
- */
-export interface NotApplicableLocalPublicationCandidateDisposition {
-    /**
-     * No-candidate discriminator.
-     */
-    kind: 'not_applicable';
-
-    /**
-     * Stable reason why no review checkout is applicable.
-     */
-    disposition: ReviewCandidateDisposition;
-}
-
-/**
- * Sanitized candidate-binding failure serialized in a strict manifest.
- */
-export interface FailedLocalPublicationCandidateDisposition {
-    /**
-     * Candidate-binding failure discriminator.
-     */
-    kind: 'failed';
-
-    /**
-     * Stable bounded failure facts.
-     */
-    failure: LocalPublicationFailure;
-}
-
-/**
- * Candidate disposition serialized in one strict local publication manifest.
- */
-export type LocalPublicationCandidateDisposition =
-    | BoundLocalPublicationCandidateDisposition
-    | NotApplicableLocalPublicationCandidateDisposition
-    | FailedLocalPublicationCandidateDisposition;
-
-/**
- * Immutable issue identity bound into a publication manifest.
- */
-export interface LocalPublicationIssueIdentity {
-    /**
-     * Repository containing the captured issue.
-     */
-    repository: string;
-
-    /**
-     * Captured issue number.
-     */
-    issueNumber: number;
-
-    /**
-     * Upstream issue revision timestamp.
-     */
-    sourceUpdatedAt: string;
-
-    /**
-     * Complete source-envelope integrity digest.
-     */
-    sourceIntegrityDigest: string;
-
-    /**
-     * Prompt-safe source integrity digest.
-     */
-    sourcePromptIntegrityDigest: string;
-
-    /**
-     * Verified revision digest.
-     */
-    revisionDigest: string;
-
-    /**
-     * Verified prompt digest.
-     */
-    promptDigest: string;
-
-    /**
-     * Trusted revision capture origin.
-     */
-    inputOrigin: InputOrigin;
-}
-
-/**
- * Artifact and semantic bindings stored in one publication manifest.
- */
-export interface LocalPublicationBindings {
-    /**
-     * Digest of the public issue input.
-     */
-    issueInputSha256: string;
-
-    /**
-     * Digest of the canonical run record.
-     */
-    runRecordSha256: string;
-
-    /**
-     * Digest of model-authored run artifacts.
-     */
-    agentRunArtifactsSha256: string;
-
-    /**
-     * Digest of the provider usage snapshot.
-     */
-    llmUsageSha256: string;
-
-    /**
-     * Issue-form classification declared by the report.
-     */
-    declaredType: unknown;
-
-    /**
-     * Agent-observed issue classification.
-     */
-    observedType: unknown;
-
-    /**
-     * Product and browser context reported by the user.
-     */
-    reportedContext: unknown;
-
-    /**
-     * Product and browser context actually exercised.
-     */
-    actualContext: unknown;
-
-    /**
-     * Complete environment-selection decision.
-     */
-    environmentChoice: unknown;
-
-    /**
-     * Recorded fidelity limitations and conflicts.
-     */
-    fidelity: unknown;
-
-    /**
-     * Filter settings and environment execution facts.
-     */
-    filters: unknown;
-
-    /**
-     * Canonical phase evidence.
-     */
-    phaseEvidence: unknown;
-
-    /**
-     * Environment cleanup receipt.
-     */
-    cleanup: unknown;
-}
-
-/**
- * Complete consumer-visible manifest for one append-only local generation.
- */
-export interface LocalPublicationManifest {
-    /**
-     * Manifest format version.
-     */
-    schemaVersion: 1;
-
-    /**
-     * Lowercase publication UUID.
-     */
-    publicationId: string;
-
-    /**
-     * Normal or sanitized evidence-only outcome.
-     */
-    outcome: PublicationOutcome;
-
-    /**
-     * Host clock timestamp.
-     */
-    createdAt: string;
-
-    /**
-     * Immutable issue revision identity.
-     */
-    issue: LocalPublicationIssueIdentity;
-
-    /**
-     * Exact source repository provenance.
-     */
-    source: PreparedFiltersCheckout['provenance'];
-
-    /**
-     * Digests and selected semantic fields binding the complete run.
-     */
-    bindings: LocalPublicationBindings;
-
-    /**
-     * Exact candidate binding disposition.
-     */
-    candidate: LocalPublicationCandidateDisposition;
-
-    /**
-     * Sanitized failure for evidence-only output.
-     */
-    failure: LocalPublicationFailure | null;
-
-    /**
-     * Every generation file except the manifest and marker files.
-     */
-    artifacts: LocalPublicationArtifactDigest[];
-
-    /**
-     * Trusted captures and typed raw-image omissions.
-     */
-    images: (PublishedImageCapture | PublishedImageOmission)[];
-
-    /**
-     * Detached review receipt for a normal bound publication.
-     */
-    review: ReviewWorkspaceReceipt | null;
-}
 
 /**
  * Strict lowercase SHA-256 value accepted from persisted publication data.
@@ -575,24 +295,20 @@ const LocalPublicationSourceSchema = v.strictObject({
 
 /**
  * Strict enabled-filter evidence nested in one persisted settings profile.
+ *
+ * The manifest duplicates the run record's settings profiles and the verifier reads them back from
+ * the run record with this schema, so the fields come from the run-record schema itself: a field
+ * the run record gains is published and verified instead of failing every publication.
  */
-const LocalPublicationEnabledFilterSchema = v.strictObject({
-    id: v.union([v.string(), v.number()]),
-    name: v.string(),
-    group: v.nullable(v.string()),
-    version: v.nullable(v.string()),
-    metadataEnabled: v.boolean(),
-    runtimeEnabled: v.boolean(),
-});
+const LocalPublicationEnabledFilterSchema = v.strictObject(
+    LocalEnabledFilterEvidenceSchema.entries,
+);
 
 /**
- * Strict settings-profile evidence nested in publication bindings.
+ * Strict settings-profile evidence nested in publication bindings, over the run-record fields.
  */
 export const LocalPublicationSettingsProfileSchema = v.strictObject({
-    name: v.picklist(SETTINGS_PROFILE_KIND_VALUES),
-    status: v.picklist(SETTINGS_APPLICATION_STATUS_VALUES),
-    detail: v.nullable(v.string()),
-    activationProof: v.picklist(ACTIVATION_PROOF_VALUES),
+    ...LocalSettingsProfileEvidenceSchema.entries,
     // Null mirrors the run-record contract: a proof-less profile never observed its enabled set,
     // and the manifest duplicates that record verbatim, so the null must survive publication.
     enabledFilters: v.nullable(v.array(LocalPublicationEnabledFilterSchema)),
@@ -647,31 +363,41 @@ const LocalPublicationArtifactSchema = v.pipe(
 );
 
 /**
+ * Strict trusted capture record persisted in a manifest.
+ */
+const LocalPublicationImageCaptureSchema = v.pipe(
+    v.strictObject({
+        kind: v.literal('capture'),
+        path: LocalPublicationPathSchema,
+        role: v.pipe(v.string(), v.minLength(1), v.maxLength(128)),
+        proofId: v.pipe(v.string(), v.regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u)),
+        sha256: LocalPublicationSha256Schema,
+        bytes: v.pipe(LocalPublicationCountSchema, v.maxValue(MAX_EVIDENCE_FILE_BYTES)),
+        width: v.pipe(LocalPublicationPositiveCountSchema, v.maxValue(MAX_CAPTURE_PIXELS)),
+        height: v.pipe(LocalPublicationPositiveCountSchema, v.maxValue(MAX_CAPTURE_PIXELS)),
+    }),
+    v.check(
+        (capture) => capture.width * capture.height <= MAX_CAPTURE_PIXELS,
+        'Captured image dimensions exceed the supported pixel count.',
+    ),
+);
+
+/**
+ * Strict omission record replacing untrusted screenshot bytes in a manifest.
+ */
+const LocalPublicationImageOmissionSchema = v.strictObject({
+    kind: v.literal('omitted'),
+    path: LocalPublicationPathSchema,
+    role: v.literal('browser_evidence'),
+    reason: v.literal('untrusted_image_without_pixel_redaction_proof'),
+});
+
+/**
  * Strict tagged image capture or omission persisted in a manifest.
  */
 const LocalPublicationImageSchema = v.variant('kind', [
-    v.pipe(
-        v.strictObject({
-            kind: v.literal('capture'),
-            path: LocalPublicationPathSchema,
-            role: v.pipe(v.string(), v.minLength(1), v.maxLength(128)),
-            proofId: v.pipe(v.string(), v.regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u)),
-            sha256: LocalPublicationSha256Schema,
-            bytes: v.pipe(LocalPublicationCountSchema, v.maxValue(MAX_EVIDENCE_FILE_BYTES)),
-            width: v.pipe(LocalPublicationPositiveCountSchema, v.maxValue(MAX_CAPTURE_PIXELS)),
-            height: v.pipe(LocalPublicationPositiveCountSchema, v.maxValue(MAX_CAPTURE_PIXELS)),
-        }),
-        v.check(
-            (capture) => capture.width * capture.height <= MAX_CAPTURE_PIXELS,
-            'Captured image dimensions exceed the supported pixel count.',
-        ),
-    ),
-    v.strictObject({
-        kind: v.literal('omitted'),
-        path: LocalPublicationPathSchema,
-        role: v.literal('browser_evidence'),
-        reason: v.literal('untrusted_image_without_pixel_redaction_proof'),
-    }),
+    LocalPublicationImageCaptureSchema,
+    LocalPublicationImageOmissionSchema,
 ]);
 
 /**
@@ -725,6 +451,49 @@ export const LocalPublicationManifestSchema = v.pipe(
 );
 
 /**
+ * Digest entry for every exact file covered by a local publication manifest.
+ */
+export type LocalPublicationArtifactDigest = v.InferOutput<typeof LocalPublicationArtifactSchema>;
+
+/**
+ * Immutable issue identity bound into a publication manifest.
+ */
+export type LocalPublicationIssueIdentity = v.InferOutput<typeof LocalPublicationIssueSchema>;
+
+/**
+ * Published trusted capture evidence, as the sanitizer records it and the manifest persists it.
+ */
+export type PublishedImageCapture = v.InferOutput<typeof LocalPublicationImageCaptureSchema>;
+
+/**
+ * Typed omission replacing untrusted screenshot bytes.
+ */
+export type PublishedImageOmission = v.InferOutput<typeof LocalPublicationImageOmissionSchema>;
+
+/**
+ * Source-bound add, edit, or remove operation persisted for a bound candidate.
+ */
+export type LocalPublicationOperation = v.InferOutput<typeof LocalPublicationOperationSchema>;
+
+/**
+ * Sanitized stable failure retained by an evidence-only publication.
+ */
+export type LocalPublicationFailure = v.InferOutput<typeof LocalPublicationFailureSchema>;
+
+/**
+ * Candidate disposition serialized in one strict local publication manifest.
+ */
+export type LocalPublicationCandidateDisposition = v.InferOutput<
+    typeof LocalPublicationCandidateSchema
+>;
+
+/**
+ * Complete consumer-visible manifest for one append-only local generation, typed by the strict
+ * schema it is parsed with: a hand-written twin would accept wider values the parse refuses.
+ */
+export type LocalPublicationManifest = v.InferOutput<typeof LocalPublicationManifestSchema>;
+
+/**
  * Strict semantic projection read from a digest-verified sanitized run record.
  *
  * The complete local run schema cannot be replayed after publication redaction because structural
@@ -756,27 +525,10 @@ export type LockedPublicationRunProjection = v.InferOutput<
 /**
  * Canonical digests used to bind primary publication files to semantic manifest fields.
  */
-export interface LocalPublicationPrimaryDigests {
-    /**
-     * Public issue-input digest.
-     */
-    issueInputSha256: string;
-
-    /**
-     * Canonical run-record digest.
-     */
-    runRecordSha256: string;
-
-    /**
-     * Model-authored artifact digest.
-     */
-    agentRunArtifactsSha256: string;
-
-    /**
-     * Provider usage snapshot digest.
-     */
-    llmUsageSha256: string;
-}
+export type LocalPublicationPrimaryDigests = Pick<
+    LocalPublicationManifest['bindings'],
+    'issueInputSha256' | 'runRecordSha256' | 'agentRunArtifactsSha256' | 'llmUsageSha256'
+>;
 
 /**
  * Build complete manifest semantic bindings from the canonical run record.
@@ -792,7 +544,10 @@ export function projectRunBindings(
     const selection = record.result.environmentSelection;
     const execution = record.result.environmentExecution;
     return {
-        ...digests,
+        issueInputSha256: digests.issueInputSha256,
+        runRecordSha256: digests.runRecordSha256,
+        agentRunArtifactsSha256: digests.agentRunArtifactsSha256,
+        llmUsageSha256: digests.llmUsageSha256,
         declaredType: selection?.declared ?? null,
         observedType: selection?.observed ?? null,
         reportedContext: selection?.reported ?? null,

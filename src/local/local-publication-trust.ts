@@ -4,8 +4,9 @@
  *
  * The resource caps an evidence artifact must stay under, the control-character check every path is
  * screened by, the stable failure codes and the error that carries one, the digest an artifact is
- * named by, the relative-path normalization every persisted path goes through, and the two records
- * a screenshot ends up as — published capture or typed omission.
+ * named by, and the relative-path normalization every persisted path goes through. The two records
+ * a screenshot ends up as — published capture or typed omission — are typed by the manifest schema
+ * that persists them, so they live in `local-publication-manifest`.
  *
  * These are the checks themselves, not the manifest that reports their outcome: the sanitizer, the
  * PNG normalizer, the publisher and the verifier all reach for them without needing a manifest, and
@@ -116,76 +117,6 @@ export class LocalPublicationTrustError extends Error {
         super(detail === undefined ? message : `${message} [${detail}]`);
         this.name = 'LocalPublicationTrustError';
     }
-}
-
-/**
- * Published trusted capture evidence.
- */
-export interface PublishedImageCapture {
-    /**
-     * Capture discriminator.
-     */
-    kind: 'capture';
-
-    /**
-     * Normalized collection-relative path.
-     */
-    path: string;
-
-    /**
-     * Stable semantic role.
-     */
-    role: string;
-
-    /**
-     * Opaque Host proof identity.
-     */
-    proofId: string;
-
-    /**
-     * SHA-256 of normalized metadata-free PNG bytes.
-     */
-    sha256: string;
-
-    /**
-     * Exact normalized PNG byte count.
-     */
-    bytes: number;
-
-    /**
-     * Decoded capture width.
-     */
-    width: number;
-
-    /**
-     * Decoded capture height.
-     */
-    height: number;
-}
-
-/**
- * Typed omission replacing untrusted screenshot bytes.
- */
-export interface PublishedImageOmission {
-    /**
-     * Omission discriminator.
-     */
-    kind: 'omitted';
-
-    /**
-     * Normalized collection-relative source path.
-     */
-    path: string;
-
-    /**
-     * Stable semantic role.
-     */
-    role: 'browser_evidence';
-
-    /**
-     * Stable reason that no raw bytes or digest were published.
-     */
-    reason: 'untrusted_image_without_pixel_redaction_proof';
 }
 
 /**

@@ -641,12 +641,22 @@ export class BrowserExtensionAdsObserver {
             phaseBResult,
             phaseCResult,
         );
-        const candidateValidation = {
+        // Every field is named: the binding lands in a strict schema, so a spread of a wider record
+        // would compile and fail the phase-completion parse.
+        const candidateValidation: ValidatorObservedPhaseCompletion['candidateValidation'] = {
             validationArtifactId: validationArtifact.artifactId,
             candidateDigest: input.proof.candidateDigest,
             candidateRule: this.options.candidateRule,
             verified: reviewVerified && failedChecks.length === 0,
-            ...screenshots,
+            beforeViewport: screenshots.beforeViewport,
+            afterViewport: screenshots.afterViewport,
+            ...(screenshots.beforeFullPage === undefined
+                ? {}
+                : { beforeFullPage: screenshots.beforeFullPage }),
+            ...(screenshots.afterFullPage === undefined
+                ? {}
+                : { afterFullPage: screenshots.afterFullPage }),
+            screenshotArtifactIds: screenshots.screenshotArtifactIds,
             validationArtifact,
             visualReviewArtifact,
         };

@@ -1,5 +1,9 @@
+import { AgentCandidateArtifactEvidenceSchema } from '../../src/types/fix-run-result';
 import { createHash } from 'node:crypto';
-import { BlockerVerificationMethod } from '../../src/environment/environment-proofs';
+import {
+    BlockerVerificationMethod,
+    PreparedExtensionProvenanceSchema,
+} from '../../src/environment/environment-proofs';
 import {
     existsSync,
     linkSync,
@@ -15,6 +19,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import * as v from 'valibot';
+import {
+    PreparedExtensionSource,
+    ExtensionManifestVersion,
+} from '../../src/environment/extension-preparation';
 import { createRunUsageCollector } from '../../src/pi/usage-collector';
 import { RunUsageSummarySchema, UsageSummaryVersion } from '../../src/types/usage-summary';
 import { type EnvironmentSelectionSnapshot } from '../../src/environment/environment-selection-contract';
@@ -43,13 +51,13 @@ import {
  * on disk.
  */
 const projectRoot = mkdtempSync(join(tmpdir(), 'local-run-project-'));
-const extensionProvenance = {
-    source: 'pinned_release' as const,
+const extensionProvenance = v.parse(PreparedExtensionProvenanceSchema, {
+    source: PreparedExtensionSource.PinnedRelease,
     extensionPath: '/tmp/cache/extensions/prebuilt/v5.5.2.3/unpacked',
-    manifestVersion: 3 as const,
+    manifestVersion: ExtensionManifestVersion.Mv3,
     extensionSourceSha256: 'e'.repeat(64),
     extensionSourceTag: 'v5.5.2.3',
-};
+});
 const settingsEvidence = {
     profileKind: 'report_exact' as const,
     // The phase read-back never observed the enabled set or the Stealth state: the record carries
@@ -239,30 +247,30 @@ function bindCandidateEvidence(result: FixRunResult): FixRunResult {
             sessionId: 'prepared-session',
             extensionProvenance,
             settingsEvidence,
-            validationArtifact: {
+            validationArtifact: v.parse(AgentCandidateArtifactEvidenceSchema, {
                 artifactId: validationArtifactId,
                 path: `/tmp/run/factual-validation-${candidateShortHash}.json`,
-            },
-            visualReviewArtifact: {
+            }),
+            visualReviewArtifact: v.parse(AgentCandidateArtifactEvidenceSchema, {
                 artifactId: `visual-review-${candidateShortHash}`,
                 path: `/tmp/run/candidate-visual-review-${candidateShortHash}.json`,
-            },
-            beforeViewport: {
+            }),
+            beforeViewport: v.parse(AgentCandidateArtifactEvidenceSchema, {
                 artifactId: boundReview.beforeViewportArtifactId,
                 path: screenshots.before,
-            },
-            afterViewport: {
+            }),
+            afterViewport: v.parse(AgentCandidateArtifactEvidenceSchema, {
                 artifactId: boundReview.afterViewportArtifactId,
                 path: screenshots.after,
-            },
-            beforeFullPage: {
+            }),
+            beforeFullPage: v.parse(AgentCandidateArtifactEvidenceSchema, {
                 artifactId: boundReview.beforeFullPageArtifactId!,
                 path: screenshots.beforeFullPage!,
-            },
-            afterFullPage: {
+            }),
+            afterFullPage: v.parse(AgentCandidateArtifactEvidenceSchema, {
                 artifactId: boundReview.afterFullPageArtifactId!,
                 path: screenshots.afterFullPage!,
-            },
+            }),
         },
         artifactPaths: {
             ...result.artifactPaths,
@@ -425,13 +433,6 @@ function pendingPublicationRecord(): LocalRunRecord {
      */
     const candidateRule = 'example.test##.ad';
     const candidateDigest = createHash('sha256').update(candidateRule, 'utf8').digest('hex');
-    const phaseProvenance = {
-        source: 'pinned_release' as const,
-        extensionPath: '/tmp/cache/extensions/prebuilt/v5.5.2.3/unpacked',
-        manifestVersion: 3 as const,
-        extensionSourceSha256: 'e'.repeat(64),
-        extensionSourceTag: 'v5.5.2.3',
-    };
     const execution: FilteringEnvironmentExecution = {
         recorderVersion: 1,
         runId: 'run-4',
@@ -482,7 +483,7 @@ function pendingPublicationRecord(): LocalRunRecord {
                                       appliedRules: phase === 'C' ? [candidateRule] : [],
                                       actionLog: [],
                                   },
-                                  provenance: phaseProvenance,
+                                  provenance: extensionProvenance,
                               },
                 },
                 completion: {

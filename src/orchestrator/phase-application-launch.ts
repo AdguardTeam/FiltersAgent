@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import type { AdGuardExtensionSettingsProfile } from '../browser/adguard-extension-settings';
 import { readAdGuardExtensionState as readAdGuardExtensionStateDefault } from '../browser/adguard-extension-state-read';
 import { readBundledFilterCatalogIds } from '../browser/extension-filter-catalog';
@@ -28,6 +27,7 @@ import { SettingsProfileKind } from '../types/settings-profile-kind';
 import { PhaseLabel } from '../types/validation';
 import { ApplicationGoalKind } from '../validator/phase-application-contract';
 import type { AgentRuntimeSessionState } from './agent-runtime-session-evidence';
+import { serializeExtensionBuildIdentity } from './extension-provenance';
 import { launchFirefoxDeclaredBaseline } from './firefox-launch-baseline';
 import { LaunchBaselineOutcomeKind, type LaunchBaselineOutcome } from './launch-baseline-outcome';
 import { launchListSliceBaseline, ListSliceBaselineOutcomeKind } from './list-slice-baseline';
@@ -359,17 +359,16 @@ export function buildBrowserExtensionEnvironmentOptions(
     }
     // This adapter locks its baseline from an unpacked root's own manifest and resource bytes, so
     // it is a Chromium-family construction by definition; a Firefox-family build fails named here
-    // rather than reaching a baseline lock that would find no manifest. The Chromium record is
-    // structurally the serialized single-source provenance: the proof schema and the runtime carry
-    // the same field set.
-    const provenance = requireChromiumPreparedExtension(
+    // rather than reaching a baseline lock that would find no manifest. The runtime record also
+    // carries launch input the strict proof schema refuses, so the proof gets its projection.
+    const launch = requireChromiumPreparedExtension(
         state.extension,
         'Building the Extension environment options',
     );
-    const { packageVersion } = readPreparedExtensionManifest(provenance.extensionPath);
-    const buildDigest = createHash('sha256').update(JSON.stringify(provenance)).digest('hex');
+    const { packageVersion } = readPreparedExtensionManifest(launch.extensionPath);
+    const { provenance, buildDigest } = serializeExtensionBuildIdentity(launch);
     return {
-        extensionRoot: provenance.extensionPath,
+        extensionRoot: launch.extensionPath,
         packageVersion,
         manifestVersion: packageVersion,
         profileKind: state.settingsProfile.kind,

@@ -219,15 +219,23 @@ function normalizeModelOutput(
     const beforeReconciliation = orderInventoryDispositions(
         beforeInventory.instances.length,
         output.beforeInventoryReconciliation,
-    ).map((item) => ({
-        ...item,
-        instance: beforeInventory.instances[item.observationIndex - 1],
-    }));
+    ).map(
+        // Every field is named: the model's disposition is a non-strict schema, so a field it gains
+        // would otherwise reach the strict reconciliation and fail every review parse.
+        (item): CandidateVisualInventoryReconciliation['before'][number] => ({
+            observationIndex: item.observationIndex,
+            disposition: item.disposition,
+            rationale: item.rationale,
+            instance: beforeInventory.instances[item.observationIndex - 1],
+        }),
+    );
     const afterReconciliation = orderInventoryDispositions(
         afterInventory.instances.length,
         output.afterInventoryReconciliation,
-    ).map((item) => ({
-        ...item,
+    ).map((item): CandidateVisualInventoryReconciliation['after'][number] => ({
+        observationIndex: item.observationIndex,
+        disposition: item.disposition,
+        rationale: item.rationale,
         instance: afterInventory.instances[item.observationIndex - 1],
     }));
     const semanticOutput = v.parse(CandidateVisualReviewModelOutputSchema, {

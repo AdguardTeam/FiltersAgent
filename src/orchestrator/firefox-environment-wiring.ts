@@ -8,7 +8,6 @@
  * declaration plus the session seams the runtime supplies, and the run's filter baseline is the
  * declaration's list selection rather than anything resolved against AdGuard's catalog.
  */
-import { createHash } from 'node:crypto';
 import {
     declaredBaselineListKeys,
     decideDeclaredFilters,
@@ -19,7 +18,7 @@ import type { FirefoxExtensionEnvironmentOptions } from '../environment/firefox-
 import type { LoadedInstruction } from '../knowledge/instruction-loader';
 import type { FirefoxPreparedExtension, PreparedExtension } from '../local/prepared-extension';
 import type { AgentRuntimeSessionState } from './agent-runtime-session-evidence';
-import { serializeAgentExtensionProvenance } from './extension-provenance';
+import { serializeExtensionBuildIdentity } from './extension-provenance';
 import { applicationInstructionContent } from './phase-application-flow-host';
 import type { BrowserExtensionEnvironmentCallbacks } from './phase-application-launch';
 
@@ -79,14 +78,14 @@ export function buildFirefoxExtensionEnvironmentOptions(
                 'build the Firefox blocker environment.',
         );
     }
-    const provenance = serializeAgentExtensionProvenance(launch);
+    const { provenance, buildDigest } = serializeExtensionBuildIdentity(launch);
     return {
         extensionId: launch.extensionId,
         xpiPath: launch.xpiPath,
         declaredListKeys: declaredBaselineListKeys(launch),
         profileKind: state.settingsProfile.kind,
         application: applicationInstructionContent(instruction),
-        buildDigest: createHash('sha256').update(JSON.stringify(provenance)).digest('hex'),
+        buildDigest,
         extensionProvenance: provenance,
         createSession: callbacks.createSession,
         phaseConfiguration: callbacks.phaseConfiguration,

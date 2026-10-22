@@ -6,7 +6,6 @@ import {
     ReporterSymptomPresence,
     SYMPTOM_PRESENCE_VALUES,
     type SymptomPresence,
-    ReporterSymptomPresenceSchema,
 } from './reporter-symptom-presence';
 import { PLACEMENT_BASIS_VALUES } from './placement-basis';
 import { ReproProfileSchema, reproEnvironmentsEqual } from './repro-profile';
@@ -18,7 +17,10 @@ import {
     PhaseApplicationProofSchema,
     PreparedExtensionProvenanceSchema,
 } from '../environment/environment-proofs';
-import { FilteringEnvironmentExecutionSchema } from '../environment/filtering-environment';
+import {
+    EnvironmentBrowserCaptureSchema,
+    FilteringEnvironmentExecutionSchema,
+} from '../environment/filtering-environment';
 import {
     EnvironmentDispositionStatus,
     EnvironmentSelectionReservedCase,
@@ -505,17 +507,11 @@ export const AgentSettingsEvidenceSchema = v.strictObject({
     limitsExceeded: v.boolean(),
 });
 
-export const AgentBrowserCaptureEvidenceSchema = v.strictObject({
-    visionVerified: v.boolean(),
-    viewportArtifactId: v.nullable(v.pipe(v.string(), v.minLength(1))),
-    viewport: v.nullable(v.pipe(v.string(), v.minLength(1))),
-    fullPageOverviewArtifactId: v.nullable(v.pipe(v.string(), v.minLength(1))),
-    fullPageOverview: v.nullable(v.pipe(v.string(), v.minLength(1))),
-    tileArtifactIds: v.array(v.pipe(v.string(), v.minLength(1))),
-    tiles: v.array(v.pipe(v.string(), v.minLength(1))),
-    coverageComplete: v.boolean(),
-    reporterSymptomPresence: v.optional(v.nullable(ReporterSymptomPresenceSchema)),
-});
+/**
+ * The environment's own capture schema: a recorded capture is copied into the result as it is, so a
+ * twin schema here would let a field added to one side compile and fail the result parse.
+ */
+export const AgentBrowserCaptureEvidenceSchema = EnvironmentBrowserCaptureSchema;
 
 export const AgentBrowserSessionEvidenceSchema = v.strictObject({
     sessionId: v.pipe(v.string(), v.minLength(1)),
@@ -575,10 +571,18 @@ export const AgentConfigurationComparisonEvidenceSchema = v.strictObject({
     controlled: AgentConfigurationProfileReferenceSchema,
 });
 
-export const AgentCandidateArtifactEvidenceSchema = v.strictObject({
-    artifactId: v.pipe(v.string(), v.minLength(1), v.maxLength(256)),
-    path: v.pipe(v.string(), v.minLength(1)),
-});
+/**
+ * One candidate artifact the locked result binds. The output is branded because the wider
+ * `EnvironmentArtifactReference` (with its `kind`) has the same shape: only a parse or a producer
+ * spelling the two fields out yields it, so passing a reference itself fails the type check.
+ */
+export const AgentCandidateArtifactEvidenceSchema = v.pipe(
+    v.strictObject({
+        artifactId: v.pipe(v.string(), v.minLength(1), v.maxLength(256)),
+        path: v.pipe(v.string(), v.minLength(1)),
+    }),
+    v.brand('AgentCandidateArtifactEvidence'),
+);
 
 export const AgentCandidateValidationEvidenceSchema = v.pipe(
     v.strictObject({
@@ -1441,6 +1445,21 @@ export type CandidatePatch = v.InferOutput<typeof CandidatePatchSchema>;
  * Verified model-selected extension build retained in the locked result.
  */
 export type AgentExtensionProvenance = v.InferOutput<typeof AgentExtensionProvenanceSchema>;
+
+/**
+ * One candidate artifact bound in the locked result, branded.
+ */
+export type AgentCandidateArtifactEvidence = v.InferOutput<
+    typeof AgentCandidateArtifactEvidenceSchema
+>;
+
+/**
+ * The two fields of {@link AgentCandidateArtifactEvidence} before the brand, which a producer checks
+ * its literal against with `satisfies` before the brand cast.
+ */
+export type AgentCandidateArtifactEvidenceFields = v.InferInput<
+    typeof AgentCandidateArtifactEvidenceSchema
+>;
 
 /**
  * Bounded proof of the model-selected settings actually active in Chromium.

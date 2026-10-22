@@ -1,3 +1,5 @@
+import * as v from 'valibot';
+import { PreparedExtensionProvenanceSchema } from '../../src/environment/environment-proofs';
 import { describe, expect, it } from 'vitest';
 import {
     decideVersionUpdate,
@@ -209,7 +211,7 @@ function olderReportedRun(symptomObservation: SymptomObservation): ReportRunResu
         fallbackDetail: null,
         symptomObservation,
         candidatePatch: null,
-        extensionProvenance: {
+        extensionProvenance: v.parse(PreparedExtensionProvenanceSchema, {
             source: PreparedExtensionSource.PinnedRelease,
             extensionPath: '/run/extension',
             manifestVersion: ExtensionManifestVersion.Mv3,
@@ -218,7 +220,7 @@ function olderReportedRun(symptomObservation: SymptomObservation): ReportRunResu
             // compare against environmentSelection.actual.productVersion below, not this display
             // value.
             extensionSourceTag: 'v4.6.0',
-        },
+        }),
         environmentSelection: { actual: { productVersion: '4.6.0' } },
     };
 }

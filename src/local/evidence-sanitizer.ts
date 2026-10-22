@@ -17,9 +17,8 @@ import {
     MAX_EVIDENCE_FILE_BYTES,
     normalizeEvidencePath,
     sha256,
-    type PublishedImageCapture,
-    type PublishedImageOmission,
 } from './local-publication-trust';
+import type { PublishedImageCapture, PublishedImageOmission } from './local-publication-manifest';
 import {
     trustedCaptureData,
     type TrustedCaptureData,

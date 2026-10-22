@@ -161,8 +161,13 @@ export type HistoricalExtensionBuildProvenance = v.InferOutput<
  * unpacked directory the browser loaded and the manifest generation read from it, a Firefox build
  * names the extension id and the signed XPI the enterprise policies force-installed (it has no
  * unpacked directory and no manifest the host reads). Both sides stay optional so records persisted
- * before the families were distinguished keep parsing. The managed-storage declaration is launch
- * input, not provenance, and is deliberately not serialized here.
+ * before the families were distinguished keep parsing. Launch input (the `userScripts` permission,
+ * the managed-storage declaration) is not provenance and is deliberately not serialized here.
+ *
+ * The output type is branded: only a parse or the one projection from the runtime record
+ * (`serializeAgentExtensionProvenance`) yields it, so passing the runtime record itself, whose
+ * extra launch fields this strict schema refuses, fails the type check rather than every later
+ * parse.
  */
 export const PreparedExtensionProvenanceSchema = v.pipe(
     v.strictObject({
@@ -182,6 +187,7 @@ export const PreparedExtensionProvenanceSchema = v.pipe(
             (provenance.historicalBuild !== undefined),
         'Only a historical build must carry its release and autobuild identity.',
     ),
+    v.brand('PreparedExtensionProvenance'),
 );
 
 /**
