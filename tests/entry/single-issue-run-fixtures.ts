@@ -348,6 +348,29 @@ export function issueCommentOctokit(): Octokit {
 }
 
 /**
+ * Script the issue the publication guard reads: open when the run checks it before intake, closed
+ * by a maintainer by the time the report would post.
+ *
+ * @param octokit - The issue-comment fake whose issue reads are scripted.
+ * @param assignees - Logins assigned to the issue on both reads.
+ */
+export function closeIssueDuringRun(octokit: Octokit, assignees: readonly string[] = []): void {
+    const assigned = assignees.map((login) => ({ login }));
+    vi.mocked(octokit.rest.issues.get as unknown as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({ data: { state: 'open', assignees: assigned, labels: [] } })
+        .mockResolvedValueOnce({
+            data: {
+                state: 'closed',
+                state_reason: 'completed',
+                closed_at: '2026-10-05T11:00:00Z',
+                closed_by: { login: 'maintainer' },
+                assignees: assigned,
+                labels: [],
+            },
+        });
+}
+
+/**
  * The platform's own refusal message the fake comment write rejects with; the failed run must carry
  * it verbatim into `failureDetail` instead of swallowing the publication failure.
  */

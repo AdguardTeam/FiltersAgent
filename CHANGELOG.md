@@ -39,6 +39,11 @@ The format is based on [Keep a Changelog], and this project adheres to
   `content_filter`) and bodyless HTTP 400/404/413/422 errors to end the run
   as `llm_rejected`.
 - Changed the vision image size cap to 5 MB for both APIs.
+- Changed a forced run (`force`) that cannot investigate the issue, or fails
+  during intake or investigation, to post a one-line notice with the link to
+  the run instead of no comment: the page could not be accessed, or the report
+  could not be processed. The notice is not the issue's report, so a retry
+  and the backlog still investigate the issue.
 - Changed benchmark scoring to read each case's outcome from the agent's own
   result (`verified`, `proposed`, `reproduced`, `not_reproduced`) and record
   the maintainer's rule beside it, instead of re-checking the maintainer's

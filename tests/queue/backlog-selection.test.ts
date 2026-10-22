@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import * as v from 'valibot';
 import {
     REPORT_COMMENT_MARKER_PREFIX,
+    RevisionCommentKind,
     renderReportRevisionMarker,
 } from '../../src/publisher/report-publisher';
 import {
@@ -89,6 +90,22 @@ function reportComment(
     author: string = REPORT_AUTHOR_LOGIN,
 ): BacklogIssueComment {
     return commentOf(author, reportBody(digest), createdAt);
+}
+
+/**
+ * Build one forced-run notice comment authored by the agent: no report, only a note that a run
+ * could not investigate the issue.
+ *
+ * @param digest - The revision digest the notice binds.
+ * @param createdAt - Publication timestamp.
+ * @returns The notice comment.
+ */
+function noticeComment(digest: string, createdAt: string): BacklogIssueComment {
+    return commentOf(
+        REPORT_AUTHOR_LOGIN,
+        `${renderReportRevisionMarker({ schemaVersion: 1, revisionDigest: digest }, RevisionCommentKind.Notice)}\nThe agent could not access the reported page.`,
+        createdAt,
+    );
 }
 
 /**
@@ -346,6 +363,41 @@ describe('selectBacklogIssues', () => {
 
         expect(outcome.takenIssueNumbers).toEqual([302, 303]);
         expect(outcome.skippedIssueNumbers[BacklogSkipKind.AlreadyReported]).toEqual([301]);
+    });
+
+    it('takes an issue whose only own comment is a forced run notice', async () => {
+        // The notice says a run could not investigate the issue: it is no report of it, so the
+        // backlog retakes the issue.
+        const reader = new FakeBacklogIssueReader();
+        reader.addIssue(
+            openIssue(901, {
+                updatedAgoMs: 2 * DAY_MS,
+                comments: [noticeComment(DIGEST_A, iso(2 * DAY_MS))],
+            }),
+        );
+
+        const outcome = await selectBacklogIssues(reader, queueInputs());
+
+        expect(outcome.takenIssueNumbers).toEqual([901]);
+    });
+
+    it('retakes an issue edited after its report even when a forced run notice came after the edit', async () => {
+        // The notice moves the issue's update time to its own: counted as a comment, it would
+        // explain away the edit before it and leave the new text unreported.
+        const reader = new FakeBacklogIssueReader();
+        reader.addIssue(
+            openIssue(902, {
+                updatedAgoMs: DAY_MS,
+                comments: [
+                    reportComment(DIGEST_A, iso(3 * DAY_MS)),
+                    noticeComment(DIGEST_B, iso(DAY_MS)),
+                ],
+            }),
+        );
+
+        const outcome = await selectBacklogIssues(reader, queueInputs());
+
+        expect(outcome.takenIssueNumbers).toEqual([902]);
     });
 
     it('never trusts a marker posted by a different login, and never suppresses the take', async () => {

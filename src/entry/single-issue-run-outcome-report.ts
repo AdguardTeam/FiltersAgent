@@ -1,15 +1,19 @@
 /**
- * Which sealed outcomes of the default single-issue engine are posted, and the short report of one
- * that never reached a locked `FixRunResult` — a skip, or a failure once the run's revision digest
- * was already computed — rendered for the artifacts.
+ * Which sealed outcomes of the default single-issue engine are posted, the notice a forced run
+ * posts in place of a report it keeps off the issue, and the short report of one that never reached
+ * a locked `FixRunResult` — a skip, or a failure once the run's revision digest was already
+ * computed — rendered for the artifacts.
  *
  * Only a finding a maintainer can act on is posted. A skip, an intake or investigation failure
  * (whose reason is the raw provider or runtime error, not anything about the issue), and a sealed
  * run that could not investigate the report, unless it still proposed a candidate, post nothing:
- * their report lands in the artifacts and the log names the outcome. Without a posted comment such
- * an issue carries no revision marker, so in backlog mode the next backlog run retakes it. Also
- * carries the shared "log the caught error in full before mapping or swallowing it" helper every
- * catch in the default single-issue engine uses.
+ * their report lands in the artifacts and the log names the outcome. Without a posted report such
+ * an issue carries no report marker, so in backlog mode the next backlog run retakes it. A run a
+ * maintainer forced posts a one-line notice instead of nothing after an intake or investigation
+ * failure and a sealed run that could not investigate; a skip stays silent. The notice carries a
+ * marker of its own, which no report lookup reads, so a retry and the backlog still take the issue.
+ * Also carries the shared "log the caught error in full before mapping or swallowing it" helper
+ * every catch in the default single-issue engine uses.
  */
 
 import type { Logger } from '../logger/logger';
@@ -49,8 +53,34 @@ export const MinimalOutcome = {
 export type MinimalOutcome = (typeof MinimalOutcome)[keyof typeof MinimalOutcome];
 
 /**
- * Whether a sealed run with each status keeps its report off the issue. Total over `FixRunStatus`,
- * so a new status is a compile error until it is decided here.
+ * The one line a forced run posts in place of a report it keeps off the issue.
+ *
+ * A maintainer who triggered the run waits for its answer, and no comment reads as a run that never
+ * started. The line says only whether the reported page could not be accessed or the report could
+ * not be processed: the reason behind it — an HTTP status, a browser, provider or cleanup failure —
+ * says nothing about the reported defect and stays in the artifacts the notice links to.
+ */
+export const SilentRunNotice = {
+    /**
+     * The run could not reach the reported page.
+     */
+    NoAccess: 'The agent could not access the reported page.',
+
+    /**
+     * The run could not investigate the report for any other reason.
+     */
+    NotProcessed: 'The agent could not process this report.',
+} as const;
+
+/**
+ * SilentRunNotice value.
+ */
+export type SilentRunNotice = (typeof SilentRunNotice)[keyof typeof SilentRunNotice];
+
+/**
+ * Which sealed statuses keep their report off the issue, each with the notice a forced run posts
+ * instead, and null for a status whose report is posted. Total over `FixRunStatus`, so a new status
+ * is a compile error until it is decided here.
  *
  * A silent status is not a finding a maintainer can act on: the run could not investigate the
  * report at all (an unsupported product, a missing capability or browser, a page it could not
@@ -58,36 +88,39 @@ export type MinimalOutcome = (typeof MinimalOutcome)[keyof typeof MinimalOutcome
  * tells the reporter the agent failed. Every other status says something about the reported defect
  * and is posted.
  */
-const SILENT_RUN_STATUSES: Record<FixRunStatus, boolean> = {
-    [FixRunStatus.AlreadyFixedCurrent]: false,
-    [FixRunStatus.FixedUpstreamPendingExtension]: false,
-    [FixRunStatus.FixedInSourcePendingPublication]: false,
-    [FixRunStatus.PatchProposed]: false,
-    [FixRunStatus.NotReproduced]: false,
-    [FixRunStatus.ConfigurationSpecific]: false,
-    [FixRunStatus.AnalysisOnly]: false,
-    [FixRunStatus.TargetUrlUnavailable]: true,
-    [FixRunStatus.UnsupportedProductCase]: true,
-    [FixRunStatus.CapabilityLimited]: true,
-    [FixRunStatus.BrowserUnavailable]: true,
-    [FixRunStatus.CleanupFailed]: true,
-    [FixRunStatus.Failed]: true,
+const SILENT_RUN_NOTICES: Record<FixRunStatus, SilentRunNotice | null> = {
+    [FixRunStatus.AlreadyFixedCurrent]: null,
+    [FixRunStatus.FixedUpstreamPendingExtension]: null,
+    [FixRunStatus.FixedInSourcePendingPublication]: null,
+    [FixRunStatus.PatchProposed]: null,
+    [FixRunStatus.NotReproduced]: null,
+    [FixRunStatus.ConfigurationSpecific]: null,
+    [FixRunStatus.AnalysisOnly]: null,
+    [FixRunStatus.TargetUrlUnavailable]: SilentRunNotice.NoAccess,
+    [FixRunStatus.UnsupportedProductCase]: SilentRunNotice.NotProcessed,
+    [FixRunStatus.CapabilityLimited]: SilentRunNotice.NotProcessed,
+    [FixRunStatus.BrowserUnavailable]: SilentRunNotice.NotProcessed,
+    [FixRunStatus.CleanupFailed]: SilentRunNotice.NotProcessed,
+    [FixRunStatus.Failed]: SilentRunNotice.NotProcessed,
 };
 
 /**
- * Decide whether a sealed run keeps its report off the issue.
+ * The notice a forced run posts in place of a sealed run's report, when the run keeps its report
+ * off the issue.
  *
  * A candidate for review outranks a silent status: the run reached the page and proposed a rule it
  * could not verify, which is a finding a maintainer can act on; kept silent, the candidate would
  * stay in the artifacts only.
  *
  * @param runResult - The sealed run's status and its candidate for review, if any.
- * @returns True when the report goes to the artifacts only.
+ * @returns The notice when the report goes to the artifacts only, or null when it is posted.
  */
-export function isSilentRun(
+export function silentRunNotice(
     runResult: Pick<FixRunResult, 'runStatus' | 'candidateForReview'>,
-): boolean {
-    return runResult.candidateForReview === undefined && SILENT_RUN_STATUSES[runResult.runStatus];
+): SilentRunNotice | null {
+    return runResult.candidateForReview === undefined
+        ? SILENT_RUN_NOTICES[runResult.runStatus]
+        : null;
 }
 
 /**
@@ -103,28 +136,56 @@ export function isSilentRun(
 export function reportedRunStatus(
     runResult: Pick<FixRunResult, 'runStatus' | 'candidateForReview'>,
 ): FixRunStatus {
-    return runResult.candidateForReview !== undefined && SILENT_RUN_STATUSES[runResult.runStatus]
+    return runResult.candidateForReview !== undefined &&
+        SILENT_RUN_NOTICES[runResult.runStatus] !== null
         ? FixRunStatus.AnalysisOnly
         : runResult.runStatus;
 }
 
 /**
- * Log, in one line, an outcome whose report is kept off the issue.
+ * The notice a run posts in place of a report it keeps off the issue: only a run a maintainer
+ * forced posts one, and only when it posts comments at all.
+ *
+ * @param request - The per-issue request.
+ * @param notice - The notice the outcome calls for, or null when its report is posted as is.
+ * @returns The notice to post, or null when nothing goes to the issue in the report's place.
+ */
+export function forcedRunNotice(
+    request: DefaultSingleIssueRequest,
+    notice: SilentRunNotice | null,
+): SilentRunNotice | null {
+    return request.force === true && request.commentsEnabled && request.slug !== null
+        ? notice
+        : null;
+}
+
+/**
+ * Log, in one line, an outcome whose report is kept off the issue, with its reason: the notice a
+ * forced run posts instead says nothing of it.
  *
  * @param logger - Diagnostics sink.
  * @param issueNumber - Issue the run processed.
  * @param outcome - Human outcome line, the same the rendered report carries.
  * @param reason - Detail explaining the outcome.
+ * @param notice - The notice the run posts in the report's place, or null when it posts nothing.
  */
 export function logUnpostedOutcome(
     logger: Logger,
     issueNumber: number,
     outcome: string,
     reason: string,
+    notice: SilentRunNotice | null,
 ): void {
+    if (notice === null) {
+        logger.info(
+            { issueNumber, reason },
+            `${outcome}: no comment posted, the report is in the artifacts`,
+        );
+        return;
+    }
     logger.info(
-        { issueNumber, reason },
-        `${outcome}: no comment posted, the report is in the artifacts`,
+        { issueNumber, reason, notice },
+        `${outcome}: a short notice goes to the issue, the report is in the artifacts`,
     );
 }
 
@@ -157,6 +218,7 @@ export function logCaughtError(
  * @param filtersCommit - Commit of the filter lists the run prepared, for the report footer.
  * @param outcomeLabel - Human outcome line.
  * @param outcomeReason - Detail explaining the outcome.
+ * @param notice - The notice the run posts in the report's place, or null when it posts nothing.
  * @returns The rendered Markdown body for the artifacts.
  */
 export function renderUnpostedOutcomeReport(
@@ -166,6 +228,7 @@ export function renderUnpostedOutcomeReport(
     filtersCommit: string,
     outcomeLabel: MinimalOutcome,
     outcomeReason: string,
+    notice: SilentRunNotice | null,
 ): string {
     const template = resolveReportTemplate(instructionContent).template;
     const summary: ReportOutcomeSummary = {
@@ -181,7 +244,7 @@ export function renderUnpostedOutcomeReport(
         missingInformation: [],
         artifactsLink: request.actionsRunUrl ?? '',
     };
-    logUnpostedOutcome(logger, request.issueNumber, outcomeLabel, outcomeReason);
+    logUnpostedOutcome(logger, request.issueNumber, outcomeLabel, outcomeReason, notice);
     return withReportFooter(
         renderReportComment(template, buildReportTemplateValues(summary)),
         filtersCommit,

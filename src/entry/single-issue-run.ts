@@ -8,14 +8,14 @@
  * Every sealed outcome — a full run, a skip, or a failure once the run's revision digest is known —
  * writes its report artifacts. Only a finding is posted: a skip, a failure, or a run that could not
  * investigate the report posts nothing, and in backlog mode is retaken by the next run (see
- * `single-issue-run-artifacts.ts` and `single-issue-run-outcome-report.ts`).
+ * `single-issue-run-artifacts.ts` and `single-issue-run-outcome-report.ts`). A forced run that
+ * could not investigate the report, or failed during intake or investigation, posts a one-line
+ * notice instead (see `single-issue-run-report-post.ts`).
  */
 
-import { readFileSync } from 'node:fs';
 import type { CoreConfig } from '../config/config';
-import { createOctokit, fetchIssue, type RawIssue } from '../github/fetch-issue';
+import { fetchIssue, type RawIssue } from '../github/fetch-issue';
 import { AUTOMATIC_UPSTREAM_PROMPT_TEXT_LIMITS } from '../github/prompt-safety';
-import { resolveReportAuthorLogin } from '../github/report-author-identity';
 import type { RepositorySlug } from '../types/repository-slug';
 import { extractReport, IntakeExtractionKind } from '../intake/extract-report';
 import { IntakeVerdict, type IntakeExtractionPayload } from '../intake/report';
@@ -38,32 +38,27 @@ import {
 } from '../local/filters-preparer';
 import { resolveRemoteDefaultRef } from '../local/filters-default-ref';
 import { createLogger } from '../logger/logger';
-import {
-    buildReportTemplateValues,
-    renderReportComment,
-    summarizeReportOutcome,
-} from '../publisher/report-render';
-import { withReportFooter } from '../publisher/report-footer';
-import {
-    publishedRuleScreenshots,
-    renderHostedReportScreenshots,
-} from '../publisher/report-screenshots';
+import { buildReportTemplateValues, summarizeReportOutcome } from '../publisher/report-render';
 import { resolveReportTemplate } from '../publisher/report-template';
 import { decideVersionUpdate } from '../publisher/report-version-decision';
 import { writeRunReportArtifacts } from './single-issue-run-artifacts';
 import {
-    isSilentRun,
     logCaughtError,
     logUnpostedOutcome,
     MinimalOutcome,
     renderUnpostedOutcomeReport,
     reportedRunStatus,
+    silentRunNotice,
+    SilentRunNotice,
+    forcedRunNotice,
 } from './single-issue-run-outcome-report';
 import {
-    checkIssueBeforeRun,
-    publishGuardedReport,
-    type PreRunSkip,
-} from './single-issue-publication-gate';
+    postFailureNotice,
+    postSealedRunReport,
+    renderFullReport,
+    type RunCommentTarget,
+} from './single-issue-run-report-post';
+import { checkIssueBeforeRun, type PreRunSkip } from './single-issue-publication-gate';
 import { fetchedIssueRevisionDigest } from './single-issue-revision-digest';
 import { materializedSnapshotIssue } from './single-issue-snapshot-materialization';
 import { runFixCore } from '../orchestrator/fix-core';
@@ -367,6 +362,12 @@ async function runInsideWorkspace(
         };
     }
 
+    const commentTarget: RunCommentTarget = {
+        request,
+        slug,
+        revisionDigest,
+        filtersCommit: prepared.provenance.commit,
+    };
     const usageCollector = createRunUsageCollector();
     let intake: ExtractedIntakeFacts;
     try {
@@ -382,7 +383,8 @@ async function runInsideWorkspace(
         logCaughtError(logger, 'intake extraction', error, { issueNumber: request.issueNumber });
         // Never posted: the reason is the provider's raw error, nothing the issue needs. The
         // rendered body is the run's human-readable record of the failure, so it still lands in
-        // the artifacts directory.
+        // the artifacts directory. A forced run answers with a notice that names no reason.
+        const notice = forcedRunNotice(request, SilentRunNotice.NotProcessed);
         const body = renderUnpostedOutcomeReport(
             request,
             logger,
@@ -390,8 +392,12 @@ async function runInsideWorkspace(
             prepared.provenance.commit,
             MinimalOutcome.IntakeFailed,
             (error as Error).message,
+            notice,
         );
         writeRunReportArtifacts(request.artifactsDir, body);
+        if (notice !== null) {
+            await postFailureNotice(commentTarget, notice, dependencies.octokit, logger);
+        }
         return failedResult(
             request.issueNumber,
             DefaultSingleIssueFailure.IssueUnavailable,
@@ -409,6 +415,7 @@ async function runInsideWorkspace(
             prepared.provenance.commit,
             MinimalOutcome.Skipped,
             intake.reason,
+            null,
         );
         writeRunReportArtifacts(request.artifactsDir, body, {
             verdict: IntakeVerdict.NotAFilterReport,
@@ -467,6 +474,7 @@ async function runInsideWorkspace(
         );
     } catch (error) {
         logCaughtError(logger, 'investigation', error, { issueNumber: request.issueNumber });
+        const notice = forcedRunNotice(request, SilentRunNotice.NotProcessed);
         const body = renderUnpostedOutcomeReport(
             request,
             logger,
@@ -474,8 +482,12 @@ async function runInsideWorkspace(
             prepared.provenance.commit,
             MinimalOutcome.InvestigationFailed,
             (error as Error).message,
+            notice,
         );
         writeRunReportArtifacts(request.artifactsDir, body, reportPayload);
+        if (notice !== null) {
+            await postFailureNotice(commentTarget, notice, dependencies.octokit, logger);
+        }
         return failedResult(
             request.issueNumber,
             DefaultSingleIssueFailure.InvestigationFailed,
@@ -517,18 +529,30 @@ async function runInsideWorkspace(
     }
     const values = buildReportTemplateValues(summary);
     const filtersCommit = prepared.provenance.commit;
-    const body = withReportFooter(renderReportComment(template, values), filtersCommit);
+    const body = renderFullReport(template, values, filtersCommit);
     writeRunReportArtifacts(request.artifactsDir, body, reportPayload, {
         runResult,
         artifacts: agentArtifacts.artifacts,
         usageSummary: usageCollector.summary(),
     });
 
-    const silent = isSilentRun(runResult);
-    if (silent) {
-        logUnpostedOutcome(logger, request.issueNumber, summary.outcome, summary.outcomeReason);
+    // A run that keeps its report off the issue still answers a maintainer who forced it.
+    const silentNotice = silentRunNotice(runResult);
+    const notice = forcedRunNotice(request, silentNotice);
+    if (silentNotice !== null) {
+        logUnpostedOutcome(
+            logger,
+            request.issueNumber,
+            summary.outcome,
+            summary.outcomeReason,
+            notice,
+        );
     }
-    if (!request.commentsEnabled || request.slug === null || silent) {
+    if (
+        !request.commentsEnabled ||
+        request.slug === null ||
+        (silentNotice !== null && notice === null)
+    ) {
         return {
             kind: DefaultSingleIssueResultKind.Processed,
             issueNumber: request.issueNumber,
@@ -539,49 +563,9 @@ async function runInsideWorkspace(
     }
 
     try {
-        const client =
-            dependencies.octokit ??
-            createOctokit({
-                owner: slug.owner,
-                repo: slug.repo,
-                token: request.token ?? '',
-            });
-        const reportAuthorLogin = await resolveReportAuthorLogin(client, logger);
-        const screenshots = publishedRuleScreenshots(runResult);
-        const publication = await publishGuardedReport(
-            client,
-            {
-                owner: slug.owner,
-                repo: slug.repo,
-                issueNumber: request.issueNumber,
-                revisionDigest,
-                reportAuthorLogin,
-                body,
-                ...(screenshots === undefined
-                    ? {}
-                    : {
-                          finalizeBody: async () =>
-                              withReportFooter(
-                                  renderReportComment(template, {
-                                      ...values,
-                                      screenshots: await renderHostedReportScreenshots(
-                                          client,
-                                          {
-                                              owner: slug.owner,
-                                              repo: slug.repo,
-                                              issueNumber: request.issueNumber,
-                                              branch: request.screenshotsBranch,
-                                              before: readFileSync(screenshots.before),
-                                              after: readFileSync(screenshots.after),
-                                          },
-                                          logger,
-                                      ),
-                                  }),
-                                  filtersCommit,
-                              ),
-                      }),
-            },
-            request,
+        const publication = await postSealedRunReport(
+            { ...commentTarget, runResult, template, values, notice },
+            dependencies.octokit,
             logger,
         );
         return {

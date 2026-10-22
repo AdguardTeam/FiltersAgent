@@ -3,6 +3,7 @@ import type { Octokit } from '@octokit/rest';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { FixRunStatus, SymptomObservation } from '../../src/types/fix-run-result';
+import { BrowserFallbackReason } from '../../src/types/browser-fallback-reason';
 import type { FixRunResult } from '../../src/types/fix-run-result';
 import {
     ExtensionManifestVersion,
@@ -14,12 +15,16 @@ import { IntakeExtractionKind } from '../../src/intake/extract-report';
 import type { Logger } from '../../src/logger/logger';
 import {
     DefaultSingleIssueFailure,
+    DefaultSingleIssueResultKind,
     type DefaultSingleIssueDependencies,
+    type DefaultSingleIssueRequest,
 } from '../../src/entry/single-issue-run-types';
+import { SilentRunNotice } from '../../src/entry/single-issue-run-outcome-report';
 import type { FixCoreIssueInput, FixCoreOptions } from '../../src/orchestrator/fix-core-inputs';
 import type { FiltersCommand } from '../../src/local/filters-preparer';
 import {
     REPORT_COMMENT_MARKER_PREFIX,
+    ReportPublishAction,
     parseReportRevisionMarker,
 } from '../../src/publisher/report-publisher';
 import {
@@ -32,6 +37,7 @@ import { runDefaultSingleIssue } from '../../src/entry/single-issue-run';
 import { fetchedIssueRevisionDigest } from '../../src/entry/single-issue-revision-digest';
 import { renderReportRevisionMarker } from '../../src/publisher/report-publisher';
 import {
+    closeIssueDuringRun,
     exportedIssueFixture,
     extractedReportSeam,
     fixtureReport,
@@ -144,20 +150,49 @@ function provenancedInvestigate(symptomObservation: SymptomObservation): Scripte
 }
 
 /**
+ * What a sealed-status scenario changes on top of the default comment-enabled run.
+ */
+interface SealedRunOptions {
+    /**
+     * Run-result fields the scripted investigation seals with on top of the status.
+     */
+    extra?: Partial<FixRunResult>;
+
+    /**
+     * Request fields the run takes on top of the defaults, such as force.
+     */
+    request?: Partial<DefaultSingleIssueRequest>;
+
+    /**
+     * Whether the prepared checkout carries an instruction with its own report template.
+     */
+    withInstruction?: boolean;
+
+    /**
+     * Diagnostics logger the run writes to, when the scenario reads it.
+     */
+    logger?: Logger;
+}
+
+/**
  * Run one comment-enabled issue whose investigation seals with the named status.
  *
  * @param runStatus - The status the scripted investigation seals with.
  * @param octokit - The issue-comment API the run publishes through.
  * @param artifactsDir - Directory the run writes its artifacts to.
+ * @param options - Run-result, request, checkout and logger changes of the scenario.
  * @returns How the per-issue run sealed.
  */
 async function runSealedWithStatus(
     runStatus: FixRunStatus,
     octokit: Octokit,
     artifactsDir: string,
-    extra: Partial<FixRunResult> = {},
+    options: SealedRunOptions = {},
 ): ReturnType<typeof runDefaultSingleIssue> {
-    const workspace = preparedWorkspace({ localSourceAvailable: true, withInstruction: false });
+    const workspace = preparedWorkspace({
+        localSourceAvailable: true,
+        withInstruction: options.withInstruction ?? false,
+    });
     return await runDefaultSingleIssue(
         {
             config: testCoreConfig(),
@@ -168,12 +203,14 @@ async function runSealedWithStatus(
             commentsEnabled: true,
             screenshotsBranch: 'filters-agent-screenshots',
             artifactsDir,
+            ...options.request,
         },
         {
             preparationDependencies: workspace.dependencies,
             ...extractedReportSeam(),
             octokit,
-            investigate: async () => ({ ...processedRunResult(4), runStatus, ...extra }),
+            ...(options.logger === undefined ? {} : { logger: options.logger }),
+            investigate: async () => ({ ...processedRunResult(4), runStatus, ...options.extra }),
             fetchIssue: async (config, issueNumber) => {
                 void config;
                 return rawIssueFixture(issueNumber);
@@ -183,6 +220,58 @@ async function runSealedWithStatus(
 }
 
 afterEach(removeScratchDirs);
+
+/**
+ * Link to the workflow run a notice points to.
+ */
+const ACTIONS_RUN_URL = 'https://github.com/remote-owner/remote-list/actions/runs/7';
+
+/**
+ * The raw reason a page could not be reached, which stays off the issue.
+ */
+const RAW_REASON = 'main document returned HTTP 403';
+
+/**
+ * The raw provider error of a run that failed before it sealed, which stays off the issue.
+ */
+const PROVIDER_ERROR = 'provider unreachable: HTTP 503 from the upstream gateway';
+
+/**
+ * Post the notice of a forced run that could not reach the page, through a fresh issue fake.
+ *
+ * @returns The posted comment body, marker included.
+ */
+async function postedForcedNotice(): Promise<string> {
+    const octokit = issueCommentOctokit();
+    await runSealedWithStatus(
+        FixRunStatus.TargetUrlUnavailable,
+        octokit,
+        join(scratchDir('single-issue-artifacts-'), 'out'),
+        { request: { force: true } },
+    );
+    return vi.mocked(octokit.rest.issues.createComment).mock.calls[0]?.[0]?.body ?? '';
+}
+
+/**
+ * Answer the issue's comment list with one comment the run's own identity posted earlier.
+ *
+ * @param octokit - The issue-comment fake.
+ * @param body - The earlier comment's body.
+ */
+function givenAgentComment(octokit: Octokit, body: string): void {
+    vi.mocked(
+        octokit.rest.issues.listComments as unknown as ReturnType<typeof vi.fn>,
+    ).mockResolvedValue({
+        data: [
+            {
+                id: 500,
+                body,
+                user: { login: 'agent-bot' },
+                html_url: 'https://github.com/remote-owner/remote-list/issues/4#issuecomment-500',
+            },
+        ],
+    });
+}
 
 /**
  * Run one issue labelled in progress, forced or not, against a fresh workspace.
@@ -296,7 +385,7 @@ describe('runDefaultSingleIssue', () => {
         expect(
             vi.mocked(octokit.rest.issues.createComment as unknown as ReturnType<typeof vi.fn>),
         ).not.toHaveBeenCalled();
-        expect(result.kind).toBe('processed');
+        expect(result.kind).toBe(DefaultSingleIssueResultKind.Processed);
         // Comments disabled must not skip writing the report artifacts: the action's noComment
         // description promises the report still lands in the artifacts directory.
         const reportJson = JSON.parse(
@@ -349,7 +438,7 @@ describe('runDefaultSingleIssue', () => {
             },
         );
 
-        expect(result.kind).toBe('processed');
+        expect(result.kind).toBe(DefaultSingleIssueResultKind.Processed);
         expect(capturedMaxDurationMs).toBe(1_800_000);
         expect(capturedPromptTextLimits).toBe(AUTOMATIC_UPSTREAM_PROMPT_TEXT_LIMITS);
     });
@@ -405,7 +494,7 @@ describe('runDefaultSingleIssue', () => {
         );
 
         expect(fetched).toEqual([]);
-        expect(result.kind).toBe('processed');
+        expect(result.kind).toBe(DefaultSingleIssueResultKind.Processed);
         const created = vi.mocked(
             octokit.rest.issues.createComment as unknown as ReturnType<typeof vi.fn>,
         );
@@ -433,8 +522,10 @@ describe('runDefaultSingleIssue', () => {
                     'Posted by a filters agent; a maintainer reviews before anything is merged.</sub>',
                 ),
         ).toBe(true);
-        expect(result.kind === 'processed' && result.publication).toMatchObject({
-            action: 'posted',
+        expect(
+            result.kind === DefaultSingleIssueResultKind.Processed && result.publication,
+        ).toMatchObject({
+            action: ReportPublishAction.Posted,
             commentUrl: 'https://github.com/remote-owner/remote-list/issues/4#issuecomment-501',
         });
     });
@@ -474,7 +565,7 @@ describe('runDefaultSingleIssue', () => {
         expect(cloneCommands).toHaveLength(1);
         expect(cloneCommands[0]?.args).not.toContain('--shared');
         expect(cloneCommands[0]?.args).toContain(REPOSITORY_REMOTE_URL_FIXTURE);
-        expect(result.kind).toBe('processed');
+        expect(result.kind).toBe(DefaultSingleIssueResultKind.Processed);
     });
 
     it('resolves the filters default branch from the remote HEAD and fetches it through the same runner', async () => {
@@ -503,7 +594,7 @@ describe('runDefaultSingleIssue', () => {
             },
         );
 
-        expect(result.kind).toBe('processed');
+        expect(result.kind).toBe(DefaultSingleIssueResultKind.Processed);
         // The one injected runner answers both the resolution and the preparer's fetch, standing in
         // for the production adapter that attaches the derived git credential to git commands.
         expect(workspace.commands[0]).toEqual({
@@ -550,7 +641,7 @@ describe('runDefaultSingleIssue', () => {
             },
         );
 
-        expect(result.kind).toBe('processed');
+        expect(result.kind).toBe(DefaultSingleIssueResultKind.Processed);
         expect(workspace.commands.length).toBeGreaterThan(0);
         expect(
             workspace.commands.every((command) => command.gitCredentialToken === 'test-token'),
@@ -583,7 +674,7 @@ describe('runDefaultSingleIssue', () => {
             },
         );
 
-        expect(result.kind).toBe('processed');
+        expect(result.kind).toBe(DefaultSingleIssueResultKind.Processed);
         expect(workspace.commands.length).toBeGreaterThan(0);
         expect(workspace.commands.every((command) => !('gitCredentialToken' in command))).toBe(
             true,
@@ -629,11 +720,13 @@ describe('runDefaultSingleIssue', () => {
             },
         );
 
-        expect(result.kind).toBe('failed');
-        expect(result.kind === 'failed' && result.failureCode).toBe(
+        expect(result.kind).toBe(DefaultSingleIssueResultKind.Failed);
+        expect(result.kind === DefaultSingleIssueResultKind.Failed && result.failureCode).toBe(
             DefaultSingleIssueFailure.WorkspaceUnavailable,
         );
-        expect(result.kind === 'failed' && result.failureDetail).toContain(stderrFixture);
+        expect(
+            result.kind === DefaultSingleIssueResultKind.Failed && result.failureDetail,
+        ).toContain(stderrFixture);
         expect(investigate).not.toHaveBeenCalled();
         expect(fakeLogger.error).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -699,7 +792,7 @@ describe('runDefaultSingleIssue', () => {
             },
         );
 
-        expect(result.kind).toBe('processed');
+        expect(result.kind).toBe(DefaultSingleIssueResultKind.Processed);
         expect(investigated).toHaveLength(1);
         expect(investigated[0]).toBeDefined();
         expect(investigated[0]?.path).toBe(DEFAULT_INSTRUCTION_PATH);
@@ -750,11 +843,13 @@ describe('runDefaultSingleIssue', () => {
             },
         );
 
-        expect(result.kind).toBe('failed');
-        expect(result.kind === 'failed' && result.failureCode).toBe(
+        expect(result.kind).toBe(DefaultSingleIssueResultKind.Failed);
+        expect(result.kind === DefaultSingleIssueResultKind.Failed && result.failureCode).toBe(
             DefaultSingleIssueFailure.InstructionUnavailable,
         );
-        expect(result.kind === 'failed' && result.failureDetail).toContain('AGENTS.md');
+        expect(
+            result.kind === DefaultSingleIssueResultKind.Failed && result.failureDetail,
+        ).toContain('AGENTS.md');
         expect(investigate).not.toHaveBeenCalled();
         expect(fetchNamedIssue).not.toHaveBeenCalled();
     });
@@ -790,7 +885,7 @@ describe('runDefaultSingleIssue', () => {
         );
 
         expect(capturedInstructionPaths).toEqual([undefined]);
-        expect(result.kind).toBe('processed');
+        expect(result.kind).toBe(DefaultSingleIssueResultKind.Processed);
     });
 
     it('hands the investigation the extracted report facts on the fetch path', async () => {
@@ -827,7 +922,7 @@ describe('runDefaultSingleIssue', () => {
             },
         );
 
-        expect(result.kind).toBe('processed');
+        expect(result.kind).toBe(DefaultSingleIssueResultKind.Processed);
         expect(investigatedIssues).toHaveLength(1);
         expect(investigatedIssues[0]).not.toBe(bareIssues[0]);
         expect(investigatedIssues[0]?.facts?.reportedSiteUrls).toEqual([
@@ -871,7 +966,7 @@ describe('runDefaultSingleIssue', () => {
             },
         );
 
-        expect(result.kind).toBe('processed');
+        expect(result.kind).toBe(DefaultSingleIssueResultKind.Processed);
         expect(investigatedIssues).toHaveLength(1);
         expect('facts' in (investigatedIssues[0] ?? {})).toBe(true);
         expect(investigatedIssues[0]?.facts?.reportedSiteUrls).toEqual([
@@ -920,9 +1015,13 @@ describe('runDefaultSingleIssue', () => {
         );
 
         // A skip is a successful outcome, not a failure: the caller exits zero.
-        expect(result.kind).toBe('skipped');
-        expect(result.kind === 'skipped' && result.reason).toBe('No filtering defect detected');
-        expect(result.kind === 'skipped' && result.publication).toBeNull();
+        expect(result.kind).toBe(DefaultSingleIssueResultKind.Skipped);
+        expect(result.kind === DefaultSingleIssueResultKind.Skipped && result.reason).toBe(
+            'No filtering defect detected',
+        );
+        expect(
+            result.kind === DefaultSingleIssueResultKind.Skipped && result.publication,
+        ).toBeNull();
         expect(investigate).not.toHaveBeenCalled();
         // A skip is not a finding the issue needs: the reason stays in the artifacts only.
         expect(octokit.rest.issues.createComment).not.toHaveBeenCalled();
@@ -983,11 +1082,13 @@ describe('runDefaultSingleIssue', () => {
             },
         );
 
-        expect(result.kind).toBe('failed');
-        expect(result.kind === 'failed' && result.failureCode).toBe(
+        expect(result.kind).toBe(DefaultSingleIssueResultKind.Failed);
+        expect(result.kind === DefaultSingleIssueResultKind.Failed && result.failureCode).toBe(
             DefaultSingleIssueFailure.FileBackedApplicationUnsupported,
         );
-        expect(result.kind === 'failed' && result.failureDetail).toContain('user-rules-file');
+        expect(
+            result.kind === DefaultSingleIssueResultKind.Failed && result.failureDetail,
+        ).toContain('user-rules-file');
         expect(fetchIssueSpy).not.toHaveBeenCalled();
         expect(extractReportSpy).not.toHaveBeenCalled();
     });
@@ -1027,11 +1128,13 @@ describe('runDefaultSingleIssue', () => {
             },
         );
 
-        expect(result.kind).toBe('failed');
-        expect(result.kind === 'failed' && result.failureCode).toBe(
+        expect(result.kind).toBe(DefaultSingleIssueResultKind.Failed);
+        expect(result.kind === DefaultSingleIssueResultKind.Failed && result.failureCode).toBe(
             DefaultSingleIssueFailure.IssueUnavailable,
         );
-        expect(result.kind === 'failed' && result.failureDetail).toContain('provider unreachable');
+        expect(
+            result.kind === DefaultSingleIssueResultKind.Failed && result.failureDetail,
+        ).toContain('provider unreachable');
         expect(investigate).not.toHaveBeenCalled();
     });
 
@@ -1064,7 +1167,7 @@ describe('runDefaultSingleIssue', () => {
             },
         );
 
-        expect(result.kind).toBe('failed');
+        expect(result.kind).toBe(DefaultSingleIssueResultKind.Failed);
         // The provider's raw error is no finding the issue's reporter can act on: it stays in the
         // run's own records, and the issue gets no comment.
         expect(octokit.rest.issues.createComment).not.toHaveBeenCalled();
@@ -1102,7 +1205,7 @@ describe('runDefaultSingleIssue', () => {
             },
         );
 
-        expect(result.kind === 'failed' && result.failureCode).toBe(
+        expect(result.kind === DefaultSingleIssueResultKind.Failed && result.failureCode).toBe(
             DefaultSingleIssueFailure.InvestigationFailed,
         );
         expect(octokit.rest.issues.createComment).not.toHaveBeenCalled();
@@ -1116,8 +1219,10 @@ describe('runDefaultSingleIssue', () => {
 
         const result = await runSealedWithStatus(FixRunStatus.AnalysisOnly, octokit, artifactsDir);
 
-        expect(result.kind === 'processed' && result.publication).toMatchObject({
-            action: 'posted',
+        expect(
+            result.kind === DefaultSingleIssueResultKind.Processed && result.publication,
+        ).toMatchObject({
+            action: ReportPublishAction.Posted,
         });
         expect(octokit.rest.issues.createComment).toHaveBeenCalledTimes(1);
     });
@@ -1194,8 +1299,10 @@ describe('runDefaultSingleIssue', () => {
             },
         );
 
-        expect(result.kind === 'processed' && result.publication).toMatchObject({
-            action: 'posted',
+        expect(
+            result.kind === DefaultSingleIssueResultKind.Processed && result.publication,
+        ).toMatchObject({
+            action: ReportPublishAction.Posted,
         });
         const posted = vi.mocked(octokit.rest.issues.createComment).mock.calls[0]?.[0]?.body;
         expect(posted).toContain(candidateForReview.rule);
@@ -1215,11 +1322,223 @@ describe('runDefaultSingleIssue', () => {
             const result = await runSealedWithStatus(runStatus, octokit, artifactsDir);
 
             // Sealed, not failed: the run did its job and the caller exits zero, only silently.
-            expect(result.kind).toBe('processed');
-            expect(result.kind === 'processed' && result.publication).toBeNull();
+            expect(result.kind).toBe(DefaultSingleIssueResultKind.Processed);
+            expect(
+                result.kind === DefaultSingleIssueResultKind.Processed && result.publication,
+            ).toBeNull();
             expect(octokit.rest.issues.createComment).not.toHaveBeenCalled();
             const renderedReport = readFileSync(join(artifactsDir, 'report-comment.md'), 'utf8');
             expect(renderedReport).toContain(outcomeLine);
+        },
+    );
+
+    it('posts a short notice for a forced run that could not reach the page, keeping the reason in the artifacts', async () => {
+        // A maintainer who labelled the issue waits for an answer: silence reads as a run that
+        // never started. The notice names no raw reason, which stays in the artifacts.
+        const octokit = issueCommentOctokit();
+        const artifactsDir = join(scratchDir('single-issue-artifacts-'), 'out');
+
+        const result = await runSealedWithStatus(
+            FixRunStatus.TargetUrlUnavailable,
+            octokit,
+            artifactsDir,
+            {
+                extra: {
+                    fallbackReason: BrowserFallbackReason.HttpBlocked,
+                    fallbackDetail: RAW_REASON,
+                },
+                request: { force: true, actionsRunUrl: ACTIONS_RUN_URL },
+            },
+        );
+
+        expect(
+            result.kind === DefaultSingleIssueResultKind.Processed && result.publication,
+        ).toMatchObject({
+            action: ReportPublishAction.Posted,
+        });
+        const created = vi.mocked(octokit.rest.issues.createComment);
+        expect(created).toHaveBeenCalledTimes(1);
+        const posted = created.mock.calls[0]?.[0]?.body ?? '';
+        expect(posted).toContain(SilentRunNotice.NoAccess);
+        expect(posted).toContain(ACTIONS_RUN_URL);
+        expect(posted).not.toContain(RAW_REASON);
+        expect(posted).not.toContain(processedRunResult(4).reasoning);
+        const renderedReport = readFileSync(join(artifactsDir, 'report-comment.md'), 'utf8');
+        expect(renderedReport).toContain(RAW_REASON);
+    });
+
+    it('posts the notice of a forced run with the run link, whatever the repository template', async () => {
+        // The fixture instruction's template has static text and no artifacts link: the notice is
+        // no report and carries neither.
+        const octokit = issueCommentOctokit();
+
+        await runSealedWithStatus(
+            FixRunStatus.TargetUrlUnavailable,
+            octokit,
+            join(scratchDir('single-issue-artifacts-'), 'out'),
+            { request: { force: true, actionsRunUrl: ACTIONS_RUN_URL }, withInstruction: true },
+        );
+
+        const posted = vi.mocked(octokit.rest.issues.createComment).mock.calls[0]?.[0]?.body ?? '';
+        expect(posted).toContain(SilentRunNotice.NoAccess);
+        expect(posted).toContain(ACTIONS_RUN_URL);
+        expect(posted).not.toContain('Outcome:');
+    });
+
+    it.each([true, false])(
+        'logs the outcome and reason of a forced run that could not reach the page, comments enabled: %s',
+        async (commentsEnabled) => {
+            const fakeLogger = countingLoggerFake();
+
+            await runSealedWithStatus(
+                FixRunStatus.TargetUrlUnavailable,
+                issueCommentOctokit(),
+                join(scratchDir('single-issue-artifacts-'), 'out'),
+                {
+                    extra: {
+                        fallbackReason: BrowserFallbackReason.HttpBlocked,
+                        fallbackDetail: RAW_REASON,
+                    },
+                    request: { force: true, commentsEnabled },
+                    logger: fakeLogger.logger,
+                },
+            );
+
+            expect(fakeLogger.info).toHaveBeenCalledWith(
+                expect.objectContaining({ reason: expect.stringContaining(RAW_REASON) }),
+                expect.stringContaining('The reported target URL was unreachable'),
+            );
+        },
+    );
+
+    it('investigates a forced retry after its notice again and posts the report it then finds', async () => {
+        // The notice is no report of the issue: a maintainer retrying after a transient failure
+        // gets a full run, and its report posts beside the notice.
+        const octokit = issueCommentOctokit();
+        givenAgentComment(octokit, await postedForcedNotice());
+
+        const result = await runSealedWithStatus(
+            FixRunStatus.NotReproduced,
+            octokit,
+            join(scratchDir('single-issue-artifacts-'), 'out'),
+            { request: { force: true } },
+        );
+
+        expect(
+            result.kind === DefaultSingleIssueResultKind.Processed && result.publication,
+        ).toMatchObject({
+            action: ReportPublishAction.Posted,
+        });
+        const posted = vi.mocked(octokit.rest.issues.createComment).mock.calls[0]?.[0]?.body ?? '';
+        expect(parseReportRevisionMarker(posted)).not.toBeNull();
+    });
+
+    it('posts no second notice when a forced retry fails the same way on the same issue text', async () => {
+        const octokit = issueCommentOctokit();
+        givenAgentComment(octokit, await postedForcedNotice());
+
+        const result = await runSealedWithStatus(
+            FixRunStatus.TargetUrlUnavailable,
+            octokit,
+            join(scratchDir('single-issue-artifacts-'), 'out'),
+            { request: { force: true } },
+        );
+
+        expect(
+            result.kind === DefaultSingleIssueResultKind.Processed && result.publication,
+        ).toMatchObject({
+            action: ReportPublishAction.AlreadyReported,
+        });
+        expect(octokit.rest.issues.createComment).not.toHaveBeenCalled();
+    });
+
+    it('keeps a forced run that could not reach the page silent when the issue was closed while it worked', async () => {
+        const octokit = issueCommentOctokit();
+        closeIssueDuringRun(octokit);
+
+        const result = await runSealedWithStatus(
+            FixRunStatus.TargetUrlUnavailable,
+            octokit,
+            join(scratchDir('single-issue-artifacts-'), 'out'),
+            { request: { force: true } },
+        );
+
+        expect(
+            result.kind === DefaultSingleIssueResultKind.Processed && result.publication,
+        ).toBeNull();
+        expect(octokit.rest.issues.createComment).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        [
+            'intake extraction',
+            () => ({
+                extractReport: vi.fn(async () => {
+                    throw new Error(PROVIDER_ERROR);
+                }),
+            }),
+        ],
+        [
+            'the investigation',
+            () => ({
+                ...extractedReportSeam(),
+                investigate: async () => {
+                    throw new Error(PROVIDER_ERROR);
+                },
+            }),
+        ],
+    ])(
+        'posts a short notice when a forced run fails in %s, and still fails the run',
+        async (_stage, failingSeams) => {
+            const workspace = preparedWorkspace({
+                localSourceAvailable: true,
+                withInstruction: false,
+            });
+            const octokit = issueCommentOctokit();
+            const fakeLogger = countingLoggerFake();
+
+            const result = await runDefaultSingleIssue(
+                {
+                    config: testCoreConfig(),
+                    slug: { owner: 'remote-owner', repo: 'remote-list' },
+                    checkoutPath: workspace.localSourcePath,
+                    issueNumber: 4,
+                    token: 'test-token',
+                    commentsEnabled: true,
+                    screenshotsBranch: 'filters-agent-screenshots',
+                    force: true,
+                    actionsRunUrl: ACTIONS_RUN_URL,
+                    artifactsDir: join(scratchDir('single-issue-artifacts-'), 'out'),
+                },
+                {
+                    preparationDependencies: workspace.dependencies,
+                    octokit,
+                    logger: fakeLogger.logger,
+                    ...failingSeams(),
+                    fetchIssue: async (config, issueNumber) => {
+                        void config;
+                        return rawIssueFixture(issueNumber);
+                    },
+                },
+            );
+
+            // Still a failure: the caller's retry is the right response to an unsealed run.
+            expect(result.kind).toBe(DefaultSingleIssueResultKind.Failed);
+            const created = vi.mocked(octokit.rest.issues.createComment);
+            expect(created).toHaveBeenCalledTimes(1);
+            const posted = created.mock.calls[0]?.[0]?.body ?? '';
+            expect(posted).toContain(SilentRunNotice.NotProcessed);
+            expect(posted).toContain(ACTIONS_RUN_URL);
+            expect(posted).not.toContain(PROVIDER_ERROR);
+            // The failed result carries no publication: only the log says the notice went out.
+            expect(fakeLogger.info).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    action: ReportPublishAction.Posted,
+                    commentUrl:
+                        'https://github.com/remote-owner/remote-list/issues/4#issuecomment-501',
+                }),
+                expect.any(String),
+            );
         },
     );
 
@@ -1238,11 +1557,13 @@ describe('runDefaultSingleIssue', () => {
             FixRunStatus.CapabilityLimited,
             octokit,
             artifactsDir,
-            { candidateForReview },
+            { extra: { candidateForReview } },
         );
 
-        expect(result.kind === 'processed' && result.publication).toMatchObject({
-            action: 'posted',
+        expect(
+            result.kind === DefaultSingleIssueResultKind.Processed && result.publication,
+        ).toMatchObject({
+            action: ReportPublishAction.Posted,
         });
         const posted = vi.mocked(octokit.rest.issues.createComment).mock.calls[0]?.[0]?.body;
         expect(posted).toContain(candidateForReview.rule);
@@ -1285,7 +1606,7 @@ describe('runDefaultSingleIssue', () => {
             },
         );
 
-        expect(result.kind).toBe('processed');
+        expect(result.kind).toBe(DefaultSingleIssueResultKind.Processed);
         const created = vi.mocked(
             octokit.rest.issues.createComment as unknown as ReturnType<typeof vi.fn>,
         );
@@ -1335,7 +1656,7 @@ describe('runDefaultSingleIssue', () => {
             },
         );
 
-        expect(result.kind).toBe('processed');
+        expect(result.kind).toBe(DefaultSingleIssueResultKind.Processed);
         const created = vi.mocked(
             octokit.rest.issues.createComment as unknown as ReturnType<typeof vi.fn>,
         );
@@ -1380,7 +1701,7 @@ describe('runDefaultSingleIssue', () => {
             },
         );
 
-        expect(result.kind).toBe('processed');
+        expect(result.kind).toBe(DefaultSingleIssueResultKind.Processed);
         const created = vi.mocked(
             octokit.rest.issues.createComment as unknown as ReturnType<typeof vi.fn>,
         );
@@ -1424,11 +1745,13 @@ describe('runDefaultSingleIssue', () => {
             octokit.rest.issues.createComment as unknown as ReturnType<typeof vi.fn>,
         );
         expect(created).toHaveBeenCalledTimes(1);
-        expect(result.kind).toBe('failed');
-        expect(result.kind === 'failed' && result.failureCode).toBe(
+        expect(result.kind).toBe(DefaultSingleIssueResultKind.Failed);
+        expect(result.kind === DefaultSingleIssueResultKind.Failed && result.failureCode).toBe(
             DefaultSingleIssueFailure.PublicationFailed,
         );
-        expect(result.kind === 'failed' && result.failureDetail).toContain(PLATFORM_WRITE_REFUSAL);
+        expect(
+            result.kind === DefaultSingleIssueResultKind.Failed && result.failureDetail,
+        ).toContain(PLATFORM_WRITE_REFUSAL);
     });
 
     it('skips the run before intake when a report for this revision is already posted', async () => {
@@ -1478,9 +1801,11 @@ describe('runDefaultSingleIssue', () => {
             },
         );
 
-        expect(result.kind).toBe('skipped');
-        expect(result.kind === 'skipped' && result.publication).toMatchObject({
-            action: 'already_reported',
+        expect(result.kind).toBe(DefaultSingleIssueResultKind.Skipped);
+        expect(
+            result.kind === DefaultSingleIssueResultKind.Skipped && result.publication,
+        ).toMatchObject({
+            action: ReportPublishAction.AlreadyReported,
             commentId: 77,
         });
         expect(seam.extractReport).not.toHaveBeenCalled();
@@ -1527,27 +1852,20 @@ describe('runDefaultSingleIssue', () => {
             },
         );
 
-        expect(result.kind).toBe('skipped');
-        expect(result.kind === 'skipped' && result.reason).toContain('comment 9 by maintainer');
-        expect(result.kind === 'skipped' && result.publication).toBeNull();
+        expect(result.kind).toBe(DefaultSingleIssueResultKind.Skipped);
+        expect(result.kind === DefaultSingleIssueResultKind.Skipped && result.reason).toContain(
+            'comment 9 by maintainer',
+        );
+        expect(
+            result.kind === DefaultSingleIssueResultKind.Skipped && result.publication,
+        ).toBeNull();
         expect(seam.extractReport).not.toHaveBeenCalled();
     });
 
     it('keeps the report silent when the issue was closed while the run worked', async () => {
         const workspace = preparedWorkspace({ localSourceAvailable: true, withInstruction: false });
         const octokit = issueCommentOctokit();
-        vi.mocked(octokit.rest.issues.get as unknown as ReturnType<typeof vi.fn>)
-            .mockResolvedValueOnce({ data: { state: 'open', assignees: [], labels: [] } })
-            .mockResolvedValueOnce({
-                data: {
-                    state: 'closed',
-                    state_reason: 'completed',
-                    closed_at: '2026-10-05T11:00:00Z',
-                    closed_by: { login: 'maintainer' },
-                    assignees: [],
-                    labels: [],
-                },
-            });
+        closeIssueDuringRun(octokit);
 
         const result = await runDefaultSingleIssue(
             {
@@ -1572,8 +1890,10 @@ describe('runDefaultSingleIssue', () => {
             },
         );
 
-        expect(result.kind).toBe('processed');
-        expect(result.kind === 'processed' && result.publication).toBeNull();
+        expect(result.kind).toBe(DefaultSingleIssueResultKind.Processed);
+        expect(
+            result.kind === DefaultSingleIssueResultKind.Processed && result.publication,
+        ).toBeNull();
         expect(
             octokit.rest.issues.createComment as unknown as ReturnType<typeof vi.fn>,
         ).not.toHaveBeenCalled();
@@ -1606,9 +1926,13 @@ describe('runDefaultSingleIssue', () => {
             },
         );
 
-        expect(result.kind).toBe('skipped');
-        expect(result.kind === 'skipped' && result.reason).toContain('"nsfw"');
-        expect(result.kind === 'skipped' && result.publication).toBeNull();
+        expect(result.kind).toBe(DefaultSingleIssueResultKind.Skipped);
+        expect(result.kind === DefaultSingleIssueResultKind.Skipped && result.reason).toContain(
+            '"nsfw"',
+        );
+        expect(
+            result.kind === DefaultSingleIssueResultKind.Skipped && result.publication,
+        ).toBeNull();
         expect(seam.extractReport).not.toHaveBeenCalled();
         expect(investigate).not.toHaveBeenCalled();
     });
@@ -1646,8 +1970,10 @@ describe('runDefaultSingleIssue', () => {
             },
         );
 
-        expect(result.kind).toBe('processed');
-        expect(result.kind === 'processed' && result.publication).toBeNull();
+        expect(result.kind).toBe(DefaultSingleIssueResultKind.Processed);
+        expect(
+            result.kind === DefaultSingleIssueResultKind.Processed && result.publication,
+        ).toBeNull();
         expect(
             octokit.rest.issues.createComment as unknown as ReturnType<typeof vi.fn>,
         ).not.toHaveBeenCalled();
@@ -1695,8 +2021,10 @@ describe('runDefaultSingleIssue', () => {
             },
         );
 
-        expect(result.kind).toBe('processed');
-        expect(result.kind === 'processed' && result.publication).toMatchObject({
+        expect(result.kind).toBe(DefaultSingleIssueResultKind.Processed);
+        expect(
+            result.kind === DefaultSingleIssueResultKind.Processed && result.publication,
+        ).toMatchObject({
             commentId: 501,
         });
         expect(
@@ -1707,20 +2035,7 @@ describe('runDefaultSingleIssue', () => {
     it('keeps a forced report silent when the issue was closed while the run worked', async () => {
         const workspace = preparedWorkspace({ localSourceAvailable: true, withInstruction: false });
         const octokit = issueCommentOctokit();
-        vi.mocked(octokit.rest.issues.get as unknown as ReturnType<typeof vi.fn>)
-            .mockResolvedValueOnce({
-                data: { state: 'open', assignees: [{ login: 'maintainer' }], labels: [] },
-            })
-            .mockResolvedValueOnce({
-                data: {
-                    state: 'closed',
-                    state_reason: 'completed',
-                    closed_at: '2026-10-05T11:00:00Z',
-                    closed_by: { login: 'maintainer' },
-                    assignees: [{ login: 'maintainer' }],
-                    labels: [],
-                },
-            });
+        closeIssueDuringRun(octokit, ['maintainer']);
 
         const result = await runDefaultSingleIssue(
             {
@@ -1746,8 +2061,10 @@ describe('runDefaultSingleIssue', () => {
             },
         );
 
-        expect(result.kind).toBe('processed');
-        expect(result.kind === 'processed' && result.publication).toBeNull();
+        expect(result.kind).toBe(DefaultSingleIssueResultKind.Processed);
+        expect(
+            result.kind === DefaultSingleIssueResultKind.Processed && result.publication,
+        ).toBeNull();
         expect(
             octokit.rest.issues.createComment as unknown as ReturnType<typeof vi.fn>,
         ).not.toHaveBeenCalled();
@@ -1757,11 +2074,11 @@ describe('runDefaultSingleIssue', () => {
         const unforced = await runOnInProgressIssue(false);
         const forced = await runOnInProgressIssue(true);
 
-        expect(unforced.result.kind).toBe('skipped');
-        expect(unforced.result.kind === 'skipped' && unforced.result.reason).toContain(
-            'labelled "a: in progress"',
-        );
-        expect(forced.result.kind).toBe('processed');
+        expect(unforced.result.kind).toBe(DefaultSingleIssueResultKind.Skipped);
+        expect(
+            unforced.result.kind === DefaultSingleIssueResultKind.Skipped && unforced.result.reason,
+        ).toContain('labelled "a: in progress"');
+        expect(forced.result.kind).toBe(DefaultSingleIssueResultKind.Processed);
         expect(
             forced.octokit.rest.issues.createComment as unknown as ReturnType<typeof vi.fn>,
         ).toHaveBeenCalledTimes(1);
@@ -1804,7 +2121,7 @@ describe('runDefaultSingleIssue', () => {
             },
         );
 
-        expect(result.kind).toBe('processed');
+        expect(result.kind).toBe(DefaultSingleIssueResultKind.Processed);
         expect(
             octokit.rest.issues.createComment as unknown as ReturnType<typeof vi.fn>,
         ).toHaveBeenCalledTimes(1);

@@ -26,7 +26,11 @@ bot; a maintainer reviews before anything is merged.` — always last, always `<
 
 A comment is published only for an outcome **plus** its mandatory evidence (see the
 policy table in the intake plan). `patch_proposed` requires the verified rule and
-before/after evidence. Everything attributable to our own infrastructure stays silent.
+before/after evidence. Everything attributable to our own infrastructure stays silent,
+except for a run a maintainer forced (`force`): when it cannot investigate the issue, or
+fails during intake or investigation, it posts a fixed one-line notice — the page could not be accessed, or the report
+could not be processed — with the link to the workflow run and no reason. The notice is
+not the issue's report: a retry and the backlog still take the issue.
 
 A run that passes those local gates is then checked against the upstream issue **as it
 stands at publication time**, not as it was when the run was queued: of 18 proposals in one

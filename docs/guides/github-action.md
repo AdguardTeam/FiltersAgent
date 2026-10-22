@@ -75,7 +75,11 @@ When it runs against an issue, `filters-agent`:
    run skips because it is not a filter report, or names no page, gets no comment either, and
    neither does a run that fails or cannot investigate the report (an unsupported product, no
    usable browser, a page it cannot reach) unless it still found a rule to review; the reason is
-   in the run log and the uploaded artifact. For a verified
+   in the run log and the uploaded artifact. A forced run that cannot investigate the report, or
+   fails during intake or investigation, posts a one-line notice instead — the page could not be
+   accessed, or the report could not be processed — with the link to the run, whatever your
+   report template; the reason stays in the artifact. The notice is not the report: label the issue again or rerun the workflow to
+   retry. For a verified
    rule the report shows the page without and with the rule. GitHub has no API to attach an image
    to a comment, so the run commits the images to a branch of your repository, named by the
    `screenshotsBranch` input (`filters-agent-screenshots` by default), which is why the example

@@ -1,5 +1,5 @@
 import { matchingNames } from '../github/github-name-list';
-import { parseReportRevisionMarker } from '../publisher/report-publisher';
+import { parseReportRevisionMarker, RevisionCommentKind } from '../publisher/report-publisher';
 import {
     BacklogIssueComment,
     BacklogIssueHistory,
@@ -154,6 +154,24 @@ function isOwnReportComment(comment: BacklogIssueComment, reportAuthorLogin: str
 }
 
 /**
+ * Decide whether one comment is a forced run's notice, posted by the run's own identity.
+ *
+ * A notice says a run could not investigate the issue: it is no report, and the update time it
+ * gives the issue says nothing about the issue's text. Counted as a comment, it would explain away
+ * an edit made before it, so selection reads the history without it.
+ *
+ * @param comment - One mapped issue comment.
+ * @param reportAuthorLogin - The login authoritative for this run's own markers.
+ * @returns True when the comment is the run's own notice.
+ */
+function isOwnNotice(comment: BacklogIssueComment, reportAuthorLogin: string): boolean {
+    return (
+        isOwnReportComment(comment, reportAuthorLogin) &&
+        parseReportRevisionMarker(comment.body, RevisionCommentKind.Notice) !== null
+    );
+}
+
+/**
  * Decide whether one comment carries a trusted author.
  *
  * Contract: the issue's reporter is always trusted, and the comment's optional `author_association`
@@ -189,7 +207,8 @@ function isTrustedCommentAuthor(
  * comment by a trusted author — the reporter or a trusted association — created after the latest
  * report or last edited after it reselects the issue as a new revision. Else an `issue.updated_at`
  * newer than the latest report and than every comment's timestamps — a body edit no comment
- * explains — reselects it too. Anything else stays behind as already reported.
+ * explains — reselects it too. Anything else stays behind as already reported. The run's own
+ * notices count as none of these: they are neither reports nor comments that explain an update.
  *
  * @param history - The visited issue's summary, reporter, and ordered comment history.
  * @param inputs - Validated queue inputs carrying the window and budget bounds.
@@ -200,7 +219,10 @@ function issueVerdictOf(history: BacklogIssueHistory, inputs: QueueInputs): Issu
     let inWindowReportCount = 0;
     let latestCommentMs = 0;
     const windowStartMs = Date.parse(inputs.capturedAt) - inputs.revisionWindowMs;
-    for (const comment of history.comments) {
+    const comments = history.comments.filter(
+        (comment) => !isOwnNotice(comment, inputs.reportAuthorLogin),
+    );
+    for (const comment of comments) {
         const commentMs = Math.max(Date.parse(comment.createdAt), Date.parse(comment.updatedAt));
         if (commentMs > latestCommentMs) {
             latestCommentMs = commentMs;
@@ -226,7 +248,7 @@ function issueVerdictOf(history: BacklogIssueHistory, inputs: QueueInputs): Issu
     if (inWindowReportCount >= inputs.maxRevisionsPerWindow) {
         return BacklogSkipKind.RevisionBudgetHit;
     }
-    const trustedCommentAfterReport = history.comments.some(
+    const trustedCommentAfterReport = comments.some(
         (comment) =>
             isTrustedCommentAuthor(comment, history, inputs.trustedRoles) &&
             (Date.parse(comment.createdAt) > latestReportedAtMs ||
