@@ -121,7 +121,14 @@ The format is based on [Keep a Changelog], and this project adheres to
   shows counts. A page more than eight times taller than wide gets a map of
   the span its tiles cover instead of none. A review whose tiles cover only a
   window of the page now reports `tile window only` with the inspected range,
-  and an overview past the 5 MB vision limit no longer blocks the review.
+  and a clean window review now ends verified instead of inconclusive. The
+  review answers for the window around the rule's targets, or for the first
+  five screens of the page when there is none to measure, such as for a
+  scriptlet; breakage below them goes unseen. A block of the reported site's
+  own requests is reviewed over the first five screens and the window around
+  its ad, without the screens between them. A window cut short by the tile
+  limit still ends inconclusive, and the report says why. An overview past the 5 MB vision
+  limit no longer blocks the review.
 - Fixed two benchmark cases started at once on a fresh `--output-root`
   failing with `EEXIST` while creating the shared output directory.
 - Fixed `###id` element-hiding rules being validated against the selector

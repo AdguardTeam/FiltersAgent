@@ -279,6 +279,89 @@ describe('resolveCandidateVisualEvidence', () => {
         expect(result.afterDocumentCoverageComplete).toBe(false);
     });
 
+    it('credits a window that reaches both ends of a short document as document coverage', () => {
+        // A target near the top of a short page gets a window from its first to its last pixel;
+        // a candidate only whole-document tiles answer for must not lose its review to it.
+        const artifactsDir = temporaryDirectory('candidate-evidence-whole-window-');
+        const recorder = createRecorder();
+        addScreenshotEvidence(recorder, artifactsDir);
+        const validation = factualValidation();
+        const wholeWindow = { ...tileCoverage('b-tile'), window: { fromY: 0, toY: 1_080 } };
+        validation.phaseB.tileCoverage = wholeWindow;
+        validation.phaseC.tileCoverage = { ...wholeWindow, tiles: tileCoverage('c-tile').tiles };
+        addValidationArtifact(recorder, artifactsDir, '123456abcdef', validation);
+
+        const result = resolveCandidateVisualEvidence({
+            artifactsDir,
+            recorder,
+            validationArtifactId: 'validation-123456abcdef',
+        });
+
+        expect(result.beforeDocumentCoverageComplete).toBe(true);
+        expect(result.afterDocumentCoverageComplete).toBe(true);
+    });
+
+    it('proves a window with a top span on both spans and nothing of the gap', () => {
+        // The first screens of a request block's page and the window around its deep ad are
+        // tiled apart; each span must be covered, the gap between them never is.
+        const artifactsDir = temporaryDirectory('candidate-evidence-two-spans-');
+        const recorder = createRecorder();
+        addScreenshotEvidence(recorder, artifactsDir);
+        const validation = factualValidation();
+        const [topTile] = tileCoverage('b-tile').tiles;
+        const twoSpans = {
+            ...tileCoverage('b-tile'),
+            documentHeight: 10_000,
+            window: { fromY: 4_000, toY: 5_080, topToY: 1_080 },
+            tiles: [topTile, { ...topTile, index: 1, y: 4_000 }],
+        };
+        const topSpanUncovered = { ...twoSpans, window: { ...twoSpans.window, topToY: 2_000 } };
+        validation.phaseB.tileCoverage = twoSpans;
+        validation.phaseC.tileCoverage = topSpanUncovered;
+        addValidationArtifact(recorder, artifactsDir, '123456abcdef', validation);
+
+        const result = resolveCandidateVisualEvidence({
+            artifactsDir,
+            recorder,
+            validationArtifactId: 'validation-123456abcdef',
+        });
+
+        expect(result.beforeCoverageComplete).toBe(true);
+        expect(result.beforeDocumentCoverageComplete).toBe(false);
+        expect(result.afterCoverageComplete).toBe(false);
+    });
+
+    it('marks a baseline window the tile limit cut short, which the candidate phase replays', () => {
+        // Phase C replays the span the baseline kept, so only the baseline says the target window
+        // was longer than its tiles.
+        const artifactsDir = temporaryDirectory('candidate-evidence-trimmed-window-');
+        const recorder = createRecorder();
+        addScreenshotEvidence(recorder, artifactsDir);
+        const validation = factualValidation();
+        const replayedCoverage = {
+            ...tileCoverage('c-tile'),
+            documentHeight: 60_000,
+            window: { fromY: 0, toY: 1_080 },
+        };
+        const trimmedCoverage = {
+            ...replayedCoverage,
+            windowTrimmed: true,
+            tiles: tileCoverage('b-tile').tiles,
+        };
+        validation.phaseB.tileCoverage = trimmedCoverage;
+        validation.phaseC.tileCoverage = replayedCoverage;
+        addValidationArtifact(recorder, artifactsDir, '123456abcdef', validation);
+
+        const result = resolveCandidateVisualEvidence({
+            artifactsDir,
+            recorder,
+            validationArtifactId: 'validation-123456abcdef',
+        });
+
+        expect(result.beforeWindowTrimmed).toBe(true);
+        expect(result.afterWindowTrimmed).toBe(false);
+    });
+
     it('binds the tile window map of a page too tall for its overview', () => {
         const artifactsDir = temporaryDirectory('candidate-evidence-window-map-');
         const recorder = createRecorder();

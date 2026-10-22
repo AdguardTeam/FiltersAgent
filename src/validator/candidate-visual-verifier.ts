@@ -47,6 +47,8 @@ import {
     type FittedTileInventoryContext,
 } from './candidate-visual-context';
 import { planFullPageOverview } from './candidate-visual-planning';
+import { tileCoverageGap } from './candidate-visual-coverage';
+import { CandidateVisualCoverageGap } from '../types/candidate-visual-coverage-gap';
 import { settleAfterInventory, settlementContext } from './candidate-visual-settlement';
 import { MISSING_CONTENT_RUBRIC, synthesisConsistency } from './candidate-visual-consistency';
 import type { CandidateVisualSettlement } from '../types/candidate-visual-settlement';
@@ -136,6 +138,7 @@ function domCheckContext(options: CandidateVisualVerifierOptions): string[] {
  * @param inventoryContext - Every visual observation from the same vision model, within the limit.
  * @param fullPageOverviewEvidence - Provenance for original or omitted full-page overviews.
  * @param settlement - What the runner set aside from the AFTER inventory.
+ * @param scope - Runner-computed network scope of the candidate.
  * @returns Ordered text messages containing the complete before/after observation inventory.
  */
 function buildReviewMessages(
@@ -143,6 +146,7 @@ function buildReviewMessages(
     inventoryContext: FittedTileInventoryContext,
     fullPageOverviewEvidence: CandidateVisualFullPageOverviewEvidencePair,
     settlement: CandidateVisualSettlement,
+    scope: CandidateNetworkScope,
 ): SingleShotMessage[] {
     const symptomKind = options.symptomKind ?? SymptomKind.Ads;
     const system: SingleShotMessage = {
@@ -176,19 +180,17 @@ function buildReviewMessages(
             'answers for the range the tiles cover: when the overview provenance gives a reason, it',
             'states that range — tiles that cover only a window of the document, or an overview',
             'too tall to be read as one image — and the rest of the page was not inspected. Never',
-            'read page-wide coverage into the map. A reason alone does not make coverage',
-            'incomplete. This',
+            'read page-wide coverage into the map. Whether that range is enough for this candidate',
+            'is decided by the runner, not by you: judge what the tiles and viewports show. This',
             'final synthesis is text-only: reconcile the complete runner-bound observations and',
-            'do not claim to inspect new pixels. coverageComplete may be true only when the runner',
-            'and every visual-observation call report complete coverage and every repeated instance',
-            'has been inventoried. Return exactly one',
+            'do not claim to inspect new pixels. Return exactly one',
             'beforeInventoryReconciliation disposition for every numbered BEFORE observation:',
             'same_symptom retains it as a reproduced defect, while not_same_symptom dismisses it',
             'with a visual rationale. Return exactly one afterInventoryReconciliation disposition',
             'for every numbered AFTER observation: remaining retains it as the same unresolved',
             'defect, while not_same_symptom dismisses normal gutters, intentional spacing, or',
             'another visually distinct feature with a rationale.',
-            ...synthesisResidueRubric(symptomKind, reviewNetworkScope(options)),
+            ...synthesisResidueRubric(symptomKind, scope),
             'An AFTER observation that',
             'visually repeats the reporter-defined symptom anywhere on the page must be remaining,',
             'even when it is smaller, less severe, at a different landmark, or less prominent than',
@@ -203,7 +205,7 @@ function buildReviewMessages(
             'Never omit, repeat, or invent an',
             'observationIndex. Every image observation is already numbered, so both additional',
             'instance arrays must be empty. Do not invent or copy observations into those arrays.',
-            'Choose unclear and coverageComplete=false when evidence is insufficient.',
+            'Choose unclear when evidence is insufficient.',
         ].join(' '),
     };
     const context: SingleShotMessage = {
@@ -225,8 +227,6 @@ function buildReviewMessages(
             ...settlementContext(settlement),
             'Runner-owned full-page overview provenance:',
             JSON.stringify(fullPageOverviewEvidence),
-            `Runner capture coverage: before=${options.evidence.beforeCoverageComplete}, ` +
-                `after=${options.evidence.afterCoverageComplete}.`,
         ].join('\n'),
     };
     return [system, context];
@@ -271,6 +271,7 @@ function persistReview(
         symptom: review.symptom,
         adLayoutResidue: review.adLayoutResidue,
         coverageComplete: review.coverageComplete,
+        coverageGap: review.coverageGap ?? null,
         beforeInstanceCount: review.beforeInstances.length,
         remainingInstanceCount: review.remainingInstances.length,
         pageIntegrity: review.pageIntegrity,
@@ -302,22 +303,27 @@ export async function reviewCandidateVisually(
     const candidateRuleHash = createHash('sha256').update(options.candidateRule).digest('hex');
     const candidateShortHash = candidateRuleHash.slice(0, 12);
     const model = boundedModel(options.vision.modelId);
+    // Computed once, from runner-owned inputs only, so the whole review — prompt, verdict, basis,
+    // and the stored scope the schema re-derives both from — reads one scope.
+    const candidateNetworkScope = reviewNetworkScope(options);
     let semanticOutput: CandidateVisualReviewModelOutput;
+    let coverageGap: CandidateVisualCoverageGap | undefined;
     let inventoryReconciliation: CandidateVisualInventoryReconciliation | undefined;
     let fullPageOverviewEvidence: CandidateVisualFullPageOverviewEvidencePair | undefined;
     let settlement: CandidateVisualSettlement | undefined;
     try {
         const { evidence } = options;
+        coverageGap = tileCoverageGap(evidence);
         const beforePlan = planFullPageOverview(
             evidence.beforeFullPage,
-            evidence.beforeDocumentCoverageComplete ?? evidence.beforeCoverageComplete,
+            evidence.beforeDocumentCoverageComplete,
             evidence.beforeTiles,
             evidence.beforeDocument,
             evidence.beforeTileWindowMap,
         );
         const afterPlan = planFullPageOverview(
             evidence.afterFullPage,
-            evidence.afterDocumentCoverageComplete ?? evidence.afterCoverageComplete,
+            evidence.afterDocumentCoverageComplete,
             evidence.afterTiles,
             evidence.afterDocument,
             evidence.afterTileWindowMap,
@@ -368,6 +374,11 @@ export async function reviewCandidateVisually(
         );
         const afterInventory = settled.after;
         settlement = settled.settlement;
+        if (!beforeInventory.coverageObserved || !afterInventory.coverageObserved) {
+            coverageGap ??= CandidateVisualCoverageGap.ImagesUnread;
+        } else if (afterInventory.citationDropped) {
+            coverageGap ??= CandidateVisualCoverageGap.CitationDropped;
+        }
         const inventoryContext = renderTileInventoryContext(beforeInventory, afterInventory);
         options.recorder.record(TraceEventType.Decision, {
             phase: SYNTHESIS_CONTEXT_DECISION_PHASE,
@@ -390,6 +401,7 @@ export async function reviewCandidateVisually(
             inventoryContext,
             fullPageOverviewEvidence,
             settlement,
+            candidateNetworkScope,
         );
         // The map carries no artifact, so only a viewport or a tile can be cited.
         const allowedBeforeArtifactIds = new Set([
@@ -407,14 +419,11 @@ export async function reviewCandidateVisually(
             afterInventory,
             allowedBeforeArtifactIds,
             allowedAfterArtifactIds,
-            options.evidence.beforeCoverageComplete &&
-                options.evidence.afterCoverageComplete &&
-                beforeInventory.coverageObserved &&
-                afterInventory.coverageObserved,
+            coverageGap === undefined,
             model,
             synthesisConsistency(
                 options.symptomKind ?? SymptomKind.Ads,
-                reviewNetworkScope(options),
+                candidateNetworkScope,
                 options.candidateRule,
             ),
         );
@@ -429,9 +438,6 @@ export async function reviewCandidateVisually(
         });
     }
 
-    // Computed here, from runner-owned inputs only, so the whole review — verdict, basis, and the
-    // stored scope the schema re-derives both from — is decided in one place.
-    const candidateNetworkScope = reviewNetworkScope(options);
     const networkVerification = options.networkVerification;
     const integrityBasis = deriveCandidateVisualIntegrityBasis(
         semanticOutput,
@@ -453,6 +459,7 @@ export async function reviewCandidateVisually(
         symptomScope: semanticOutput.symptomScope,
         adLayoutResidue: semanticOutput.adLayoutResidue,
         coverageComplete: semanticOutput.coverageComplete,
+        ...(coverageGap === undefined ? {} : { coverageGap }),
         beforeInstances: semanticOutput.beforeInstances,
         remainingInstances: semanticOutput.remainingInstances,
         pageIntegrity: semanticOutput.pageIntegrity,

@@ -1313,6 +1313,8 @@ async function extensionExperimentRuntime(scenario: ExtensionExperimentRuntimeOp
                         afterCoverageComplete: true,
                         beforeDocumentCoverageComplete: true,
                         afterDocumentCoverageComplete: true,
+                        beforeWindowTrimmed: false,
+                        afterWindowTrimmed: false,
                     };
                 },
                 reviewCandidateVisually: async (

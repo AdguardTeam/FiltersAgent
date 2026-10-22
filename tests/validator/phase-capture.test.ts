@@ -2,7 +2,11 @@ import { describe, expect, it, vi } from 'vitest';
 import { runPhase } from '../../src/validator/phase-capture';
 import { BrowserFallbackReason } from '../../src/types/browser-fallback-reason';
 import { TraceEventType } from '../../src/types/trace';
-import { PhaseLabel, type FullPageTileCoverage } from '../../src/types/validation';
+import {
+    PhaseLabel,
+    type FullPageTileCoverage,
+    type FullPageTileWindow,
+} from '../../src/types/validation';
 import type { Logger } from '../../src/logger/logger';
 import { mockPage } from './phase-fixtures';
 import type { BrowserToolHandlers } from '../../src/browser/browser-tools';
@@ -226,7 +230,8 @@ describe('runPhase', () => {
     async function capturedTileWindow(
         matches: { top: number; bottom: number }[],
         viewportHeight: number,
-    ): Promise<{ fromY: number; toY: number } | undefined> {
+        tileWindowFromTop = false,
+    ): Promise<FullPageTileWindow | undefined> {
         const handlers = mockHandlers();
         const screenshotArgs: Record<string, unknown>[] = [];
         vi.mocked(handlers.screenshot).mockImplementation(async (args) => {
@@ -270,12 +275,36 @@ describe('runPhase', () => {
             trustedPageEvaluator: evaluator,
             adElementSelector: '.ad-slot',
             captureVisualTiles: true,
+            ...(tileWindowFromTop ? { tileWindowFromTop } : {}),
             recorder: mockRecorder(),
         });
 
         expect(screenshotArgs).toHaveLength(1);
-        return screenshotArgs[0].tileWindow as { fromY: number; toY: number } | undefined;
+        return screenshotArgs[0].tileWindow as FullPageTileWindow | undefined;
     }
+
+    it.each([
+        {
+            label: 'near the top',
+            match: { top: 800, bottom: 1_000 },
+            window: { fromY: 0, toY: 5_400 },
+        },
+        {
+            label: 'below the first screens',
+            match: { top: 9_000, bottom: 9_250 },
+            window: { fromY: 7_920, toY: 10_330, topToY: 5_400 },
+        },
+    ])(
+        'adds the first screens to the window of a request block whose ad sits $label',
+        async (row) => {
+            // A request block can break the page away from its ad, so its tiles also take in the first
+            // five screens, which the review answers for whatever the candidate. A deep ad keeps its
+            // own span: the gap between them would cost tiles nobody reviews.
+            const window = await capturedTileWindow([row.match], 1_080, true);
+
+            expect(window).toEqual(row.window);
+        },
+    );
 
     it('bounds tile capture around every instance a multi-instance selector matches', async () => {
         // A selector that hides several slots must get original-resolution tiles at each of them;

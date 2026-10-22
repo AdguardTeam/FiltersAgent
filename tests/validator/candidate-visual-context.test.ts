@@ -85,6 +85,7 @@ function stateInventory(
     }));
     return {
         coverageObserved: true,
+        citationDropped: false,
         instances: observations.map((observation, index) => ({
             artifactId: observation.artifactIds[0] ?? '',
             landmark: `${state} landmark ${index + 1}`,

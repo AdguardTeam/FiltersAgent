@@ -79,16 +79,48 @@ function fullPageTileStarts(extent: number, tileExtent: number, overlap: number)
 }
 
 /**
+ * The vertical spans a window covers, top first: the span from the top of the page down to `topToY`
+ * when the window has one, then the window's own span.
+ *
+ * @param window - Window of a tile capture.
+ * @returns Its spans, each a plain window without a top span.
+ */
+export function tileWindowSpans(window: FullPageTileWindow): FullPageTileWindow[] {
+    const own = { fromY: window.fromY, toY: window.toY };
+    return window.topToY === undefined ? [own] : [{ fromY: 0, toY: window.topToY }, own];
+}
+
+/**
+ * Clamp a requested window to the document, folding a top span that reaches the window's own span
+ * into one span from the top.
+ *
+ * @param window - Requested window.
+ * @param documentHeight - Document height the capture measured.
+ * @returns The window within the document.
+ */
+function clampTileWindow(window: FullPageTileWindow, documentHeight: number): FullPageTileWindow {
+    const clamp = (y: number): number => Math.max(0, Math.min(y, documentHeight));
+    const fromY = clamp(window.fromY);
+    const toY = clamp(window.toY);
+    if (window.topToY === undefined) {
+        return { fromY, toY };
+    }
+    const topToY = clamp(window.topToY);
+    return topToY >= fromY ? { fromY: 0, toY: Math.max(toY, topToY) } : { fromY, toY, topToY };
+}
+
+/**
  * Plan the clips of one tile capture, fitting an explicit window to the tile limit.
  *
  * A window (explicit, or the caller's default first-screens cap) shrinks the plan below the full
- * document. Every row takes one clip per column, so a document wider than the viewport fills the
- * limit with fewer rows. When `keepFirstRows` is set and the window needs more clips than `limit`,
- * the plan keeps the rows that fit, top first, and its window ends where the first dropped row
- * starts. The kept rows cover that window continuously, which is what a consumer checks a window's
- * coverage against, and a capture given the window back plans exactly the kept rows, so a later
- * state can replay it over the same span. Otherwise the plan is returned whole, and the caller
- * refuses one over the limit.
+ * document; a window with a top span plans the rows of both spans and none of the gap between them.
+ * Every row takes one clip per column, so a document wider than the viewport fills the limit with
+ * fewer rows. When `keepFirstRows` is set and the window needs more clips than `limit`, the plan
+ * keeps the rows that fit, top first, and its window ends where the first dropped row starts: the
+ * top span alone when that row belongs to it. The kept rows cover that window continuously, which
+ * is what a consumer checks a window's coverage against, and a capture given the window back plans
+ * exactly the kept rows, so a later state can replay it over the same spans. Otherwise the plan is
+ * returned whole, and the caller refuses one over the limit.
  *
  * @param document - Full document extent the capture measured.
  * @param viewport - Viewport extent, which is also the size of one clip.
@@ -106,18 +138,16 @@ export function planFullPageTileClips(
     tileWindow: FullPageTileWindow | undefined,
     keepFirstRows: boolean,
 ): FullPageTilePlan {
-    const window = tileWindow
-        ? {
-              fromY: Math.max(0, Math.min(tileWindow.fromY, document.height)),
-              toY: Math.max(0, Math.min(tileWindow.toY, document.height)),
-          }
-        : null;
+    const window = tileWindow ? clampTileWindow(tileWindow, document.height) : null;
     const xStarts = fullPageTileStarts(document.width, viewport.width, overlapPx);
     const allYStarts = fullPageTileStarts(document.height, viewport.height, overlapPx);
+    const spans = window ? tileWindowSpans(window) : [];
     const windowYStarts = window
-        ? allYStarts.filter(
-              (y) =>
-                  y < window.toY && Math.min(y + viewport.height, document.height) > window.fromY,
+        ? allYStarts.filter((y) =>
+              spans.some(
+                  (span) =>
+                      y < span.toY && Math.min(y + viewport.height, document.height) > span.fromY,
+              ),
           )
         : allYStarts;
     const rowCapacity = Math.floor(limit / xStarts.length);
@@ -126,10 +156,22 @@ export function planFullPageTileClips(
     const rows = trimmed ? windowYStarts.slice(0, rowCapacity) : windowYStarts;
     return {
         clips: rows.flatMap((y) => xStarts.map((x) => ({ x, y }))),
-        window:
-            trimmed && window
-                ? { fromY: window.fromY, toY: Math.min(window.toY, windowYStarts[rowCapacity]) }
-                : window,
+        window: trimmed && window ? trimTileWindow(window, windowYStarts[rowCapacity]) : window,
         windowTrimmed: trimmed,
     };
+}
+
+/**
+ * The window a trimmed capture's kept rows cover.
+ *
+ * @param window - Window the capture planned.
+ * @param cutY - Start of the first row the tile limit dropped.
+ * @returns The top span alone, as far as its rows were kept, when no row of the window's own span
+ *   was; otherwise the window with its own span cut at the dropped row.
+ */
+function trimTileWindow(window: FullPageTileWindow, cutY: number): FullPageTileWindow {
+    if (window.topToY !== undefined && cutY <= window.fromY) {
+        return { fromY: 0, toY: Math.min(cutY, window.topToY) };
+    }
+    return { ...window, toY: Math.min(window.toY, cutY) };
 }

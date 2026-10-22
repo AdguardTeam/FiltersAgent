@@ -251,6 +251,87 @@ describe('BrowserExtensionAdsObserver', () => {
         await expect(phaseConfigs[0]!.materialize!()).resolves.toHaveProperty('settled');
     });
 
+    it.each([
+        { rule: '||example.test/ads/banner.js^', fromTop: true },
+        { rule: '||ads.example.org^', fromTop: false },
+        { rule: 'example.test##.ad', fromTop: false },
+    ])('asks for a window from the top of the page for $rule: $fromTop', async (row) => {
+        // A block of the reported site's own requests can break the page away from its ad, so its
+        // capture takes in the first screens too; a third-party host block and a cosmetic rule
+        // keep the window around their target.
+        const artifactsDir = mkdtempSync(join(tmpdir(), 'ads-observer-window-top-'));
+        roots.push(artifactsDir);
+        const phaseConfigs: Parameters<typeof runPhase>[0][] = [];
+        const session = {
+            artifactsDir,
+            isClosed: false,
+            getPage: () => ({}) as Page,
+            close: async () => undefined,
+            getNetworkLog: () => [],
+            resetNetworkLog: () => undefined,
+            getConsoleLog: () => [],
+            consoleCoverage: ConsoleCoverage.BrowserLogOnly,
+        } as unknown as IBrowserSession;
+        const observer = new BrowserExtensionAdsObserver({
+            candidateRule: row.rule,
+            adElementSelector: '.ad',
+            trustedValidationContext: {
+                reportedUrl: 'https://example.test/',
+                existingRules: [],
+                baselineHash: 'b'.repeat(64),
+            },
+            profile: PROFILE,
+            recorder: recorderStub(),
+            artifactsDir,
+            logger: pino({ level: 'silent' }),
+            vision: visionStub,
+            reporterSymptom: 'an ad banner',
+            attemptNumber: 1,
+            noSandbox: false,
+            dependencies: {
+                runPhase: async (_input, config) => {
+                    phaseConfigs.push(config);
+                    return {
+                        phase: 'A' as const,
+                        url: 'https://example.test/',
+                        screenshotArtifactId: '',
+                        harArtifactId: '',
+                        domArtifactId: '',
+                        appliedRules: [],
+                        ruleApplications: [],
+                        antiAdblockDetected: false,
+                        error: 'stop after config capture',
+                    };
+                },
+            },
+        });
+
+        await observer.observe({
+            phase: 'A',
+            phaseTokenId: 'token-a',
+            session,
+            proof: {
+                leaseId: 'lease-a',
+                adapterStateDigest: 'a'.repeat(64),
+                phase: 'A',
+                filteringState: 'disabled',
+                sessionId: 'session-a',
+                actualContext: {
+                    kind: 'browser_extension',
+                    product: 'AdGuard Browser Extension',
+                    browser: 'CloakBrowser Chromium',
+                    productVersion: '5.0.0',
+                },
+                baselineDigest: null,
+                candidateDigest: null,
+                extension: null,
+            },
+        });
+
+        expect(phaseConfigs).toHaveLength(1);
+        expect(phaseConfigs[0]!.tileWindowFromTop === true).toBe(row.fromTop);
+    });
+
     it('hands the inventory a capture carrying all three screenshot identities', async () => {
         const artifactsDir = mkdtempSync(join(tmpdir(), 'ads-observer-'));
         roots.push(artifactsDir);

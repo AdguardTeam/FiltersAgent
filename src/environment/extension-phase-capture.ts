@@ -238,17 +238,3 @@ export async function assembleObservedPhase(
         },
     };
 }
-
-/**
- * Whether the browser photographed one phase's tile span whole.
- *
- * The candidate review is told this for both states before it runs, so both sides must say the same
- * thing about the capture; the inventory's coverage exists only for the baseline, since the review
- * itself is what inspects the candidate state.
- *
- * @param result - Phase facts the runner captured.
- * @returns Whether the tile capture completed with at least one tile.
- */
-export function tileCaptureComplete(result: PhaseResult): boolean {
-    return result.tileCoverage?.complete === true && result.tileCoverage.tiles.length > 0;
-}

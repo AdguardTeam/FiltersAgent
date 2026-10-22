@@ -98,13 +98,15 @@ const MAX_MISSING_CONTENT_ENTRY_CHARS =
  *
  * Missing content joins observedDamage in the review, so both lists share one entry bound, checked
  * here where the reply names both fields rather than later against a field the model never wrote.
+ *
+ * Coverage is not asked: told the tiles covered a window of the page, the model kept calling
+ * coverage incomplete whatever the window held, so the runner decides it from the tile proofs.
  */
 const CandidateVisualFinalModelOutputSchema = v.pipe(
     v.object({
         symptom: v.picklist(CANDIDATE_VISUAL_SYMPTOM_VALUES),
         symptomScope: v.pipe(v.string(), v.minLength(1), v.maxLength(2_000)),
         adLayoutResidue: v.picklist(CANDIDATE_VISUAL_AD_LAYOUT_RESIDUE_VALUES),
-        coverageComplete: v.boolean(),
         beforeInventoryReconciliation: v.pipe(
             v.array(CandidateVisualBeforeDispositionOutputSchema),
             v.maxLength(MAX_RECONCILED_INSTANCES),
@@ -174,7 +176,8 @@ interface NormalizedCandidateVisualOutput {
  * @param afterInventory - Complete numbered after-state tile inventory.
  * @param allowedBeforeArtifactIds - Runner-owned before-state identifiers the model may cite.
  * @param allowedAfterArtifactIds - Runner-owned after-state identifiers the model may cite.
- * @param runnerCoverageComplete - Whether the tile capture mechanically covered both documents.
+ * @param runnerCoverageComplete - Whether the tiles cover what the review answers for on both
+ *   states and every inventory call observed its images; the review's coverage, as is.
  * @param consistency - Which summary fields must rest on a reconciled observation.
  * @returns Strict semantic observations plus an auditable runner-bound reconciliation.
  */
@@ -242,7 +245,7 @@ function normalizeModelOutput(
         symptom: output.symptom,
         symptomScope: output.symptomScope,
         adLayoutResidue: output.adLayoutResidue,
-        coverageComplete: output.coverageComplete && runnerCoverageComplete,
+        coverageComplete: runnerCoverageComplete,
         beforeInstances: [
             ...beforeReconciliation
                 .filter((item) => item.disposition === CandidateInstanceDisposition.SameSymptom)
@@ -379,7 +382,8 @@ function recordFinalSynthesisAttempt(
  * @param afterInventory - Already-computed after-state visual inventory.
  * @param allowedBeforeArtifactIds - Runner-owned before screenshot identifiers.
  * @param allowedAfterArtifactIds - Runner-owned after screenshot identifiers.
- * @param runnerCoverageComplete - Whether capture and inventory coverage were complete.
+ * @param runnerCoverageComplete - Whether the tiles cover what the review answers for and every
+ *   inventory call observed its images.
  * @param model - Bounded vision-model identifier.
  * @param consistency - Which summary fields must rest on a reconciled observation.
  * @returns Normalized semantic result and complete reconciliation audit trail.
@@ -469,7 +473,7 @@ export async function synthesizeFinalReview(
                     FinalSynthesisAttemptStatus.Validated,
                     {
                         symptom: normalized.semanticOutput.symptom,
-                        coverageComplete: normalized.semanticOutput.coverageComplete,
+                        runnerCoverageComplete: normalized.semanticOutput.coverageComplete,
                         pageIntegrity: normalized.semanticOutput.pageIntegrity,
                         dismissalAuditRequired: true,
                         dismissedAfterObservationIndices,
@@ -505,7 +509,7 @@ export async function synthesizeFinalReview(
                 FinalSynthesisAttemptStatus.Validated,
                 {
                     symptom: normalized.semanticOutput.symptom,
-                    coverageComplete: normalized.semanticOutput.coverageComplete,
+                    runnerCoverageComplete: normalized.semanticOutput.coverageComplete,
                     pageIntegrity: normalized.semanticOutput.pageIntegrity,
                 },
             );

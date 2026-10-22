@@ -135,6 +135,31 @@ from is still reviewed from its tiles. Since details come only from the tiles,
 a review whose tiles cover a window of the page answers for that window, and
 the run report says `tile window only` with the range.
 
+Whether that window is enough is decided by the runner from the capture, never
+by the vision model. Asked for coverage and told the rest of the page was not
+inspected, the model called clean windows incomplete about as often as not,
+and correct rules went to manual review on that answer alone. The baseline
+window spans every rendered match of the candidate's selector with a screen
+above and below, and the candidate phase replays it. A candidate with nothing
+to measure — a scriptlet, an extended-CSS selector the browser cannot parse,
+an exception whose targets the baseline hides — is tiled over the first five
+screens of the page, and the review takes those as the page: an ad that is not
+on the first screens counts as not there. A block of the reported site's own
+requests can break the page away from its ad, so it is tiled over the first
+five screens as well as the window around its ad. When the ad sits lower, the
+two are tiled apart and the screens between them are not, so a deep ad costs
+no more tiles than one near the top and does not run into the tile limit. A
+block of a host outside the reported site keeps the window around its ad. The
+review answers for the window alone: an ad of the same kind outside it that
+the rule does not match goes unseen, and so does anything the candidate breaks
+outside it. That is the price of not tiling long pages whole.
+
+The runner refuses the coverage, and the review ends inconclusive, when the
+48-tile limit cut the window short, when the tiles do not cover their window,
+when vision could not read every image, or when the runner dropped an AFTER
+observation cited on an image its request did not carry. The review records
+which, and the run report prints it next to the range.
+
 Each inventory request is blind to the state it looks at: the BEFORE and AFTER
 images are asked the same question, and nothing in the prompt or the image
 labels names the state; the code knows which images it sent and files the

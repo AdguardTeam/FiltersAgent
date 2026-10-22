@@ -96,7 +96,12 @@ function withoutSettled(
             ),
         };
     });
-    return { coverageObserved: after.coverageObserved, instances, observations };
+    return {
+        coverageObserved: after.coverageObserved,
+        citationDropped: after.citationDropped,
+        instances,
+        observations,
+    };
 }
 
 /**

@@ -36,6 +36,8 @@ import type { FilteringEnvironmentExecution } from '../../src/environment/filter
 import type { AgentRunArtifacts } from '../../src/types/agent-run-artifacts';
 import type { FixRunResult } from '../../src/types/fix-run-result';
 import type { IssueFacts } from '../../src/types/issue-facts';
+import { CandidateVisualCoverageGap } from '../../src/types/candidate-visual-coverage-gap';
+import { renderCandidateVisualReview } from '../../src/local/run-report-candidate-render';
 import { materializeLocalRunOutputDir } from '../../src/local/output-directory';
 import { LocalRunManifestVersion, verifyLocalRunManifest } from '../../src/local/run-manifest';
 import {
@@ -850,6 +852,41 @@ describe('renderLocalAgentReport', () => {
         expect(report).not.toContain('- Full-page coverage: `complete`');
         expect(report).toContain('- Full-page coverage: `tile window only`');
         expect(report).toContain('y=0 to y=1080 of 4000 px were inspected');
+    });
+
+    it('says why the runner refused a tile window the review found clean', () => {
+        // A window the runner accepts and one it refuses both inspected the same range; only the
+        // refusal tells a maintainer why a clean review ended inconclusive.
+        const review = record.result.candidateVisualReview!;
+        const windowed = {
+            mode: 'windowed_tiles' as const,
+            originalBytes: 300_000,
+            visionArtifactId: null,
+            visionBytes: null,
+            reason:
+                'The full-page overview was shown only as a map; original-resolution tiles from ' +
+                'y=0 to y=1080 of 4000 px were inspected, and the rest of the page was not ' +
+                'inspected.',
+        };
+
+        const lines = renderCandidateVisualReview({
+            ...record.result,
+            candidateVisualReview: {
+                ...review,
+                verdict: 'inconclusive',
+                coverageComplete: false,
+                coverageGap: CandidateVisualCoverageGap.WindowTrimmed,
+                fullPageOverviewEvidence: {
+                    before: { ...windowed, originalArtifactId: review.beforeFullPageArtifactId },
+                    after: { ...windowed, originalArtifactId: review.afterFullPageArtifactId },
+                },
+            },
+        });
+
+        expect(lines.join('\n')).toContain(
+            '- Full-page coverage: `tile window only`, refused: the tile limit cut the window ' +
+                'short — The full-page overview',
+        );
     });
 
     it('keeps declared, observed, reported, actual, and rejected-selection audit fields separate', () => {

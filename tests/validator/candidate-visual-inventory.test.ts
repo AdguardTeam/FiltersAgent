@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { TraceEventType } from '../../src/types/trace';
+import { CandidateVisualCoverageGap } from '../../src/types/candidate-visual-coverage-gap';
 import { UNBOUND_CITATION_PHASE } from '../../src/validator/candidate-visual-inventory';
 import { reviewWith } from './visual-review-stub';
 import { BEFORE_SLOT, FOOTER_GRAPHIC } from './visual-review-fixtures';
@@ -82,7 +83,10 @@ describe('reviewCandidateVisually inventory citations', () => {
             damage: [],
         });
 
-        expect(review.verdict).toBe('inconclusive');
-        expect(review.coverageComplete).toBe(false);
+        expect(review).toMatchObject({
+            verdict: 'inconclusive',
+            coverageComplete: false,
+            coverageGap: CandidateVisualCoverageGap.CitationDropped,
+        });
     });
 });

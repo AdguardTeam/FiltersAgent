@@ -10,7 +10,7 @@ import {
     type FullPageTileWindow,
 } from '../types/validation';
 import { checkAntiAdblock } from './anti-adblock-check';
-import { measureElementTileWindow } from './element-tile-window';
+import { measureElementTileWindow, windowFromPageTop } from './element-tile-window';
 import type { Page } from 'playwright-core';
 import type { TrustedPageEvaluator } from '../browser/trusted-page-evaluator';
 import type { BrowserFallbackReason } from '../types/browser-fallback-reason';
@@ -69,6 +69,12 @@ export interface PhaseConfig {
      * candidate review answers for that span, with the full-page overview only as its map.
      */
     tileWindow?: FullPageTileWindow;
+
+    /**
+     * Whether a window measured around the target also covers the first screens of the page, for a
+     * candidate that can break the page away from its target.
+     */
+    tileWindowFromTop?: boolean;
 
     /**
      * Optional reveal steps the host replays identically in every phase.
@@ -169,12 +175,16 @@ export async function runPhase(config: PhaseConfig): Promise<PhaseResult> {
             typeof config.page.viewportSize === 'function'
                 ? (config.page.viewportSize()?.height ?? 0)
                 : 0;
-        tileWindow = await measureElementTileWindow(
+        const measured = await measureElementTileWindow(
             config.trustedPageEvaluator,
             config.adElementSelector,
             viewportHeight,
             config.recorder,
         );
+        tileWindow =
+            measured !== undefined && config.tileWindowFromTop === true
+                ? windowFromPageTop(measured, viewportHeight)
+                : measured;
     }
     const screenshotResult = await config.handlers.screenshot({
         captureTiles: config.captureVisualTiles === true,

@@ -19,6 +19,7 @@ import { VISUAL_REVIEW_UNAVAILABLE_PREFIX } from '../../src/validator/candidate-
 import type { CandidateVisualVerifierOptions } from '../../src/validator/candidate-visual-evidence';
 import { composeReporterSymptomScope } from '../../src/validator/reporter-symptom-scope';
 import {
+    COMPARISON_OBSTRUCTION_SYNTHESIS_RUBRIC,
     PRE_EXISTING_BLANK_PANELS,
     PRE_EXISTING_BLANK_SPACE_GROUND,
     PRE_EXISTING_BLANK_SPACE_RUBRIC,
@@ -34,6 +35,7 @@ import {
 import { sentImages } from './visual-review-stub';
 import { CandidateInstanceDisposition } from '../../src/types/candidate-visual-review';
 import { FullPageOverviewMode } from '../../src/types/full-page-overview-evidence';
+import { CandidateVisualCoverageGap } from '../../src/types/candidate-visual-coverage-gap';
 import { CaptureState } from '../../src/types/validation';
 import { MAX_EVALUATE_JS_EXPRESSION_CHARS } from '../../src/browser/browser-tools';
 import {
@@ -190,6 +192,10 @@ function makeOptions(
         ],
         beforeCoverageComplete: true,
         afterCoverageComplete: true,
+        beforeDocumentCoverageComplete: true,
+        afterDocumentCoverageComplete: true,
+        beforeWindowTrimmed: false,
+        afterWindowTrimmed: false,
     };
     for (const item of [
         evidence.beforeViewport,
@@ -754,10 +760,9 @@ describe('reviewCandidateVisually', () => {
             const finalMessages = chat.mock.calls.at(-1)![0].messages;
             expect(JSON.stringify(finalMessages)).toContain('before-full-page');
             expect(JSON.stringify(finalMessages)).toContain('after-full-page');
-            expect(JSON.stringify(finalMessages)).toMatch(
-                /set symptom=unclear, pageIntegrity=unclear, and coverageComplete=false/is,
+            expect(finalMessages[0].text).toContain(
+                COMPARISON_OBSTRUCTION_SYNTHESIS_RUBRIC.join(' '),
             );
-            expect(JSON.stringify(finalMessages)).toMatch(/never report.*candidate as verified/is);
             expect(imagePartCount({ messages: finalMessages })).toBe(0);
         } finally {
             rmSync(root, { recursive: true, force: true });
@@ -1958,10 +1963,14 @@ describe('reviewCandidateVisually', () => {
         try {
             const options = makeOptions(root, vision, recorder);
             options.evidence.afterCoverageComplete = false;
+            options.evidence.afterDocumentCoverageComplete = false;
             const result = await reviewCandidateVisually(options);
 
-            expect(result.review.verdict).toBe('inconclusive');
-            expect(result.review.coverageComplete).toBe(false);
+            expect(result.review).toMatchObject({
+                verdict: 'inconclusive',
+                coverageComplete: false,
+                coverageGap: CandidateVisualCoverageGap.TilesIncomplete,
+            });
         } finally {
             rmSync(root, { recursive: true, force: true });
         }
@@ -2974,6 +2983,180 @@ describe('reviewCandidateVisually blind inventory', () => {
                 Array.from({ length: 2 }, () => `${PRE_EXISTING_DAMAGE_PREFIX} ${damage}`),
             );
             expect(damageOf(CaptureState.After)).toEqual(Array.from({ length: 2 }, () => damage));
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+});
+
+/**
+ * A clean review of a tile window: the reported ad is gone, nothing remains and nothing broke.
+ *
+ * @param coverageComplete - What the synthesis says about coverage.
+ * @returns The stub script of the review.
+ */
+function cleanWindowReview(coverageComplete: boolean): Record<string, unknown> {
+    return {
+        symptom: 'resolved',
+        symptomScope: 'The advertising strip above the article heading.',
+        coverageComplete,
+        beforeInstances: [
+            {
+                artifactId: 'before-tile-1',
+                landmark: 'Above the article heading.',
+                description: 'An advertising strip.',
+            },
+        ],
+        remainingInstances: [],
+        pageIntegrity: 'intact',
+        rationale: 'The strip is gone and the inspected window is intact.',
+        observedDamage: [],
+    };
+}
+
+/**
+ * Review options whose tiles cover a window of a page longer than the window.
+ *
+ * @param root - Fixture directory.
+ * @param vision - Stubbed vision client.
+ * @param recorder - Trace recorder of the review.
+ * @param candidateRule - Candidate under review.
+ * @returns Options of a windowed review of the candidate.
+ */
+function windowedOptions(
+    root: string,
+    vision: SingleShotClient,
+    recorder: TraceRecorder,
+    candidateRule = CANDIDATE_RULE,
+): OverviewReviewOptions {
+    const options = makeOptions(root, vision, recorder);
+    options.candidateRule = candidateRule;
+    options.validationArtifactId = `validation-${createHash('sha256')
+        .update(candidateRule)
+        .digest('hex')
+        .slice(0, 12)}`;
+    options.reportedPageUrl = 'https://www.example.test/article';
+    options.evidence.beforeDocument = { width: 1_920, height: 4_733 };
+    options.evidence.afterDocument = { width: 1_920, height: 4_473 };
+    options.evidence.beforeDocumentCoverageComplete = false;
+    options.evidence.afterDocumentCoverageComplete = false;
+    return options;
+}
+
+describe('reviewCandidateVisually coverage of a tile window', () => {
+    it('verifies a clean window around the target the synthesis calls incomplete', async () => {
+        // The window spans every element the cosmetic rule hides, a screen above and below. The
+        // synthesis, told the rest of the page was not inspected, kept calling coverage incomplete
+        // and sent correct rules to manual review; the runner's tile proof decides it instead.
+        const root = mkdtempSync(join(tmpdir(), 'candidate-visual-review-clean-window-'));
+        const recorder = new TraceRecorder({ runId: 'visual-review', issueNumber: 3, mode: 'fix' });
+        const { vision } = makeProvider(cleanWindowReview(false));
+        try {
+            const result = await reviewCandidateVisually(windowedOptions(root, vision, recorder));
+
+            expect(result.review).toMatchObject({ verdict: 'verified', coverageComplete: true });
+            expect(result.review.fullPageOverviewEvidence?.before.mode).toBe(
+                FullPageOverviewMode.WindowedTiles,
+            );
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it('leaves a window the tile limit cut short inconclusive', async () => {
+        // The capture kept only the rows of the target window that fit the tile limit, and the
+        // candidate phase replayed that shorter span, so matches below it went unseen in both.
+        const root = mkdtempSync(join(tmpdir(), 'candidate-visual-review-trimmed-window-'));
+        const recorder = new TraceRecorder({ runId: 'visual-review', issueNumber: 3, mode: 'fix' });
+        const { vision } = makeProvider(cleanWindowReview(true));
+        try {
+            const options = windowedOptions(root, vision, recorder);
+            options.evidence.beforeWindowTrimmed = true;
+
+            const result = await reviewCandidateVisually(options);
+
+            expect(result.review).toMatchObject({
+                verdict: 'inconclusive',
+                coverageComplete: false,
+                coverageGap: CandidateVisualCoverageGap.WindowTrimmed,
+            });
+            // A clean review that ends inconclusive says why in its decision, not only its record.
+            expect(
+                recorder
+                    .toJSON()
+                    .events.find(
+                        (event) =>
+                            event.type === 'decision' &&
+                            event.payload.phase === 'candidate_visual_review',
+                    )?.payload.coverageGap,
+            ).toBe(CandidateVisualCoverageGap.WindowTrimmed);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it.each([
+        { label: 'a first-party request block', rule: '||example.test/ads/banner.js^' },
+        {
+            label: 'a scriptlet',
+            rule: "example.test#%#//scriptlet('set-constant', 'adsEnabled', 'false')",
+        },
+        {
+            label: 'a block of a host outside the reported site',
+            rule: THIRD_PARTY_NETWORK_RULE,
+            reportedPageUrl: REPORTED_PAGE_URL,
+        },
+    ])('verifies a clean window for $label', async ({ rule, reportedPageUrl }) => {
+        // None of them acts only on the elements a window is measured around, yet the first
+        // screens stand for the page: an ad missing from them is taken as gone, and breakage below
+        // the window goes unseen rather than sending every long page to manual review.
+        const root = mkdtempSync(join(tmpdir(), 'candidate-visual-review-window-reach-'));
+        const recorder = new TraceRecorder({ runId: 'visual-review', issueNumber: 3, mode: 'fix' });
+        const { vision } = makeProvider(cleanWindowReview(true));
+        try {
+            const options = windowedOptions(root, vision, recorder, rule);
+            options.reportedPageUrl = reportedPageUrl ?? options.reportedPageUrl;
+
+            const result = await reviewCandidateVisually(options);
+
+            expect(result.review).toMatchObject({ verdict: 'verified', coverageComplete: true });
+            expect(result.review.coverageGap).toBeUndefined();
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it('refuses the coverage of a review whose AFTER tiles vision could not read', async () => {
+        // A tile the model could not read inventories nothing, so a clean synthesis would rest on
+        // pixels nobody saw.
+        const root = mkdtempSync(join(tmpdir(), 'candidate-visual-review-unread-'));
+        const recorder = new TraceRecorder({ runId: 'visual-review', issueNumber: 3, mode: 'fix' });
+        const { vision } = batchAndSynthesisProvider(
+            (labelledIds) => ({
+                coverageObserved: !labelledIds.includes('after-tile-1'),
+                symptomScope: 'The advertising strip above the article heading.',
+                instances: labelledIds.includes('before-tile-1')
+                    ? [
+                          {
+                              artifactId: 'before-tile-1',
+                              landmark: 'Above the article heading.',
+                              description: 'An advertising strip.',
+                          },
+                      ]
+                    : [],
+                observedDamage: [],
+                rationale: 'Every supplied image was inventoried.',
+            }),
+            resolvedFinalOutput(),
+        );
+        try {
+            const result = await reviewCandidateVisually(makeOptions(root, vision, recorder));
+
+            expect(result.review).toMatchObject({
+                verdict: 'inconclusive',
+                coverageComplete: false,
+                coverageGap: CandidateVisualCoverageGap.ImagesUnread,
+            });
         } finally {
             rmSync(root, { recursive: true, force: true });
         }

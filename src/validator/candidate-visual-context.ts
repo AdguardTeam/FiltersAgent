@@ -213,6 +213,11 @@ export interface CandidateVisualTileInventory {
     coverageObserved: boolean;
 
     /**
+     * Whether the runner dropped an AFTER observation cited on an image its request did not carry.
+     */
+    citationDropped: boolean;
+
+    /**
      * Every model-observed occurrence tied to a runner-owned tile.
      */
     instances: CandidateVisualInventoryInstance[];
@@ -379,6 +384,7 @@ export function combineStateInventories(
     return {
         coverageObserved:
             inventories.length > 0 && inventories.every((inventory) => inventory.coverageObserved),
+        citationDropped: inventories.some((inventory) => inventory.citationDropped),
         instances,
         observations: inventories.flatMap((inventory) => inventory.observations),
     };

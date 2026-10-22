@@ -146,12 +146,25 @@ export interface CandidateVisualEvidence {
      *
      * Short of it, the review records the inspected window as the reason of its overview plan.
      */
-    beforeDocumentCoverageComplete?: boolean;
+    beforeDocumentCoverageComplete: boolean;
 
     /**
      * Whether the runner proved that after tiles cover the complete document.
      */
-    afterDocumentCoverageComplete?: boolean;
+    afterDocumentCoverageComplete: boolean;
+
+    /**
+     * Whether the before capture kept only the first rows of its window that fit the tile limit.
+     *
+     * The after capture replays the span the before capture kept, so only this flag tells that the
+     * window the review answers for is shorter than the one measured around the target.
+     */
+    beforeWindowTrimmed: boolean;
+
+    /**
+     * Whether the after capture kept only the first rows of its window that fit the tile limit.
+     */
+    afterWindowTrimmed: boolean;
 
     /**
      * Document extent the before full-page overview spans, when the capture measured it.

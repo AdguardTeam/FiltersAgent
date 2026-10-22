@@ -263,11 +263,10 @@ async function inventoryImages(
         });
     }
     // A dropped AFTER instance may be advertising the candidate left, miscited: with it gone the
-    // synthesis could pass the candidate, so this request no longer counts as observed coverage and
-    // the review stays inconclusive. A dropped BEFORE instance only weakens the reproduction.
-    const coverageObserved =
-        output.coverageObserved &&
-        (request.state === CaptureState.Before || droppedInstances.length === 0);
+    // synthesis could pass the candidate, so the runner refuses the review's coverage for it and the
+    // review stays inconclusive. A dropped BEFORE instance only weakens the reproduction.
+    const coverageObserved = output.coverageObserved;
+    const citationDropped = request.state === CaptureState.After && droppedInstances.length > 0;
     const observedDamage: CandidateVisualDamageEntry[] = boundDamage.map((entry) => ({
         artifactId: entry.artifactId,
         description:
@@ -286,11 +285,13 @@ async function inventoryImages(
         {
             model,
             coverageObserved,
+            citationDropped,
             instanceCount: instances.length,
         },
     );
     return {
         coverageObserved,
+        citationDropped,
         instances,
         observations: [
             {
@@ -474,10 +475,11 @@ export function plannedFullPageOverviewInventory(
         reason: provenance.reason,
     });
     if (provenance.reason === null) {
-        return { coverageObserved: true, instances: [], observations: [] };
+        return { coverageObserved: true, citationDropped: false, instances: [], observations: [] };
     }
     return {
         coverageObserved: true,
+        citationDropped: false,
         instances: [],
         observations: [
             {

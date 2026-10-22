@@ -47,7 +47,7 @@ export const FULL_PAGE_TILE_LIMIT = 48;
  * the default sweep would learn below, it has already learned above. Symptoms at a known depth are
  * unaffected: the selector-derived window is exempt from the cap by design.
  */
-const DEFAULT_FULL_PAGE_WINDOW_SCREENS = 5;
+export const DEFAULT_FULL_PAGE_WINDOW_SCREENS = 5;
 
 /**
  * Stable prefix identifying the sole technical failure eligible for one tiled-capture retry.
@@ -493,10 +493,12 @@ async function captureFullPageTileAttempt(
  * Validate an optional caller-supplied document-space vertical span for bounded tile capture.
  *
  * Unknown shapes degrade to a full-document plan instead of failing the capture: the window is a
- * cost optimization, never a correctness gate.
+ * cost optimization, never a correctness gate. A top span is kept only when it ends above the span
+ * itself; any other is dropped with the window left as it is.
  *
  * @param value - Raw tool argument candidate.
- * @returns Exact span with `fromY` strictly below `toY`, or undefined when unusable.
+ * @returns Exact span with `fromY` strictly below `toY`, and its top span when one is usable, or
+ *   undefined when unusable.
  */
 export function parseTileWindowArg(value: unknown): FullPageTileWindow | undefined {
     if (!value || typeof value !== 'object') {
@@ -515,7 +517,10 @@ export function parseTileWindowArg(value: unknown): FullPageTileWindow | undefin
     ) {
         return undefined;
     }
-    return { fromY, toY };
+    const topToY = candidate.topToY;
+    return typeof topToY === 'number' && Number.isFinite(topToY) && topToY > 0 && topToY < fromY
+        ? { fromY, toY, topToY }
+        : { fromY, toY };
 }
 
 /**

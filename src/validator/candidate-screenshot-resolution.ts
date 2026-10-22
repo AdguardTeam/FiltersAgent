@@ -1,7 +1,12 @@
 import { realpathSync, statSync } from 'node:fs';
 import { isAbsolute, relative, sep } from 'node:path';
 import type { ArtifactRef } from '../types/trace';
-import { ScreenshotArtifactType, type FullPageTileCoverage } from '../types/validation';
+import { tileWindowSpans } from '../browser/full-page-tile-plan';
+import {
+    ScreenshotArtifactType,
+    type FullPageTileCoverage,
+    type FullPageTileWindow,
+} from '../types/validation';
 import type {
     CandidateVisualDocumentSize,
     CandidateVisualEvidenceImage,
@@ -38,6 +43,11 @@ export interface ResolvedTileCoverage {
      * Short of it, the review answers only for the window the tiles cover.
      */
     documentComplete: boolean;
+
+    /**
+     * Whether the capture kept only the first rows of its window that fit the tile limit.
+     */
+    windowTrimmed: boolean;
 
     /**
      * Document extent the capture measured, absent when the phase recorded no tile coverage.
@@ -114,42 +124,22 @@ export function resolveScreenshot(
 }
 
 /**
- * Determine whether tile rectangles mechanically cover the complete declared document.
+ * Determine whether tile rectangles continuously cover one vertical span across the document width.
  *
  * @param coverage - Schema-validated runner tile metadata.
- * @returns Whether every horizontal band is continuously covered from left to right.
+ * @param span - Document-space span the tiles must cover.
+ * @returns Whether every horizontal band of the span is covered from left to right.
  */
-function tilesCoverDocument(coverage: FullPageTileCoverage): boolean {
-    if (
-        coverage.documentWidth <= 0 ||
-        coverage.documentHeight <= 0 ||
-        coverage.tiles.length === 0
-    ) {
-        return false;
-    }
-    if (
-        coverage.tiles.some(
-            (tile, index) =>
-                tile.index !== index ||
-                tile.x + tile.width > coverage.documentWidth ||
-                tile.y + tile.height > coverage.documentHeight,
-        )
-    ) {
-        return false;
-    }
-    // A bounded capture proves continuous coverage over its recorded window instead of the whole
-    // document, and the review answers for that window alone; the overview is only its map.
-    const coverageTop = coverage.window ? coverage.window.fromY : 0;
-    const coverageBottom = coverage.window ? coverage.window.toY : coverage.documentHeight;
-    if (coverageBottom <= coverageTop) {
+function tilesCoverSpan(coverage: FullPageTileCoverage, span: FullPageTileWindow): boolean {
+    if (span.toY <= span.fromY) {
         return false;
     }
     const yBoundaries = [
-        coverageTop,
-        coverageBottom,
+        span.fromY,
+        span.toY,
         ...coverage.tiles.flatMap((tile) => [tile.y, tile.y + tile.height]),
     ]
-        .filter((value) => value >= coverageTop && value <= coverageBottom)
+        .filter((value) => value >= span.fromY && value <= span.toY)
         .sort((left, right) => left - right);
     const uniqueYBoundaries = [...new Set(yBoundaries)];
     for (let index = 0; index < uniqueYBoundaries.length - 1; index += 1) {
@@ -177,6 +167,40 @@ function tilesCoverDocument(coverage: FullPageTileCoverage): boolean {
 }
 
 /**
+ * Determine whether tile rectangles mechanically cover the complete declared capture scope.
+ *
+ * @param coverage - Schema-validated runner tile metadata.
+ * @returns Whether every span of the recorded window, or the whole document without one, is
+ *   continuously covered from left to right.
+ */
+function tilesCoverDocument(coverage: FullPageTileCoverage): boolean {
+    if (
+        coverage.documentWidth <= 0 ||
+        coverage.documentHeight <= 0 ||
+        coverage.tiles.length === 0
+    ) {
+        return false;
+    }
+    if (
+        coverage.tiles.some(
+            (tile, index) =>
+                tile.index !== index ||
+                tile.x + tile.width > coverage.documentWidth ||
+                tile.y + tile.height > coverage.documentHeight,
+        )
+    ) {
+        return false;
+    }
+    // A bounded capture proves continuous coverage over its recorded window instead of the whole
+    // document, and the review answers for that window alone; the overview is only its map. A
+    // window with a top span proves both spans and nothing of the gap between them.
+    const spans = coverage.window
+        ? tileWindowSpans(coverage.window)
+        : [{ fromY: 0, toY: coverage.documentHeight }];
+    return spans.every((span) => tilesCoverSpan(coverage, span));
+}
+
+/**
  * Resolve every declared tile through the runner artifact registry and validate page coverage.
  *
  * @param coverage - Optional schema-validated coverage metadata from one phase.
@@ -190,7 +214,7 @@ export function resolveTileCoverage(
     artifactsDir: string,
 ): ResolvedTileCoverage {
     if (!coverage) {
-        return { tiles: [], complete: false, documentComplete: false };
+        return { tiles: [], complete: false, documentComplete: false, windowTrimmed: false };
     }
     const tiles = coverage.tiles.map((tile) => {
         const resolved = resolveScreenshot(
@@ -210,10 +234,18 @@ export function resolveTileCoverage(
         };
     });
     const map = coverage.map;
+    // A window measured around the target of a short page can reach both of its ends, and its
+    // tiles then cover the document as a capture without a window would.
+    const windowSpansDocument =
+        !coverage.window ||
+        (coverage.window.topToY === undefined &&
+            coverage.window.fromY <= 0 &&
+            coverage.window.toY >= coverage.documentHeight);
     return {
         tiles,
         complete: coverage.complete && tilesCoverDocument(coverage),
-        documentComplete: coverage.complete && !coverage.window && tilesCoverDocument(coverage),
+        documentComplete: coverage.complete && windowSpansDocument && tilesCoverDocument(coverage),
+        windowTrimmed: coverage.windowTrimmed === true,
         document: { width: coverage.documentWidth, height: coverage.documentHeight },
         ...(map === undefined
             ? {}

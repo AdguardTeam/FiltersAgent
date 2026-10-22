@@ -17,6 +17,7 @@ import {
     FullPageOverviewMode,
     type CandidateVisualFullPageOverviewEvidence,
 } from '../types/full-page-overview-evidence';
+import type { FullPageTileWindow } from '../types/validation';
 import type {
     CandidateVisualDocumentSize,
     CandidateVisualEvidenceImage,
@@ -133,11 +134,14 @@ export interface CandidateVisualOverviewPlan {
 }
 
 /**
- * Say which document range the original-resolution tiles inspected.
+ * Say which document ranges the original-resolution tiles inspected.
+ *
+ * Tiles that overlap or touch form one range; a window with a top span leaves a gap between two,
+ * and the clause names both rather than claim the gap was inspected.
  *
  * @param tiles - Ordered original-resolution tiles of the page state.
  * @param document - Document extent, when the capture measured it.
- * @returns The inspected range, as a clause.
+ * @returns The inspected ranges, as a clause.
  */
 function inspectedTiles(
     tiles: readonly CandidateVisualEvidenceTile[],
@@ -146,9 +150,18 @@ function inspectedTiles(
     if (tiles.length === 0) {
         return 'no original-resolution tiles were inspected';
     }
+    const ranges: FullPageTileWindow[] = [];
+    for (const tile of [...tiles].sort((left, right) => left.y - right.y)) {
+        const last = ranges.at(-1);
+        if (last !== undefined && tile.y <= last.toY) {
+            last.toY = Math.max(last.toY, tile.y + tile.height);
+        } else {
+            ranges.push({ fromY: tile.y, toY: tile.y + tile.height });
+        }
+    }
     return (
-        `original-resolution tiles from y=${Math.min(...tiles.map((tile) => tile.y))} to ` +
-        `y=${Math.max(...tiles.map((tile) => tile.y + tile.height))}` +
+        `original-resolution tiles from ` +
+        ranges.map((range) => `y=${range.fromY} to y=${range.toY}`).join(' and from ') +
         (document === undefined ? '' : ` of ${document.height} px`) +
         ' were inspected'
     );

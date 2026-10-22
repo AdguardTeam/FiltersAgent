@@ -10,6 +10,7 @@ import {
 } from './full-page-overview-evidence';
 import { CandidateVisualInstanceSchema, MAX_RATIONALE_CHARS } from './candidate-visual-instance';
 import { CandidateVisualSettlementSchema } from './candidate-visual-settlement';
+import { CANDIDATE_VISUAL_COVERAGE_GAP_VALUES } from './candidate-visual-coverage-gap';
 import {
     CandidateNetworkVerdict,
     CandidateNetworkVerificationSchema,
@@ -264,7 +265,8 @@ export const CandidateVisualIntegrityBasisSchema = v.picklist(
 );
 
 /**
- * Untrusted semantic output accepted directly from the visual model.
+ * Semantic review fields the verdict is derived from: the visual model's untrusted answers, and
+ * `coverageComplete`, which the runner sets from its tile proofs.
  *
  * Runner-bound artifact identifiers, candidate hashes, and the derived verdict are intentionally
  * excluded from this schema.
@@ -301,6 +303,8 @@ export const CandidateVisualReviewSchema = v.pipe(
         symptomScope: SymptomScopeSchema,
         adLayoutResidue: CandidateVisualAdLayoutResidueSchema,
         coverageComplete: v.boolean(),
+        // Why the runner refused the coverage; absent when it accepted it or never judged it.
+        coverageGap: v.optional(v.picklist(CANDIDATE_VISUAL_COVERAGE_GAP_VALUES)),
         beforeInstances: v.pipe(
             v.array(CandidateVisualInstanceSchema),
             v.maxLength(MAX_VISUAL_INSTANCES),
@@ -341,6 +345,7 @@ export const CandidateVisualReviewSchema = v.pipe(
         const network = review.networkVerification;
         return (
             review.verdict === deriveCandidateVisualVerdict(review, scope, network) &&
+            (review.coverageGap === undefined || !review.coverageComplete) &&
             // A review written before the bases existed carries none and is left alone; one that
             // states a basis must state the basis its own observations, scope and network
             // verification produce, so the annotation a maintainer reads can never disagree with

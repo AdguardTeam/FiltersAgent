@@ -88,11 +88,14 @@ export const FullPageTileSchema = v.object({
  * Document-space vertical span a bounded tile capture was restricted to.
  *
  * Absent means the capture planned the whole document; present scopes every completeness claim to
- * the recorded region (the candidate symptom neighborhood), never to the whole page.
+ * the recorded region (the candidate symptom neighborhood), never to the whole page. `topToY` adds
+ * a second span from the top of the page down to it, kept apart from the first when the gap between
+ * them would cost tiles nobody reviews.
  */
 export const FullPageTileWindowSchema = v.strictObject({
     fromY: v.pipe(v.number(), v.minValue(0)),
     toY: v.pipe(v.number(), v.minValue(0)),
+    topToY: v.optional(v.pipe(v.number(), v.minValue(0))),
 });
 
 /**

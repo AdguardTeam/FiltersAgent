@@ -493,6 +493,10 @@ function makeOptions(
             afterTiles: tiles(CaptureState.After),
             beforeCoverageComplete: true,
             afterCoverageComplete: true,
+            beforeDocumentCoverageComplete: true,
+            afterDocumentCoverageComplete: true,
+            beforeWindowTrimmed: false,
+            afterWindowTrimmed: false,
             ...(heights === undefined
                 ? {}
                 : {

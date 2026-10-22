@@ -1,10 +1,13 @@
 /**
  * The document-space window a validation phase tiles around the candidate's target elements.
  */
+import { DEFAULT_FULL_PAGE_WINDOW_SCREENS } from '../browser/full-page-tiles';
 import type { TrustedPageEvaluator } from '../browser/trusted-page-evaluator';
+import { RuleKind, normalizeRule } from '../repo/rule-normalizer';
 import type { TraceRecorder } from '../tracer/trace-recorder';
 import { TraceEventType } from '../types/trace';
 import type { FullPageTileWindow } from '../types/validation';
+import { CandidateNetworkScope, deriveCandidateNetworkScope } from './candidate-network-scope';
 
 /**
  * Build the in-page expression measuring the document-space vertical span of every rendered match.
@@ -87,4 +90,45 @@ export async function measureElementTileWindow(
         });
     }
     return undefined;
+}
+
+/**
+ * Whether a candidate's tile window must also cover the first screens of the page.
+ *
+ * A request block other than one of a host outside the reported site can break the page anywhere,
+ * not only around the ad element its window is measured at. Its review takes the first screens a
+ * default capture inspects as the page, the way it does for a candidate with no measurable target,
+ * so breakage at the top of the page is seen.
+ *
+ * @param candidateRule - Candidate under validation.
+ * @param reportedUrl - Trusted reported page URL.
+ * @returns Whether the window must also cover the first screens.
+ */
+export function tileWindowStartsAtTop(candidateRule: string, reportedUrl: string): boolean {
+    return (
+        normalizeRule(candidateRule).kind === RuleKind.Network &&
+        deriveCandidateNetworkScope(candidateRule, reportedUrl) !==
+            CandidateNetworkScope.ThirdPartyHostBlock
+    );
+}
+
+/**
+ * Add the first screens of the page to a window measured around the target.
+ *
+ * A target within the first screens joins them in one span from the top. A target below them keeps
+ * its own span, and the first screens become the window's top span, so the gap between them costs
+ * no tiles and a deep target does not run into the tile limit.
+ *
+ * @param window - Window measured around the target.
+ * @param viewportHeight - Current viewport height, the height of one screen.
+ * @returns The window covering the first screens and the target.
+ */
+export function windowFromPageTop(
+    window: FullPageTileWindow,
+    viewportHeight: number,
+): FullPageTileWindow {
+    const firstScreensBottom = DEFAULT_FULL_PAGE_WINDOW_SCREENS * viewportHeight;
+    return window.fromY <= firstScreensBottom
+        ? { fromY: 0, toY: Math.max(window.toY, firstScreensBottom) }
+        : { fromY: window.fromY, toY: window.toY, topToY: firstScreensBottom };
 }

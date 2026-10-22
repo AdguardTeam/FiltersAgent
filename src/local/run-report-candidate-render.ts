@@ -16,6 +16,7 @@ import {
     CandidateVisualSymptomBasis,
 } from '../types/candidate-visual-review';
 import { FullPageOverviewMode } from '../types/full-page-overview-evidence';
+import { CandidateVisualCoverageGap } from '../types/candidate-visual-coverage-gap';
 import type {
     CandidateNetworkVerification,
     PhaseHostRequests,
@@ -268,12 +269,25 @@ const TILE_WINDOW_ONLY_MODES: readonly FullPageOverviewMode[] = [
 ];
 
 /**
+ * Why the runner refused a review's coverage, as the coverage line says it.
+ */
+const COVERAGE_GAP_TEXT: Record<CandidateVisualCoverageGap, string> = {
+    [CandidateVisualCoverageGap.TilesIncomplete]: 'the tiles do not cover their span',
+    [CandidateVisualCoverageGap.WindowTrimmed]: 'the tile limit cut the window short',
+    [CandidateVisualCoverageGap.ImagesUnread]: 'vision did not read every image',
+    [CandidateVisualCoverageGap.CitationDropped]:
+        'an AFTER observation cited an image its request did not carry',
+};
+
+/**
  * Say what the vision review actually looked at across the page.
  *
  * The review reads detail only from the tiles, so when they cover a window of the document it saw
  * only that window, however complete the window's own coverage proof is. Reporting `complete` there
  * would tell a maintainer the whole page was inspected, so the line says what was inspected instead
- * and carries the plan's reason — which names the inspected document range — beside it.
+ * and carries the plan's reason — which names the inspected document range — beside it. When the
+ * runner refused the coverage, the line says why, so a clean review that ended inconclusive is not
+ * read as one the window passed.
  *
  * @param review - Runner-bound visual review being rendered.
  * @returns The coverage value rendered after the label.
@@ -281,17 +295,21 @@ const TILE_WINDOW_ONLY_MODES: readonly FullPageOverviewMode[] = [
 function renderFullPageCoverage(
     review: NonNullable<FixRunResult['candidateVisualReview']>,
 ): string {
+    const refused =
+        review.coverageGap === undefined
+            ? ''
+            : `, refused: ${COVERAGE_GAP_TEXT[review.coverageGap]}`;
     const evidence = review.fullPageOverviewEvidence;
     const windowed = [evidence?.before, evidence?.after].filter(
         (side) => side !== undefined && TILE_WINDOW_ONLY_MODES.includes(side.mode),
     );
     if (windowed.length === 0) {
-        return `\`${review.coverageComplete ? 'complete' : 'incomplete'}\``;
+        return `\`${review.coverageComplete ? 'complete' : 'incomplete'}\`${refused}`;
     }
     const reasons = [...new Set(windowed.map((side) => side?.reason ?? ''))]
         .join(' ')
         .slice(0, MAX_OVERVIEW_OMISSION_REASON_CHARS);
-    return `\`tile window only\` — ${reasons}`;
+    return `\`tile window only\`${refused} — ${reasons}`;
 }
 
 /**

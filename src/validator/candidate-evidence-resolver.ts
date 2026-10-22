@@ -44,23 +44,13 @@ export interface ResolveCandidateVisualEvidenceOptions {
 
 /**
  * Mechanically resolved before/after evidence for candidate visual review: the evidence the review
- * reads, with the factual record it came from and both document-coverage proofs always measured.
+ * reads, with the factual record it came from.
  */
 export interface ResolvedCandidateVisualEvidence extends CandidateVisualEvidence {
     /**
      * Schema-validated factual browser record produced by the validation runner.
      */
     factualValidation: FactualValidationResult;
-
-    /**
-     * Whether runner metadata and resolved tiles cover the complete before document.
-     */
-    beforeDocumentCoverageComplete: boolean;
-
-    /**
-     * Whether runner metadata and resolved tiles cover the complete after document.
-     */
-    afterDocumentCoverageComplete: boolean;
 }
 
 /**
@@ -191,6 +181,8 @@ export function resolveCandidateVisualEvidence(
         afterCoverageComplete: afterTileCoverage.complete,
         beforeDocumentCoverageComplete: beforeTileCoverage.documentComplete,
         afterDocumentCoverageComplete: afterTileCoverage.documentComplete,
+        beforeWindowTrimmed: beforeTileCoverage.windowTrimmed,
+        afterWindowTrimmed: afterTileCoverage.windowTrimmed,
         beforeDocument: beforeTileCoverage.document,
         afterDocument: afterTileCoverage.document,
         ...(beforeTileCoverage.map === undefined

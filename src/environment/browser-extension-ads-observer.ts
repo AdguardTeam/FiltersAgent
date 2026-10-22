@@ -35,6 +35,7 @@ import {
     type StructuralSnapshot,
 } from '../types/validation';
 import { resolveValidatedSelector } from '../validator/candidate-selector';
+import { tileWindowStartsAtTop } from '../validator/element-tile-window';
 import { deriveCandidateArtifactExecutionSuffix } from '../types/candidate-artifact-identity';
 import {
     EnvironmentAdapterLimitationCode,
@@ -55,11 +56,7 @@ import {
     persistFactualValidation,
     withExtensionRuleFacts,
 } from './extension-phase-records';
-import {
-    assembleObservedPhase,
-    tileCaptureComplete,
-    type ObservedExtensionPhase,
-} from './extension-phase-capture';
+import { assembleObservedPhase, type ObservedExtensionPhase } from './extension-phase-capture';
 import {
     failedCandidateChecks,
     reviewedPhase,
@@ -187,6 +184,12 @@ export class BrowserExtensionAdsObserver {
             trustedPageEvaluator,
             materialize: async () => await materializePage(trustedPageEvaluator),
             ...(selector ? { adElementSelector: selector } : {}),
+            ...(tileWindowStartsAtTop(
+                this.options.candidateRule,
+                this.options.trustedValidationContext.reportedUrl,
+            )
+                ? { tileWindowFromTop: true }
+                : {}),
             ...(input.phase === PhaseLabel.C && rememberedWindow
                 ? { tileWindow: rememberedWindow }
                 : {}),
@@ -604,10 +607,6 @@ export class BrowserExtensionAdsObserver {
                 validatedSelector: selector,
                 ruleKind: normalizeRule(this.options.candidateRule).kind,
                 adElementStatus: factual.adElementStatus,
-                captureCoverage: {
-                    before: tileCaptureComplete(control.result),
-                    after: tileCaptureComplete(candidatePhase.result),
-                },
             }),
             ...(domChecks.length > 0 ? { domChecks } : {}),
             artifactsDir: this.options.artifactsDir,

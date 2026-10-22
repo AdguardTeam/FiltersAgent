@@ -3,7 +3,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Page } from 'playwright-core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { FULL_PAGE_TILE_LIMIT, captureFullPageTiles } from '../../src/browser/full-page-tiles';
+import {
+    FULL_PAGE_TILE_LIMIT,
+    captureFullPageTiles,
+    parseTileWindowArg,
+} from '../../src/browser/full-page-tiles';
 import type { TraceRecorder } from '../../src/tracer/trace-recorder';
 import type { FullPageTileCoverage, FullPageTileWindow } from '../../src/types/validation';
 
@@ -109,5 +113,30 @@ describe('captureFullPageTiles', () => {
         expect(
             Math.max(...coverage.tiles.map((tile) => tile.y + tile.height)),
         ).toBeGreaterThanOrEqual(9_000);
+    });
+
+    it('tiles the first screens and a deep window apart, without the gap between them', async () => {
+        // A request block whose ad sits deep in a long page: tiling the gap down to the ad spent
+        // tiles nobody reviews and, past the limit, cut the window before it reached the ad.
+        const window = { fromY: 25_000, toY: 27_160, topToY: 5_400 };
+
+        // Two tiles per row: one span from the top down to the ad would pass the tile limit.
+        const coverage = await captureWindow(2_178, window);
+
+        expect(coverage.complete).toBe(true);
+        expect(coverage.windowTrimmed).toBeUndefined();
+        expect(coverage.window).toEqual(window);
+        for (const tile of coverage.tiles) {
+            expect(tile.y < 5_400 || tile.y + tile.height > 25_000).toBe(true);
+        }
+        expect(Math.min(...coverage.tiles.map((tile) => tile.y))).toBe(0);
+        expect(
+            Math.max(...coverage.tiles.map((tile) => tile.y + tile.height)),
+        ).toBeGreaterThanOrEqual(27_160);
+        // Phase C gets the window back through the screenshot tool and tiles the same rows.
+        const replayed = await captureWindow(2_178, parseTileWindowArg(coverage.window)!);
+        expect(replayed.tiles.map((tile) => [tile.x, tile.y])).toEqual(
+            coverage.tiles.map((tile) => [tile.x, tile.y]),
+        );
     });
 });
