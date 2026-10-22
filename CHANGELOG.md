@@ -10,6 +10,8 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-23
+
 ### Added
 
 - Added `LLM_API` / `llmApi` with `anthropic-messages` to run Claude with
@@ -314,6 +316,7 @@ The format is based on [Keep a Changelog], and this project adheres to
     - Benchmark — replays fixed historical issues and compares the agent's
       rules with the maintainers' fixes.
 
-[Unreleased]: https://github.com/AdguardTeam/FiltersAgent/compare/v1.0.1...HEAD
+[Unreleased]: https://github.com/AdguardTeam/FiltersAgent/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/AdguardTeam/FiltersAgent/compare/v1.0.1...v1.1.0
 [1.0.1]: https://github.com/AdguardTeam/FiltersAgent/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/AdguardTeam/FiltersAgent/releases/tag/v1.0.0
