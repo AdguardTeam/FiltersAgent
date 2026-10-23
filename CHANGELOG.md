@@ -16,7 +16,9 @@ The format is based on [Keep a Changelog], and this project adheres to
   unable to scroll being reported as verified: when the mouse wheel scrolls
   the unfiltered page and not the candidate page, the experiment fails the
   `page_scroll_preserved` check, and `apply_rule` returns `pageScroll` with
-  the `html` and `body` styles that hold the lock in each phase.
+  the `html` and `body` styles that hold the lock in each phase. When no rule
+  that stops the gate works, the agent may propose one `#$#` rule that hides
+  the gate and releases the lock.
 
 ## [1.1.0] - 2026-10-23
 
