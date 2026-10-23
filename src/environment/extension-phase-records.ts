@@ -12,12 +12,18 @@ import { join } from 'node:path';
 import type { TraceRecorder } from '../tracer/trace-recorder';
 import { TraceEventType } from '../types/trace';
 import { formatCandidateArtifactExecutionSuffix } from '../types/candidate-artifact-identity';
-import type {
-    FactualValidationResult,
-    PhaseResult,
-    RuleApplicationFact,
+import type { DomCheckRecord } from '../types/dom-check';
+import {
+    AdElementPresence,
+    PhaseLabel,
+    type FactualValidationResult,
+    type PhaseResult,
+    type RuleApplicationFact,
 } from '../types/validation';
+import { presenceFromStructuralSnapshot } from '../validator/structural-snapshot';
 import { phaseCapturedPageState } from '../validator/tile-coverage-proof';
+import type { TrustedValidationContext } from '../validator/trusted-validation-context';
+import type { ObservedExtensionPhase } from './extension-phase-capture';
 import {
     mapCandidateOverviews,
     type CandidateOverviewPair,
@@ -41,7 +47,7 @@ function extensionRuleFacts(rules: readonly string[]): RuleApplicationFact[] {
  * @param rules - Rules whose execution is proven by the adapter state.
  * @returns Phase result naming the applied rules for the candidate verdict.
  */
-export function withExtensionRuleFacts(result: PhaseResult, rules: readonly string[]): PhaseResult {
+function withExtensionRuleFacts(result: PhaseResult, rules: readonly string[]): PhaseResult {
     return {
         ...result,
         appliedRules: [...rules],
@@ -204,6 +210,92 @@ export function candidateScreenshotArtifacts(
                 (artifact) => artifact !== undefined,
             ),
         ].map((artifact) => artifact.artifactId),
+    };
+}
+
+/**
+ * The candidate target's presence in one phase, as the factual record states it.
+ *
+ * A candidate that names no element — a scriptlet, a network rule without `adElementSelector` —
+ * leaves the probe measuring `body`, which says nothing about the target: reporting it `visible`
+ * would tell the review and the model the target survived the candidate.
+ *
+ * @param observed - The phase's probe and whether it was bound to the candidate's selector.
+ * @returns The presence, `not_probed` for an unbound probe.
+ */
+function boundPresence(observed: ObservedExtensionPhase): AdElementPresence {
+    return observed.structureBoundToSelector
+        ? presenceFromStructuralSnapshot(observed.structure)
+        : AdElementPresence.NotProbed;
+}
+
+/**
+ * The three observed phases of one candidate experiment.
+ */
+export interface ObservedCandidatePhases {
+    /**
+     * The unfiltered control.
+     */
+    [PhaseLabel.A]: ObservedExtensionPhase;
+
+    /**
+     * The published baseline.
+     */
+    [PhaseLabel.B]: ObservedExtensionPhase;
+
+    /**
+     * The published baseline with the candidate applied.
+     */
+    [PhaseLabel.C]: ObservedExtensionPhase;
+}
+
+/**
+ * Build the factual record of one candidate experiment: each phase's executed rules, the target's
+ * presence before and after, and the structural probes the review weighs.
+ *
+ * @param phases - The three observed phases.
+ * @param context - Runner-bound target and repository baseline.
+ * @param candidateRule - Exact candidate applied in phase C.
+ * @param selector - The validated selector the probes measured; empty for none.
+ * @param domChecks - The attached DOM checks with what they returned in B and C; empty for none.
+ * @returns The factual record.
+ */
+export function candidateFactualRecord(
+    phases: ObservedCandidatePhases,
+    context: TrustedValidationContext,
+    candidateRule: string,
+    selector: string,
+    domChecks: DomCheckRecord[],
+): FactualValidationResult {
+    const { existingRules } = context;
+    const before = boundPresence(phases.B);
+    const after = boundPresence(phases.C);
+    return {
+        trustedValidationContext: {
+            reportedUrl: context.reportedUrl,
+            baselineHash: context.baselineHash,
+            existingRuleCount: existingRules.length,
+        },
+        phaseA: withExtensionRuleFacts(phases.A.result, []),
+        phaseB: withExtensionRuleFacts(phases.B.result, existingRules),
+        phaseC: withExtensionRuleFacts(phases.C.result, [...existingRules, candidateRule]),
+        validatedSelector: selector,
+        adElementStatus: {
+            selector,
+            phaseB: before,
+            phaseC: after,
+        },
+        structureFacts: {
+            before: phases.B.structure,
+            after: phases.C.structure,
+        },
+        ...(domChecks.length > 0 ? { domChecks } : {}),
+        summary: [
+            'Candidate experiment used adapter-owned Extension filtering states.',
+            `Before target presence: ${before}.`,
+            `After target presence: ${after}.`,
+            'Page safety remains a vision-owned decision.',
+        ].join('\n'),
     };
 }
 

@@ -18,22 +18,13 @@ import { materializePage } from '../validator/page-materialization';
 import { describePhaseNavigationFailure } from '../validator/experiment-navigation-failure';
 import { runPhase } from '../validator/phase-capture';
 import type { AdsEnvironmentPhaseObservationInput } from '../validator/phase-orchestrator';
-import {
-    presenceFromStructuralSnapshot,
-    probeStructuralSnapshot,
-} from '../validator/structural-snapshot';
+import { probeStructuralSnapshot } from '../validator/structural-snapshot';
 import {
     CandidateVisualVerdict,
     isCandidateVisualPageUsable,
     type CandidateVisualReview,
 } from '../types/candidate-visual-review';
-import {
-    AdElementPresence,
-    PhaseLabel,
-    type FactualValidationResult,
-    type FullPageTileWindow,
-    type StructuralSnapshot,
-} from '../types/validation';
+import { PhaseLabel, type FullPageTileWindow, type StructuralSnapshot } from '../types/validation';
 import { resolveValidatedSelector } from '../validator/candidate-selector';
 import { tileWindowStartsAtTop } from '../validator/element-tile-window';
 import { deriveCandidateArtifactExecutionSuffix } from '../types/candidate-artifact-identity';
@@ -50,36 +41,25 @@ import { measureDomChecks, pairDomCheckMeasurements } from './dom-check-runner';
 import type { BrowserExtensionAdsObserverOptions } from './browser-extension-ads-observer-options';
 import { probedBreakageSymptomPresent } from './breakage-symptom-reading';
 import {
+    candidateFactualRecord,
     candidateScreenshotArtifacts,
     environmentArtifact,
     phaseCaptureFailed,
     persistFactualValidation,
-    withExtensionRuleFacts,
 } from './extension-phase-records';
 import { assembleObservedPhase, type ObservedExtensionPhase } from './extension-phase-capture';
 import {
+    CandidateExperimentCheck,
     failedCandidateChecks,
+    pageScrollPreserved,
     reviewedPhase,
     selectorMatchedNothing,
     withoutBaselineSymptom,
+    type PageScrollComparison,
 } from './candidate-phase-checks';
+import { measurePageScroll } from './page-scroll-probe';
+import { TraceEventType } from '../types/trace';
 import type { DomCheckMeasurement, DomCheckRecord } from '../types/dom-check';
-
-/**
- * The candidate target's presence in one phase, as the factual record states it.
- *
- * A candidate that names no element — a scriptlet, a network rule without `adElementSelector` —
- * leaves the probe measuring `body`, which says nothing about the target: reporting it `visible`
- * would tell the review and the model the target survived the candidate.
- *
- * @param observed - The phase's probe and whether it was bound to the candidate's selector.
- * @returns The presence, `not_probed` for an unbound probe.
- */
-function boundPresence(observed: ObservedExtensionPhase): AdElementPresence {
-    return observed.structureBoundToSelector
-        ? presenceFromStructuralSnapshot(observed.structure)
-        : AdElementPresence.NotProbed;
-}
 
 /**
  * Common single-phase observer and compatibility response builder for Extension Ads.
@@ -251,7 +231,8 @@ export class BrowserExtensionAdsObserver {
             structure = await probeStructuralSnapshot(evaluator, targetSelector);
         }
         // Measured on the load the screenshots captured, and after every other read of the page: a
-        // check that holds the main thread can then cost only the checks after it.
+        // check that holds the main thread can then cost only the checks after it and the bounded
+        // wheel probe.
         const domChecks =
             input.phase === PhaseLabel.A || !this.options.domChecks
                 ? []
@@ -263,12 +244,29 @@ export class BrowserExtensionAdsObserver {
         if (input.phase === PhaseLabel.B) {
             this.baselineDomChecks = domChecks;
         }
+        // The wheel moves the page and the pointer may restyle it, so it turns after every capture
+        // and read of the phase.
+        const pageScroll = this.options.dependencies?.measurePageScroll
+            ? await this.options.dependencies.measurePageScroll(input)
+            : await measurePageScroll(
+                  page,
+                  evaluator,
+                  this.options.logger.child({ phase: input.phase }),
+              );
+        // Recorded as the phase completes, so an experiment that stops before the candidate phase
+        // keeps what it measured, and an unmeasured page reads as null.
+        this.options.recorder.record(TraceEventType.Decision, {
+            phase: input.phase,
+            check: CandidateExperimentCheck.PageScrollPreserved,
+            pageScroll,
+        });
         let observed = await assembleObservedPhase(
             {
                 result: phaseResult,
                 structure,
                 structureBoundToSelector: selector.length > 0,
                 interactionArtifact: this.interactionReplay?.artifactOf(input.phase),
+                pageScroll,
             },
             {
                 recorder: this.options.recorder,
@@ -536,44 +534,17 @@ export class BrowserExtensionAdsObserver {
         if (!control || !phaseA || !input.proof.candidateDigest) {
             throw new Error('Candidate phase requires complete A/B evidence and proof.');
         }
-        const existingRules = this.options.trustedValidationContext.existingRules;
-        const phaseAResult = withExtensionRuleFacts(phaseA.result, []);
-        const phaseBResult = withExtensionRuleFacts(control.result, existingRules);
-        const phaseCResult = withExtensionRuleFacts(candidatePhase.result, [
-            ...existingRules,
-            this.options.candidateRule,
-        ]);
         const selector = resolveValidatedSelector(
             this.options.candidateRule,
             this.options.adElementSelector,
         );
-        const factual: FactualValidationResult = {
-            trustedValidationContext: {
-                reportedUrl: this.options.trustedValidationContext.reportedUrl,
-                baselineHash: this.options.trustedValidationContext.baselineHash,
-                existingRuleCount: existingRules.length,
-            },
-            phaseA: phaseAResult,
-            phaseB: phaseBResult,
-            phaseC: phaseCResult,
-            validatedSelector: selector,
-            adElementStatus: {
-                selector,
-                phaseB: boundPresence(control),
-                phaseC: boundPresence(candidatePhase),
-            },
-            structureFacts: {
-                before: control.structure,
-                after: candidatePhase.structure,
-            },
-            ...(domChecks.length > 0 ? { domChecks } : {}),
-            summary: [
-                'Candidate experiment used adapter-owned Extension filtering states.',
-                `Before target presence: ${boundPresence(control)}.`,
-                `After target presence: ${boundPresence(candidatePhase)}.`,
-                'Page safety remains a vision-owned decision.',
-            ].join('\n'),
-        };
+        const factual = candidateFactualRecord(
+            { A: phaseA, B: control, C: candidatePhase },
+            this.options.trustedValidationContext,
+            this.options.candidateRule,
+            selector,
+            domChecks,
+        );
         const executionSuffix = deriveCandidateArtifactExecutionSuffix(input.phaseTokenId);
         const validationArtifact = persistFactualValidation(
             factual,
@@ -626,6 +597,19 @@ export class BrowserExtensionAdsObserver {
         const judged = reviewedPhase(candidatePhase, visual.review);
         this.phases.set(PhaseLabel.C, judged);
         const reviewVerified = visual.review.verdict === CandidateVisualVerdict.Verified;
+        const pageScroll: PageScrollComparison = {
+            unfiltered: phaseA.pageScroll,
+            baseline: control.pageScroll,
+            candidate: judged.pageScroll,
+        };
+        const scrollPreserved = pageScrollPreserved(pageScroll);
+        // Next to the measurements each phase recorded, so a pass, a skip and an unmeasured page
+        // can be told apart afterwards.
+        this.options.recorder.record(TraceEventType.Decision, {
+            phase: PhaseLabel.C,
+            check: CandidateExperimentCheck.PageScrollPreserved,
+            passed: scrollPreserved,
+        });
         const failedChecks = failedCandidateChecks({
             navigationVerified: judged.result.error === undefined,
             symptomPresent: this.symptomPresentInPhase(judged),
@@ -634,11 +618,16 @@ export class BrowserExtensionAdsObserver {
             // captures show is explained by that difference rather than by the candidate. The
             // divergence stays in the evidence; only the claim of proof is withdrawn.
             preparedAlike: this.interactionReplay?.preparedAlike() ?? true,
+            scrollPreserved,
         });
+        // Only a verified review has its verdict withdrawn by a check. An undecided review leaves
+        // the symptom and the page open, and naming those checks would tell the model the symptom
+        // stayed and the page broke.
+        const reportedChecks = reviewVerified ? failedChecks : [];
         const screenshots = candidateScreenshotArtifacts(
             this.options.recorder,
-            phaseBResult,
-            phaseCResult,
+            factual.phaseB,
+            factual.phaseC,
         );
         // Every field is named: the binding lands in a strict schema, so a spread of a wider record
         // would compile and fail the phase-completion parse.
@@ -670,10 +659,12 @@ export class BrowserExtensionAdsObserver {
             validationArtifactId: validationArtifact.artifactId,
             visualReview: visual.review,
             visualReviewArtifactId: visual.artifactId,
-            // Only a verified review has its verdict withdrawn by a check. An undecided review
-            // leaves the symptom and the page open, and naming those checks would tell the model
-            // the symptom stayed and the page broke.
-            failedCandidateChecks: reviewVerified ? failedChecks : [],
+            failedCandidateChecks: reportedChecks,
+            // What the wheel did in each phase, with the html and body styles that locked the
+            // page, so the agent can find the lock its candidate left.
+            ...(reportedChecks.includes(CandidateExperimentCheck.PageScrollPreserved)
+                ? { pageScroll }
+                : {}),
             ...(this.interactionReplay ? { revealSteps: this.interactionReplay.projection() } : {}),
         };
         return this.phaseCompletion(

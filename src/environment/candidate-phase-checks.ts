@@ -18,6 +18,7 @@ import { ReporterSymptomPresence } from '../types/reporter-symptom-presence';
 import type { StructuralSnapshot } from '../types/validation';
 import { isBreakageSymptom, type SymptomKind } from '../validator/symptom-rubric';
 import type { ObservedExtensionPhase } from './extension-phase-capture';
+import type { PageScrollMeasurement } from './page-scroll-probe';
 
 /**
  * A runner check a candidate experiment must pass on top of a verified paired review.
@@ -43,6 +44,11 @@ export const CandidateExperimentCheck = {
      * The reveal steps put the candidate phase into the same state as the baseline.
      */
     RevealStepsPreparedAlike: 'reveal_steps_prepared_alike',
+
+    /**
+     * A page the mouse wheel scrolls without filtering still scrolls with the candidate.
+     */
+    PageScrollPreserved: 'page_scroll_preserved',
 } as const;
 
 /**
@@ -74,6 +80,34 @@ export interface CandidatePhaseCheckFacts {
      * Whether the reveal steps prepared the candidate phase like the baseline; true without steps.
      */
     preparedAlike: boolean;
+
+    /**
+     * Whether the candidate left the page scrolling where the unfiltered page scrolls.
+     */
+    scrollPreserved: boolean;
+}
+
+/**
+ * The wheel measurements of the three phases, which the agent reads to find the scroll lock its
+ * candidate left behind.
+ */
+export interface PageScrollComparison {
+    /**
+     * What the wheel did without filtering; null when the page could not be measured.
+     */
+    unfiltered: PageScrollMeasurement | null;
+
+    /**
+     * What the wheel did with the published lists. It decides nothing: a gate the lists provoke
+     * locks this page too, and its lock is still the candidate's to remove. It tells the agent
+     * whether the lock was there before the candidate. Null when the page could not be measured.
+     */
+    baseline: PageScrollMeasurement | null;
+
+    /**
+     * What the wheel did with the candidate applied; null when the page could not be measured.
+     */
+    candidate: PageScrollMeasurement | null;
 }
 
 /**
@@ -155,8 +189,38 @@ export function failedCandidateChecks(facts: CandidatePhaseCheckFacts): Candidat
         [CandidateExperimentCheck.CandidatePhaseSymptom, !facts.symptomPresent],
         [CandidateExperimentCheck.PageUsability, facts.pageUsable],
         [CandidateExperimentCheck.RevealStepsPreparedAlike, facts.preparedAlike],
+        [CandidateExperimentCheck.PageScrollPreserved, facts.scrollPreserved],
     ];
     return outcomes.filter(([, passed]) => !passed).map(([check]) => check);
+}
+
+/**
+ * Decide whether the candidate left the page scrolling where the unfiltered page scrolls.
+ *
+ * A rule that hides an anti-adblock gate's modal can leave the gate's scroll lock on `body`, and
+ * the screenshots of the locked page look clean. The check holds only where it can tell: the
+ * unfiltered page must have moved under the wheel, so a page shorter than the viewport, or one that
+ * takes the wheel for itself, passes. So does a candidate page with nothing to scroll, whose height
+ * came from what filtering removed; a lock keeps the height it clips, so it still counts. A
+ * candidate page fails when the wheel moved neither the document nor a container under the pointer;
+ * a scrolled container leaves the document's own answer open. A phase that could not be measured
+ * decides nothing, and the baseline decides nothing at all.
+ *
+ * @param scroll - The wheel measurements of the three phases.
+ * @returns False only when the unfiltered page scrolled and the candidate page, with content to
+ *   scroll, did not.
+ */
+export function pageScrollPreserved(scroll: PageScrollComparison): boolean {
+    const { unfiltered, candidate } = scroll;
+    if (
+        unfiltered === null ||
+        candidate === null ||
+        unfiltered.wheelScrolledPx === 0 ||
+        candidate.contentHeight <= candidate.viewportHeight
+    ) {
+        return true;
+    }
+    return candidate.wheelScrolledPx > 0 || candidate.innerContainerScrolled;
 }
 
 /**

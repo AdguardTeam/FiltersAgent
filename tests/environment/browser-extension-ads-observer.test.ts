@@ -33,6 +33,7 @@ import type { FullPageVisualCaptureResult } from '../../src/analyzer/full-page-c
 import { PhaseLabel, type StructuralSnapshot } from '../../src/types/validation';
 import { ReporterSymptomPresence } from '../../src/types/reporter-symptom-presence';
 import { BrowserExtensionAdsObserver } from '../../src/environment/browser-extension-ads-observer';
+import type { PageScrollMeasurement } from '../../src/environment/page-scroll-probe';
 import { runAdsEnvironmentExperiment } from '../../src/validator/phase-orchestrator';
 import { AdsEnvironmentExperimentVerdict } from '../../src/validator/ads-environment-experiment-result';
 import { deriveCandidateNetworkScope } from '../../src/validator/candidate-network-scope';
@@ -84,17 +85,36 @@ const PROFILE: ReproProfile = {
 };
 
 /**
- * Minimal artifact-registry recorder: exactly what environment artifact resolution reads.
+ * One event the recorder stub kept.
+ */
+interface RecordedTraceEvent {
+    /**
+     * The event type.
+     */
+    type: string;
+
+    /**
+     * The event payload.
+     */
+    payload: Record<string, unknown>;
+}
+
+/**
+ * Minimal recorder: the artifact registry environment artifact resolution reads, and the events.
  *
+ * @param events - Where recorded events are kept.
  * @returns Recorder stub holding registered artifacts.
  */
-function recorderStub(): TraceRecorder {
+function recorderStub(events: RecordedTraceEvent[] = []): TraceRecorder {
     const artifacts: Array<{ id: string; path: string; type: string; bytes: number }> = [];
     return {
         addArtifact: (artifact: { id: string; path: string; type: string; bytes: number }) => {
             artifacts.push(artifact);
         },
         getArtifacts: () => artifacts,
+        record: (type: string, payload: Record<string, unknown> = {}) => {
+            events.push({ type, payload });
+        },
     } as unknown as TraceRecorder;
 }
 
@@ -996,6 +1016,14 @@ const CLEAN_UNCLEAR_OUTPUT: CandidateVisualReviewModelOutput = {
 };
 
 /**
+ * The same review once it could call the page intact: it verifies the candidate.
+ */
+const CLEAN_INTACT_OUTPUT: CandidateVisualReviewModelOutput = {
+    ...CLEAN_UNCLEAR_OUTPUT,
+    pageIntegrity: 'intact',
+};
+
+/**
  * Filtering state each phase of the additive experiment is opened in.
  *
  * @param phase - Phase being opened.
@@ -1078,6 +1106,11 @@ interface ExtensionExperimentOptions {
      * Whether the browser captured a full-page overview in every phase; it did when omitted.
      */
     overviewCaptured?: boolean;
+
+    /**
+     * What the mouse wheel did to each phase's page; unmeasured when omitted.
+     */
+    pageScroll?: (phase: PhaseLabel) => PageScrollMeasurement | null;
 }
 
 /**
@@ -1113,6 +1146,11 @@ interface ExperimentSeams {
      * The hiding selector the observer reported as matching nothing on the baseline.
      */
     unmatchedBaselineSelector?: string | null;
+
+    /**
+     * Every event the experiment recorded in the run's trace.
+     */
+    traceEvents?: RecordedTraceEvent[];
 }
 
 /**
@@ -1136,7 +1174,7 @@ async function runExtensionExperiment(
     const overviewCaptured = options.overviewCaptured ?? true;
     const artifactsDir = mkdtempSync(join(tmpdir(), 'ads-observer-experiment-'));
     roots.push(artifactsDir);
-    const recorder = recorderStub();
+    const recorder = recorderStub(options.seen?.traceEvents);
     const candidateDigest = createHash('sha256').update(candidateRule).digest('hex');
     const actualContext = {
         kind: 'browser_extension' as const,
@@ -1216,6 +1254,7 @@ async function runExtensionExperiment(
                     antiAdblockDetected: false,
                 };
             },
+            measurePageScroll: async (input) => options.pageScroll?.(input.phase) ?? null,
             probeStructuralSnapshot: async (input, _evaluator, selector) => {
                 options.seen?.probedSelectors.push(selector);
                 return {
@@ -1636,7 +1675,7 @@ describe('an extension experiment over a selector the page cannot query', () => 
         const verified = await runExtensionExperiment(
             'sarkisozleri.bbs.tr#?#div[class]:has(> span:contains(Download))',
             {
-                modelOutput: { ...CLEAN_UNCLEAR_OUTPUT, pageIntegrity: 'intact' },
+                modelOutput: CLEAN_INTACT_OUTPUT,
                 probeSucceeded: false,
             },
         );
@@ -1648,11 +1687,10 @@ describe('an extension experiment behind reveal steps', () => {
     // hogtiehub.com (AdguardFilters #243399): the player sits behind an 18+ dialog, so every
     // phase must dismiss it before capturing or the review compares two dialogs.
     const RULE = 'sarkisozleri.bbs.tr#?#div[class]:has(> span:contains(Download))';
-    const intact = { ...CLEAN_UNCLEAR_OUTPUT, pageIntegrity: 'intact' as const };
 
     it('verifies the candidate when every phase was prepared by the same steps', async () => {
         const experiment = await runExtensionExperiment(RULE, {
-            modelOutput: intact,
+            modelOutput: CLEAN_INTACT_OUTPUT,
             probeSucceeded: false,
             reveal: { plan: ageDialogRevealPlan(), scripts: {} },
         });
@@ -1663,7 +1701,7 @@ describe('an extension experiment behind reveal steps', () => {
     it('withholds the verdict when the candidate phase was not prepared like the baseline', async () => {
         const seen: ExperimentSeams = { probedSelectors: [], inventoryPhases: [] };
         const experiment = await runExtensionExperiment(RULE, {
-            modelOutput: intact,
+            modelOutput: CLEAN_INTACT_OUTPUT,
             probeSucceeded: false,
             reveal: { plan: ageDialogRevealPlan(), scripts: { C: { targetMissing: true } } },
             seen,
@@ -1679,6 +1717,142 @@ describe('an extension experiment behind reveal steps', () => {
         expect(seen.applyRuleResult).toMatchObject({
             failedCandidateChecks: ['reveal_steps_prepared_alike'],
         });
+    });
+});
+
+/**
+ * One wheel measurement of a page whose content is taller than the viewport.
+ *
+ * @param wheelScrolledPx - How far the wheel moved the document.
+ * @param bodyClass - The class attribute of body; a non-empty one holds an overflow lock.
+ * @param contentHeight - Height of the page's content.
+ * @returns The measurement.
+ */
+function wheelMeasurement(
+    wheelScrolledPx: number,
+    bodyClass = '',
+    contentHeight = 5_000,
+): PageScrollMeasurement {
+    return {
+        wheelScrolledPx,
+        innerContainerScrolled: false,
+        contentHeight,
+        viewportHeight: 800,
+        html: { className: '', style: '', overflowY: 'visible', position: 'static' },
+        body: {
+            className: bodyClass,
+            style: '',
+            overflowY: bodyClass ? 'hidden' : 'visible',
+            position: 'static',
+        },
+    };
+}
+
+describe('an extension experiment over a gate that locks the page scroll', () => {
+    // An anti-adblock gate adds a class to body that sets overflow: hidden. Hiding only the modal
+    // leaves the lock, and the screenshots of the locked page look clean, so the review verifies.
+    const RULE = 'example.org##.ad-access-gate';
+
+    it('withholds the verdict from a rule that hides the gate and leaves the lock', async () => {
+        const seen: ExperimentSeams = { probedSelectors: [], inventoryPhases: [], traceEvents: [] };
+        const experiment = await runExtensionExperiment(RULE, {
+            modelOutput: CLEAN_INTACT_OUTPUT,
+            pageScroll: (phase) =>
+                phase === PhaseLabel.A ? wheelMeasurement(400) : wheelMeasurement(0, 'gate-open'),
+            seen,
+        });
+
+        expect(experiment.verdict).not.toBe('verified');
+        expect(experiment.phases.find((phase) => phase.phase === 'C')?.completion).toMatchObject({
+            candidateValidation: { verified: false },
+            visualReview: { verdict: 'verified' },
+        });
+        // The agent learns which check refused the rule, which class holds the lock, and that the
+        // published lists left the same lock before the candidate.
+        expect(seen.applyRuleResult).toMatchObject({
+            failedCandidateChecks: ['page_scroll_preserved'],
+            pageScroll: {
+                unfiltered: { wheelScrolledPx: 400 },
+                baseline: { wheelScrolledPx: 0, body: { className: 'gate-open' } },
+                candidate: {
+                    wheelScrolledPx: 0,
+                    body: { className: 'gate-open', overflowY: 'hidden' },
+                },
+            },
+        });
+    });
+
+    it('keeps every phase measurement in the trace, an unmeasured one included', async () => {
+        const seen: ExperimentSeams = { probedSelectors: [], inventoryPhases: [], traceEvents: [] };
+        await runExtensionExperiment(RULE, {
+            modelOutput: CLEAN_INTACT_OUTPUT,
+            pageScroll: (phase) => (phase === PhaseLabel.B ? null : wheelMeasurement(400)),
+            seen,
+        });
+
+        const scrollEvents = seen.traceEvents?.filter(
+            (event) => event.payload.check === 'page_scroll_preserved',
+        );
+        expect(scrollEvents).toEqual([
+            {
+                type: 'decision',
+                payload: {
+                    phase: 'A',
+                    check: 'page_scroll_preserved',
+                    pageScroll: wheelMeasurement(400),
+                },
+            },
+            {
+                type: 'decision',
+                payload: { phase: 'B', check: 'page_scroll_preserved', pageScroll: null },
+            },
+            {
+                type: 'decision',
+                payload: {
+                    phase: 'C',
+                    check: 'page_scroll_preserved',
+                    pageScroll: wheelMeasurement(400),
+                },
+            },
+            {
+                type: 'decision',
+                payload: { phase: 'C', check: 'page_scroll_preserved', passed: true },
+            },
+        ]);
+    });
+
+    it('verifies a rule that also removes the lock', async () => {
+        const seen: ExperimentSeams = { probedSelectors: [], inventoryPhases: [] };
+        const experiment = await runExtensionExperiment(RULE, {
+            modelOutput: CLEAN_INTACT_OUTPUT,
+            pageScroll: () => wheelMeasurement(400),
+            seen,
+        });
+
+        expect(experiment.verdict).toBe('verified');
+        expect(seen.applyRuleResult).not.toHaveProperty('pageScroll');
+    });
+
+    it('verifies a page the wheel cannot scroll even without filtering', async () => {
+        // A page shorter than the viewport, or one that takes the wheel for itself, has no scroll
+        // the candidate could have taken away.
+        const experiment = await runExtensionExperiment(RULE, {
+            modelOutput: CLEAN_INTACT_OUTPUT,
+            pageScroll: () => wheelMeasurement(0),
+        });
+
+        expect(experiment.verdict).toBe('verified');
+    });
+
+    it('verifies a candidate page with nothing left to scroll', async () => {
+        // Filtering removed the height that made the unfiltered page scroll: nothing is locked.
+        const experiment = await runExtensionExperiment(RULE, {
+            modelOutput: CLEAN_INTACT_OUTPUT,
+            pageScroll: (phase) =>
+                phase === PhaseLabel.A ? wheelMeasurement(400) : wheelMeasurement(0, '', 300),
+        });
+
+        expect(experiment.verdict).toBe('verified');
     });
 });
 
@@ -1699,22 +1873,18 @@ function phaseCapture(
 
 describe('an extension experiment judged by its paired review', () => {
     const RULE = 'sarkisozleri.bbs.tr##.banner';
-    const intact: CandidateVisualReviewModelOutput = {
-        ...CLEAN_UNCLEAR_OUTPUT,
-        pageIntegrity: 'intact',
-    };
 
     it('inventories only the baseline phases one image at a time', async () => {
         // A lone after image has no before to compare and no DOM measurements: its "too small to
         // tell" once outvoted the review that saw every tile clean.
         const seen: ExperimentSeams = { probedSelectors: [], inventoryPhases: [] };
-        await runExtensionExperiment(RULE, { modelOutput: intact, seen });
+        await runExtensionExperiment(RULE, { modelOutput: CLEAN_INTACT_OUTPUT, seen });
 
         expect(seen.inventoryPhases).toEqual(['A', 'B']);
     });
 
     it("reads the candidate phase's symptom and capture from the paired review", async () => {
-        const clean = await runExtensionExperiment(RULE, { modelOutput: intact });
+        const clean = await runExtensionExperiment(RULE, { modelOutput: CLEAN_INTACT_OUTPUT });
 
         expect(clean.verdict).toBe('verified');
         expect(phaseCapture(clean, 'C')).toMatchObject({
@@ -1725,7 +1895,7 @@ describe('an extension experiment judged by its paired review', () => {
 
         const remaining = await runExtensionExperiment(RULE, {
             modelOutput: {
-                ...intact,
+                ...CLEAN_INTACT_OUTPUT,
                 symptom: 'not_resolved',
                 remainingInstances: [
                     {
@@ -1773,15 +1943,10 @@ function unmatchedOnBaseline(phase: 'A' | 'B' | 'C'): number {
 }
 
 describe('an extension experiment over a hiding selector the baseline does not match', () => {
-    const intact: CandidateVisualReviewModelOutput = {
-        ...CLEAN_UNCLEAR_OUTPUT,
-        pageIntegrity: 'intact',
-    };
-
     it('ends at the baseline when the hiding selector matches nothing there', async () => {
         const seen: ExperimentSeams = { probedSelectors: [], inventoryPhases: [] };
         const experiment = await runExtensionExperiment('sarkisozleri.bbs.tr##.banner', {
-            modelOutput: intact,
+            modelOutput: CLEAN_INTACT_OUTPUT,
             targetCount: unmatchedOnBaseline,
             seen,
         });
@@ -1801,7 +1966,7 @@ describe('an extension experiment over a hiding selector the baseline does not m
         const experiment = await runExtensionExperiment(
             'sarkisozleri.bbs.tr#?#div[class]:has(> span:contains(Download))',
             {
-                modelOutput: intact,
+                modelOutput: CLEAN_INTACT_OUTPUT,
                 probeSucceeded: false,
                 targetCount: unmatchedOnBaseline,
                 seen,
@@ -1817,7 +1982,7 @@ describe('an extension experiment over a hiding selector the baseline does not m
     it('leaves an exception rule to the review', async () => {
         const seen: ExperimentSeams = { probedSelectors: [], inventoryPhases: [] };
         const experiment = await runExtensionExperiment('sarkisozleri.bbs.tr#@#.banner', {
-            modelOutput: intact,
+            modelOutput: CLEAN_INTACT_OUTPUT,
             targetCount: unmatchedOnBaseline,
             seen,
         });
@@ -1844,7 +2009,7 @@ describe('an extension experiment over a hiding selector the baseline does not m
         // match says nothing about the rule.
         const seen: ExperimentSeams = { probedSelectors: [], inventoryPhases: [] };
         const experiment = await runExtensionExperiment(rule, {
-            modelOutput: intact,
+            modelOutput: CLEAN_INTACT_OUTPUT,
             targetCount: unmatchedOnBaseline,
             seen,
         });
@@ -1857,7 +2022,7 @@ describe('an extension experiment over a hiding selector the baseline does not m
     it('leaves an incorrect-blocking report to the review', async () => {
         const seen: ExperimentSeams = { probedSelectors: [], inventoryPhases: [] };
         const experiment = await runExtensionExperiment('sarkisozleri.bbs.tr##.banner', {
-            modelOutput: intact,
+            modelOutput: CLEAN_INTACT_OUTPUT,
             targetCount: unmatchedOnBaseline,
             symptomKind: SymptomKind.Breakage,
             seen,
@@ -1871,7 +2036,7 @@ describe('an extension experiment over a hiding selector the baseline does not m
     it('trusts no empty match on a baseline its reveal steps did not prepare', async () => {
         const seen: ExperimentSeams = { probedSelectors: [], inventoryPhases: [] };
         const experiment = await runExtensionExperiment('sarkisozleri.bbs.tr##.banner', {
-            modelOutput: intact,
+            modelOutput: CLEAN_INTACT_OUTPUT,
             targetCount: unmatchedOnBaseline,
             reveal: { plan: ageDialogRevealPlan(), scripts: { B: { targetMissing: true } } },
             seen,
@@ -1897,7 +2062,7 @@ describe('an extension experiment carrying DOM checks', () => {
         const evaluated: string[] = [];
         const seen: ExperimentSeams = { probedSelectors: [], inventoryPhases: [] };
         await runExtensionExperiment(RULE, {
-            modelOutput: { ...CLEAN_UNCLEAR_OUTPUT, pageIntegrity: 'intact' },
+            modelOutput: CLEAN_INTACT_OUTPUT,
             seen,
             domChecks: {
                 checks,
@@ -1941,7 +2106,7 @@ describe('an extension experiment carrying DOM checks', () => {
     it('bounds an answer too large for the review', async () => {
         const seen: ExperimentSeams = { probedSelectors: [], inventoryPhases: [] };
         await runExtensionExperiment(RULE, {
-            modelOutput: { ...CLEAN_UNCLEAR_OUTPUT, pageIntegrity: 'intact' },
+            modelOutput: CLEAN_INTACT_OUTPUT,
             seen,
             domChecks: {
                 checks: [checks[0]],

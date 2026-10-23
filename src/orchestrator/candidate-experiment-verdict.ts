@@ -2,10 +2,11 @@
  * Which verdict decides a candidate: the controlled experiment's, never the vision review's alone.
  *
  * The paired review compares the baseline with the candidate phase, and the experiment adds the
- * runner's own checks on top of it — the candidate phase navigated, the symptom is gone from it by
- * the structural probe and the requests too, the page stayed usable, and the reveal steps prepared
- * it like the baseline. So a review can verify a candidate the experiment refuses, and the model,
- * the candidate ledger and the binding all have to hear the experiment.
+ * runner's own checks on top of it, which `CandidateExperimentCheck` names: the candidate phase
+ * navigated, the symptom is gone from it by the structural probe and the requests too, the page
+ * stayed usable, the reveal steps prepared it like the baseline, and the mouse wheel still scrolls
+ * it where it scrolled without filtering. So a review can verify a candidate the experiment
+ * refuses, and the model, the candidate ledger and the binding all have to hear the experiment.
  *
  * On the extension route the binding is the prepared session's review and its evidence, and it
  * stands only on a verified experiment. On the proxy route the candidate binds through the

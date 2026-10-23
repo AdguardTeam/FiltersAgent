@@ -79,6 +79,13 @@ jobs:
                       exit 1
                   fi
 
+            # The page scroll probe is only proved by a real wheel turn in a real browser, and its
+            # check passes whenever the probe fails, so a broken probe would go unnoticed. Its suite
+            # runs in Playwright Firefox, which the action image installs the same way.
+            - name: Install Playwright Firefox
+              if: ${{ !cancelled() }}
+              run: pnpm exec playwright-core install --with-deps firefox
+
             # One suite needs a developer machine and cannot pass on a hosted runner as it
             # stands: tests/browser/strict-route-proxy-contract.test.ts launches a real browser
             # through the strict route, and the launch dies on this runner. Excluding it here is

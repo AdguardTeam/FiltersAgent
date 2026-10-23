@@ -10,6 +10,14 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed a candidate that hides an anti-adblock modal but leaves the page
+  unable to scroll being reported as verified: when the mouse wheel scrolls
+  the unfiltered page and not the candidate page, the experiment fails the
+  `page_scroll_preserved` check, and `apply_rule` returns `pageScroll` with
+  the `html` and `body` styles that hold the lock in each phase.
+
 ## [1.1.0] - 2026-10-23
 
 ### Added

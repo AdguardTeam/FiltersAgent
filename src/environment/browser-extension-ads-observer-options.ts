@@ -14,6 +14,7 @@ import type { reviewCandidateVisually } from '../validator/candidate-visual-veri
 import type { runPhase } from '../validator/phase-capture';
 import type { AdsEnvironmentPhaseObservationInput } from '../validator/phase-orchestrator';
 import type { probeStructuralSnapshot } from '../validator/structural-snapshot';
+import type { measurePageScroll } from './page-scroll-probe';
 import type { SymptomKind } from '../validator/symptom-rubric';
 import type { TrustedValidationContext } from '../validator/trusted-validation-context';
 import type { EnvironmentArtifactReference } from './filtering-environment';
@@ -119,6 +120,13 @@ export interface BrowserExtensionAdsObserverDependencies {
         evaluator: Parameters<typeof probeStructuralSnapshot>[0],
         selector: string,
     ) => ReturnType<typeof probeStructuralSnapshot>;
+
+    /**
+     * Turn the mouse wheel over one phase's page through a deterministic fixture boundary.
+     */
+    measurePageScroll?: (
+        input: AdsEnvironmentPhaseObservationInput,
+    ) => ReturnType<typeof measurePageScroll>;
 
     /**
      * Inspect one captured page through a deterministic fixture boundary.

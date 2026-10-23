@@ -241,13 +241,47 @@ candidate whose probe measured the named element is still judged by that
 element's geometry, unless the review sees the breakage while phase A's
 inventory found the page clean, and a host block by its requests. On top of a
 verified review the runner checks that phase C navigated cleanly, that the
-symptom is gone, that the page stayed usable, and that the reveal steps
-prepared phase C like the baseline. The experiment verifies the candidate only
-when every check passes. When the review verified, the `apply_rule` answer
-lists every failed check in `failedCandidateChecks`, so the agent learns why
-the candidate still did not verify. Otherwise the list is empty: a review that
+symptom is gone, that the page stayed usable, that the reveal steps prepared
+phase C like the baseline, and that the page still scrolls. The experiment
+verifies the candidate only when every check passes. When the review
+verified, the `apply_rule` answer lists every failed check in
+`failedCandidateChecks`, so the agent learns why the candidate still did not
+verify. Otherwise the list is empty: a review that
 could not decide leaves the symptom and the page open, and naming those checks
 would tell the agent the symptom stayed and the page broke.
+
+The scroll check exists because a clean screenshot can hide a locked page.
+An anti-adblock gate typically sets `overflow: hidden` or `position: fixed`
+on `body` while its modal is open. A rule that hides only the modal leaves
+that lock, and the captures look like a repaired page, so the review verifies
+it. After every capture of each phase the runner scrolls the page to the top,
+moves the pointer to the centre of the viewport, lets the page settle and
+turns the mouse wheel once. Only real input proves anything here: `scrollTo`
+still moves a page whose root keeps `overflow: hidden`. The computed overflow
+decides nothing on its own either, since it misses a `position: fixed` lock
+and flags a hidden `body` overflow that `html` scrolls past.
+
+The check compares phase A with phase C. It applies only when the wheel moved
+the unfiltered page, so a page shorter than the viewport, or one that takes
+the wheel for itself, passes. A candidate page with nothing to scroll passes
+too: filtering can remove the height that made the unfiltered page scroll.
+A lock keeps the height it clips, so a locked page still counts as one with
+content. The candidate fails when the wheel moved neither the document nor a
+container under the pointer. A frame or a map under the centre takes the
+wheel for itself, so when the centre moved nothing a second turn lands near
+the left edge and counts only the document: a lock on `html` or `body` stops
+the wheel everywhere. Phase B is measured but decides nothing. A gate the
+published lists provoke locks phase B too, and removing its lock is still the
+candidate's job; phase B only tells the agent whether the lock was there
+before the candidate.
+
+The `apply_rule` answer of a failed check carries `pageScroll`: what the
+wheel did in each phase, with the class, inline style, computed overflow and
+position of `html` and `body`. The run's trace records each phase's
+measurement as the phase completes, so an experiment that stops early keeps
+what it measured, and the check's result in phase C. The probe is bounded in
+time: a page whose main thread is held goes without a measurement, the probe
+stops acting on the page, and the check passes.
 
 Phase B has one check that outranks its inventory. When the report is not
 incorrect blocking and the candidate is a cosmetic rule (hiding or CSS

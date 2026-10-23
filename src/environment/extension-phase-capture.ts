@@ -20,6 +20,7 @@ import type {
     EnvironmentBrowserCapture,
     EnvironmentVisionReference,
 } from './filtering-environment';
+import type { PageScrollMeasurement } from './page-scroll-probe';
 
 /**
  * Complete phase material retained until phase C can bind before/after evidence.
@@ -68,6 +69,11 @@ export interface ObservedExtensionPhase {
      * Compatibility capture projected from the canonical phase.
      */
     capture: EnvironmentBrowserCapture;
+
+    /**
+     * What the mouse wheel did to the phase's page; null when the page could not be measured.
+     */
+    pageScroll: PageScrollMeasurement | null;
 }
 
 /**
@@ -93,6 +99,11 @@ export interface MeasuredExtensionPhase {
      * What the reveal steps did in this phase, when apply_rule received any.
      */
     interactionArtifact: EnvironmentArtifactReference | undefined;
+
+    /**
+     * What the mouse wheel did to the phase's page; null when the page could not be measured.
+     */
+    pageScroll: PageScrollMeasurement | null;
 }
 
 /**
@@ -185,7 +196,8 @@ async function readPhaseInventory(
 /**
  * Assemble one observed Extension phase from what it measured.
  *
- * @param measured - The phase runner's facts, the structural probe and the reveal-steps artifact.
+ * @param measured - The phase runner's facts, the structural probe, the reveal-steps artifact and
+ *   the wheel measurement.
  * @param reads - The observer's network, inventory and registry seams.
  * @returns The observed phase with its artifacts and compatibility capture.
  */
@@ -236,5 +248,6 @@ export async function assembleObservedPhase(
             coverageComplete: inventory.coverageComplete,
             reporterSymptomPresence: inventory.symptomPresence,
         },
+        pageScroll: measured.pageScroll,
     };
 }

@@ -25,11 +25,13 @@ const APPLY_RULE_MODEL_RESULT_BUDGET_BYTES = 48 * 1024;
 
 /**
  * Keys that carry the decision, in the order the model should meet them: the experiment's verdict
- * decides, the failed checks say why it refused a verified review, and the review follows.
+ * decides, the failed checks say why it refused a verified review, with the scroll lock a candidate
+ * left, and the review follows.
  */
 const DECISION_KEYS = [
     'environmentExperiment',
     'failedCandidateChecks',
+    'pageScroll',
     'visualReview',
     'visualReviewArtifactId',
     'validationArtifactId',

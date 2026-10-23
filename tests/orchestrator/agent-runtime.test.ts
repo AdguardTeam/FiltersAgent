@@ -1190,6 +1190,8 @@ async function extensionExperimentRuntime(scenario: ExtensionExperimentRuntimeOp
             },
             filteringExecutors: hermeticExtensionRegistry(() => adapter),
             browserExtensionAdsObserverDependencies: {
+                // The fake page has no wheel to turn.
+                measurePageScroll: async () => null,
                 runPhase: async (input, config): Promise<PhaseResult> => {
                     if (input.phase === 'A') {
                         fixtureAttempt += 1;
