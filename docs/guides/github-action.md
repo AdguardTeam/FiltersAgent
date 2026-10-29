@@ -378,9 +378,10 @@ Read `references/report.md` and follow it when you write the report.
   with a dot and a `SKILL.md` symlink to a missing file are skipped without a warning.
 - `name` is lowercase letters, digits and hyphens, at most 64 characters, and defaults to the
   folder name. `description` is required, at most 1024 characters, and says when the skill applies.
-- The agent sees every skill's name and description in its prompt and reads the skill itself when
-  the task matches. Only those lines ride every prompt, so keep them short. A skill with
-  `disable-model-invocation: true` is never listed to the agent.
+- The agent sees every skill's name and description in its prompt. Once it has read the issue, it
+  reads each skill whose description matches the issue or a step it is about to take, and before
+  its final answer each one that covers the report. Only those lines ride every prompt, so keep
+  them short. A skill with `disable-model-invocation: true` is never listed to the agent.
 - Point to another file by a path relative to the skill's folder, as the example does: the agent
   resolves it from the `SKILL.md` location. Nothing outside the skills directory is readable, and a
   skill folder symlinked to a place outside it is listed but cannot be read.

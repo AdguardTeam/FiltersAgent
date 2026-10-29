@@ -13,9 +13,10 @@ The format is based on [Keep a Changelog], and this project adheres to
 ### Added
 
 - Added repository skills: a skill in `.github/filters-agent/.agents/skills`
-  is listed to the agent, which reads its files with a `read` tool confined to
-  that directory, and the run log warns once per issue about a skipped,
-  flagged or hidden skill and a directory with none loadable.
+  is listed to the agent, which checks the list after fetching the issue and
+  before its final answer and reads a matching skill's files with a `read`
+  tool confined to that directory; the run log warns once per issue about a
+  skipped, flagged or hidden skill and a directory with none loadable.
 
 ### Fixed
 
