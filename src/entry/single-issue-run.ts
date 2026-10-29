@@ -24,6 +24,7 @@ import {
     loadInstruction,
     type LoadedInstruction,
 } from '../knowledge/instruction-loader';
+import { resolveRepositorySkillsDir } from '../knowledge/repository-skills';
 import { loadDefaultRuleGuidance } from '../knowledge/default-rule-guidance';
 import { fileBackedApplicationRefusalDetail } from '../knowledge/instruction-application';
 import { GITHUB_HTTP_ORIGIN } from '../local/git-http-auth';
@@ -443,6 +444,9 @@ async function runInsideWorkspace(
         artifactsDir: request.artifactsDir,
         model: request.model,
         instruction: instruction ?? undefined,
+        // The repository's skills live in the checkout the instruction was read from, so every
+        // session of the run lists them; a checkout without the directory passes nothing.
+        skillsDir: resolveRepositorySkillsDir(prepared.checkoutPath),
         ...(instruction === null ? { loadDefaultRuleGuidance } : {}),
         // The lint runs in the checkout the workflow gave the run, not the disposable clone: only
         // there did the workflow install the repository's own dependencies, the linter among them.

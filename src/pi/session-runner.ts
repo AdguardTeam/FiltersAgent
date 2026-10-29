@@ -27,6 +27,8 @@ import {
     type TurnObserver,
 } from './session-observations';
 import { type SessionToolSpec } from './session-tool-types';
+import { SESSION_LOGICAL_CWD } from './session-logical-paths';
+import { logicalSkillsOverride, skillSessionTools, type SessionSkills } from './session-skills';
 import type { UsageReport } from './usage-reporting';
 
 /**
@@ -56,26 +58,16 @@ import type { UsageReport } from './usage-reporting';
 /**
  * Logical pi agent dir shielding the real `~/.pi/agent`.
  *
- * With in-memory session/settings managers and an in-memory credential store nothing reads from or
- * writes to it (the knowledge-base analyze package proves this shape against the same pi version);
- * it exists only so pi never consults the operator's home directory.
- */
-const PI_AGENT_DIR = '.pi-agent';
-
-/**
- * The logical working directory every session is rooted at, for pi's benefit only.
+ * With in-memory session/settings managers and an in-memory credential store nothing is read from
+ * or written to it for session state (the knowledge-base analyze package proves this shape against
+ * the same pi version); it exists so pi's settings, credentials and default resources never come
+ * from the operator's home directory. Pi still lists `<agentDir>/skills` and `~/.agents/skills` on
+ * every `reload()`, before `noSkills` drops what it found, so nothing is ever loaded from either.
  *
- * Pi's agent-session constructor appends `\nCurrent working directory: <cwd>` to the system prompt
- * unconditionally, so whatever is passed here goes to the gateway on every request of every run.
- * The run's real artifacts directory must therefore never be it: it is an absolute operator or CI
- * path (`/…/collections/<uuid>/raw/artifacts`), which would both leak the host layout into the
- * prompt and change the cached prefix per run — a batch of fifty runs would share no prefix at all,
- * defeating the warm-replica cache reuse the session-affinity headers exist for. One constant keeps
- * the whole prefix byte-identical everywhere; nothing reads or writes the path (session and
- * settings managers are in memory and every resource discovery is disabled), and the tools that do
- * touch the filesystem take the real directory from their own wiring.
+ * Exported so a suite can plant a skill exactly where pi's own agent-directory discovery would look
+ * and prove the session never loads it.
  */
-export const SESSION_LOGICAL_CWD = '/agent';
+export const PI_AGENT_DIR = '.pi-agent';
 
 /**
  * Configured bounds for retrying transient provider failures inside a run. Unset members keep pi's
@@ -124,10 +116,12 @@ export interface RunAgentSessionOptions<T> {
     runtime: PiRuntime;
 
     /**
-     * The session's system prompt text. Passed through verbatim except for the CWD line pi's
-     * agent-session constructor unconditionally appends, which names the constant
-     * `SESSION_LOGICAL_CWD` and never the run's own directory — so the whole prefix is
-     * byte-identical across runs, machines and CI jobs, which is what prompt-cache reuse needs.
+     * The session's system prompt text. Passed through verbatim except for what pi appends: the
+     * skills block, when the run carries a skill the model is shown, which lists each `SKILL.md`
+     * under `SESSION_SKILLS_ROOT`, and the CWD line pi's agent-session constructor unconditionally
+     * appends, which names `SESSION_LOGICAL_CWD`. Neither names the run's own directories, so for
+     * the same prompt and the same skills the whole prefix is byte-identical across runs, machines
+     * and CI jobs, which is what prompt-cache reuse needs.
      */
     systemPrompt: string;
 
@@ -160,6 +154,14 @@ export interface RunAgentSessionOptions<T> {
     tools?: SessionToolSpec[];
 
     /**
+     * The run's repository skills, when its checkout ships a skills directory. Absent keeps pi's
+     * skill discovery off exactly as today; present passes the directory as the one explicit skill
+     * path, lists its skills under `SESSION_SKILLS_ROOT`, and offers the confined `read` tool when
+     * pi loaded at least one skill the model is shown.
+     */
+    skills?: SessionSkills;
+
+    /**
      * Operational bounds of the run. The per-request deadline is required; the wall-clock and turn
      * bounds stay unbounded when unset (the runner invents no defaults). `mode-session.ts` passes
      * the production values.
@@ -187,9 +189,10 @@ export interface RunAgentSessionOptions<T> {
 
     /**
      * The run's own directory (its artifacts root). It roots the shielded pi agent dir and nothing
-     * else: pi's home-directory config is shielded and its resource discovery is off, so nothing
-     * reads from or writes to it for session state. It deliberately does NOT reach the session's
-     * logical cwd — see `SESSION_LOGICAL_CWD` for why the prompt must not carry a per-run path.
+     * else: pi lists the default resource folders under it but loads nothing from them, and writes
+     * nothing there, since session state is held in memory. It deliberately does NOT reach the
+     * session's logical cwd — see `SESSION_LOGICAL_CWD` for why the prompt must not carry a per-run
+     * path.
      */
     workDir: string;
 
@@ -277,12 +280,14 @@ function toPiTool(
 /**
  * Build a pi agent session and run one user task to a sealed Terminal Outcome.
  *
- * The session advertises one frozen tool list (the terminal tool plus the given tools) from its
- * first request, holds every piece of configuration in memory, and uses the given system prompt —
- * verbatim except the constant CWD line pi appends — with all pi resource discovery disabled. The
- * loader must be reloaded explicitly: `createAgentSession` only reloads a loader IT constructs, and
- * an unreloaded caller-supplied loader would silently drop the custom prompt (verified against the
- * installed dists).
+ * The session advertises one frozen tool list (the terminal tool plus the given tools, plus the
+ * confined `read` tool when the caller's skills directory loaded a skill the model is shown) from
+ * its first request, holds every piece of configuration in memory, and uses the given system prompt
+ * — verbatim except the skills block, listed under the logical skills root, and the constant CWD
+ * line pi appends — with nothing loaded from any pi resource location except the repository skills
+ * directory the caller names. The loader must be reloaded explicitly: `createAgentSession` only
+ * reloads a loader IT constructs, and an unreloaded caller-supplied loader would silently drop the
+ * custom prompt (verified against the installed dists).
  *
  * The run enforces exactly one nudge re-prompt when a turn ends in prose, the configured bounds for
  * retrying transient provider failures, and the run budgets (wall-clock, iteration backstop, and
@@ -348,9 +353,24 @@ export async function runAgentSession<T>(
         noPromptTemplates: true,
         noThemes: true,
         noContextFiles: true,
+        // The one discovery input the caller names explicitly. pi still lists its default skill
+        // locations (`~/.agents/skills`, `<agentDir>/skills`), but `noSkills` drops whatever it
+        // found there while `additionalSkillPaths` is still honoured, so a run without a skills
+        // directory passes nothing and loads nothing. The override lists the skills under the
+        // logical root, so the skills block names no per-run checkout path.
+        ...(options.skills === undefined
+            ? {}
+            : {
+                  additionalSkillPaths: [options.skills.dir],
+                  skillsOverride: logicalSkillsOverride(options.skills.dir),
+              }),
     });
     await resourceLoader.reload();
-    const toolSpecs = [...(options.tools ?? []), options.terminal.tool];
+    const nonTerminalTools = [
+        ...(options.tools ?? []),
+        ...skillSessionTools(resourceLoader.getSkills(), options.skills),
+    ];
+    const toolSpecs = [...nonTerminalTools, options.terminal.tool];
     // Built before the session so the pi tool adapter can mark each executing call: the observation
     // needs pi's own call id to tell a refused call from one that ran and failed.
     const toolCalls = createToolCallObservation({
@@ -359,9 +379,7 @@ export async function runAgentSession<T>(
         logger,
     });
     const customTools = [
-        ...(options.tools ?? []).map((spec) =>
-            toPiTool(spec, false, toolCalls.markExecuted, logger),
-        ),
+        ...nonTerminalTools.map((spec) => toPiTool(spec, false, toolCalls.markExecuted, logger)),
         toPiTool(options.terminal.tool, true, toolCalls.markExecuted, logger),
     ];
     const { session } = await createAgentSession({

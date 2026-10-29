@@ -63,6 +63,12 @@ export interface PhaseApplicationModelRunnerDependencies {
      * lands in the same summary as every other session of the run.
      */
     usageCollector?: RunUsageCollector;
+
+    /**
+     * The repository's skills directory, when its checkout ships one; the bounded application
+     * session lists the same skills as every other session of the run.
+     */
+    skillsDir?: string;
 }
 
 /**
@@ -134,6 +140,12 @@ export interface PhaseApplicationFlowHost {
      * the built-in AdGuard instruction.
      */
     instruction?: LoadedInstruction;
+
+    /**
+     * The repository's skills directory, when its checkout ships one; forwarded into every bounded
+     * application session's model runner.
+     */
+    skillsDir?: string;
 
     /**
      * Wall-clock budget override for the bounded extension-state readiness waits.

@@ -20,6 +20,7 @@ import {
     SyntheticTextTokenSchema,
 } from '../environment/safe-interaction';
 import { RuleGuidanceQuerySchema, RuleGuidanceTopicSchema } from '../knowledge/rule-guidance';
+import { SKILLS_READ_LINE_LIMIT } from '../pi/skills-read-tool';
 import { MAX_CANDIDATE_VALIDATION_EXECUTIONS } from '../types/candidate-limits';
 import { DOM_CHECK_TIMEOUT_MS, DomChecksRequestSchema, MAX_DOM_CHECKS } from '../types/dom-check';
 import { MissingInformationEntrySchema } from '../types/missing-information';
@@ -61,6 +62,11 @@ export const TOOL_GUIDANCE: Readonly<Record<string, string>> = {
         'inside it that must hold the user-filters file content; with status failed, naming the ' +
         'failing command in failedCommand, after a step failed or was refused. A done payload ' +
         'while a step failure is latched is rejected: re-submit status failed instead.',
+    [ToolName.Read]:
+        'Reads one text file of a listed skill: SKILL.md by its listed location, another by its ' +
+        'path relative to the skills directory (<skill>/references/report.md) or built from the ' +
+        'SKILL.md location. Paths outside the skills directory are refused. A long file comes ' +
+        `back in part with the next offset; a line over ${SKILLS_READ_LINE_LIMIT} is refused.`,
     [ToolName.FinishApplication]:
         'Finishes the rule-application session. This is the only terminal channel of an ' +
         'application run. Call exactly once: with status done, when the instruction application ' +

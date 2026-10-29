@@ -25,9 +25,7 @@ import {
     baselineSymptomAbsentAnswer,
     baselineSymptomAbsentRefusal,
 } from './baseline-symptom-absent-answer';
-import type { SingleShotClient } from '../pi/single-shot-types';
 import { ToolRegistry, type ToolDefinition } from '../agent/tool-registry';
-import type { RepositoryLintCommand } from '../rules/repository-lint-command';
 import { createToolRegistry } from '../agent/tool-factory';
 import type { FinishFixValidationRejection } from '../types/terminal-rejection';
 import { inspectFullPageVisualCapture } from '../analyzer/full-page-capture-inspection';
@@ -118,13 +116,11 @@ import {
     type AgentRuntimeListCatalogBundle,
 } from './agent-runtime-list-catalog';
 import * as environmentExecution from '../environment/filtering-environment-execution-recorder';
-import type { RawIssue } from '../github/fetch-issue';
-import type { RuleGuidanceSource } from '../knowledge/rule-guidance';
 import type { FixOutcome } from '../types/fix-outcome';
 import type { PreparedExtension } from '../local/prepared-extension';
 import { createLogger } from '../logger/logger';
+import type { AgentRuntimeOptions } from './agent-runtime-options';
 import { SINGLE_LINE_RULE_MESSAGE, isSingleLineRule, normalizeRule } from '../repo/rule-normalizer';
-import type { TraceRecorder } from '../tracer/trace-recorder';
 import { TraceEventType } from '../types/trace';
 import { Viewport, ConsentStrategy, type ReproProfile } from '../types/repro-profile';
 import {
@@ -136,13 +132,7 @@ import {
     CandidateVisualVerdict,
     CandidateVisualReviewSchema,
 } from '../types/candidate-visual-review';
-import type { IssueFacts } from '../types/issue-facts';
 import { parseRuleApplication } from '../knowledge/instruction-application';
-import type { LoadedInstruction } from '../knowledge/instruction-loader';
-import type { DeclaredPlacementSet } from '../types/declared-placement';
-import type { LlmConfig } from '../config/config';
-import type { PiRuntime } from '../pi/runtime';
-import type { RunUsageCollector } from '../pi/usage-collector';
 import { ApplicationGoalKind } from '../validator/phase-application-contract';
 import { readAdGuardExtensionState as readAdGuardExtensionStateDefault } from '../browser/adguard-extension-state-read';
 import { findExtensionRuntime as findExtensionRuntimeDefault } from '../browser/extension-runtime-location';
@@ -191,7 +181,6 @@ import {
 import { registerReportMissingInformationTool } from '../agent/missing-information-tool';
 import { wireRuntimeExecutors, type RuntimeExecutorWiring } from './agent-runtime-executor-wiring';
 import {
-    type ExecutorDependenciesByName,
     type ExecutorRuntimeHost,
     type FilteringExecutor,
     type FilteringExecutorRegistry,
@@ -341,144 +330,6 @@ const AGENT_RUNTIME_OPEN_PAGE_RETRIES = 1;
  * able to crowd the reporter's own words out of the context window.
  */
 const MAX_REPORTER_SCREENSHOT_OBSERVATION_LENGTH = 2_000;
-
-/**
- * Inputs and immutable trust boundaries for one model-driven browser investigation.
- */
-export interface AgentRuntimeOptions {
-    /**
-     * Policy deciding which redirect landing origins remain available to later navigation.
-     */
-    redirectOriginPolicy?: RedirectOriginPolicy;
-
-    /**
-     * Prompt-safe issue snapshot exposed by fetch_issue.
-     */
-    issue: RawIssue;
-
-    /**
-     * Parser-owned declared and reported context used by the environment-selection host.
-     */
-    issueFacts: IssueFacts;
-
-    /**
-     * Integrity-registered issue screenshot IDs kept behind stable one-based model references.
-     */
-    issueAttachmentArtifactIds: string[];
-
-    /**
-     * Prompt-safe issue URLs from which the model must select an exact browser target.
-     */
-    allowedTargetUrls: string[];
-
-    /**
-     * Artifact directory shared by every model-selected browser profile.
-     */
-    artifactsDir: string;
-
-    /**
-     * Pinned AdguardFilters checkout available to repository and validation tools.
-     */
-    filtersPath: string;
-
-    /**
-     * Whether every browser session is headless.
-     */
-    headless: boolean;
-
-    /**
-     * Whether Chromium must use the CI no-sandbox flag.
-     */
-    noSandbox: boolean;
-
-    /**
-     * Single-shot client used for reporter and candidate visual analysis.
-     */
-    vision: SingleShotClient;
-
-    /**
-     * Recorder owning all tool and evidence artifacts.
-     */
-    recorder: TraceRecorder;
-
-    /**
-     * The run's one host-prepared extension build, prepared before the fix session starts: the
-     * pinned prebuilt release, the operator-preloaded directory, or the preparation session's
-     * result. `launch_browser` with `extension="prepared"` loads it from the first turn.
-     */
-    preparedExtension?: PreparedExtension;
-
-    /**
-     * This run's rule-guidance source: the pinned KnowledgeBase checkout or the instruction's
-     * linked documents. Both travel into the tool factory and the guidance session dispatches on
-     * the `kind` tag.
-     */
-    knowledgeGuidanceSource?: RuleGuidanceSource;
-
-    /**
-     * The repository's own lint command, when the run has one; it enables `lint_rule`.
-     */
-    repositoryLint?: RepositoryLintCommand;
-
-    /**
-     * The run instruction loaded at run start, when this run carries one. Its application contract
-     * governs every between-phases rule application; a run without one applies the built-in AdGuard
-     * instruction.
-     */
-    instruction?: LoadedInstruction;
-
-    /**
-     * The placement this run's instruction declares, rendered once by the core at run start. A
-     * draft must name the declared file for rules of a declared kind, and the candidate's edit
-     * appends to it; absent, the file the agent chooses is the one the edit goes to.
-     */
-    declaredPlacement?: DeclaredPlacementSet;
-
-    /**
-     * Validated LLM provider configuration the bounded application sessions are launched with.
-     */
-    llm: LlmConfig;
-
-    /**
-     * The run's pi runtime reused for the bounded application sessions.
-     */
-    piRuntime: PiRuntime;
-
-    /**
-     * Run-scoped usage collector shared with every model session of the run: when present, each
-     * bounded application session charges its turns and tokens into the same collector the fix,
-     * preparation and observe sessions use, so they land in one usage summary and run record.
-     */
-    usageCollector?: RunUsageCollector;
-
-    /**
-     * Whether verbose lifecycle logging is enabled.
-     */
-    verbose?: boolean;
-
-    /**
-     * Wall-clock budget for extension readiness waits in apply_rule phase sessions.
-     *
-     * Analysis sessions keep the built-in short budget; phase sessions bootstrap a fresh profile
-     * per phase and need tens of seconds under CI matrix load.
-     */
-    phaseReadinessBudgetMs?: number;
-
-    /**
-     * Executor names the run locks from the registry, in request order.
-     *
-     * Absent resolves every registered executor; an unknown name fails `AgentRuntime.create` naming
-     * it and the registered set, before any site access or model session.
-     */
-    agentRuntimeExecutors?: readonly string[];
-
-    /**
-     * The run's opaque per-executor dependency bag, forwarded to whichever registration the run
-     * activates. An executor registered outside this tree reads its own name's entry here for the
-     * host wiring `src/` cannot type; absent for a run that wires none.
-     */
-    executorDependencies?: ExecutorDependenciesByName;
-}
 
 /**
  * Injectable lifecycle seams used by focused runtime tests.
@@ -3295,6 +3146,7 @@ export class AgentRuntime {
             usageCollector: this.options.usageCollector,
             verbose: this.options.verbose ?? false,
             instruction: this.options.instruction,
+            skillsDir: this.options.skillsDir,
             phaseReadinessBudgetMs: this.options.phaseReadinessBudgetMs,
             relaunchPolicySession: (request) =>
                 relaunchPolicySession(this.preparedSessionLaunchHost(), request),

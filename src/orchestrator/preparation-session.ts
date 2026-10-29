@@ -220,6 +220,12 @@ export interface PreparationSessionOptions {
      * filtering.
      */
     sourceEnvironment?: NodeJS.ProcessEnv;
+
+    /**
+     * The repository's skills directory, when the run's checkout ships one; forwarded to the
+     * session so the preparation prompt lists the skills and offers `read`.
+     */
+    skillsDir?: string;
 }
 
 /**
@@ -423,6 +429,7 @@ export async function runPreparationSession(
         logger,
         signal: options.signal,
         usageCollector: options.usageCollector,
+        skillsDir: options.skillsDir,
     });
     return preparationResultFrom(outcome, gate, workDir);
 }

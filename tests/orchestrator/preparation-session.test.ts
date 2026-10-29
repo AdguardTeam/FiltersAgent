@@ -7,6 +7,7 @@ import { RunMode } from '../../src/types/trace';
 import { SealKind } from '../../src/pi/seal-types';
 import { TraceRecorder } from '../../src/tracer/trace-recorder';
 import {
+    PreparationTerminalStatus,
     runPreparationSession,
     type PreparationSessionResult,
 } from '../../src/orchestrator/preparation-session';
@@ -26,6 +27,13 @@ import {
     TEST_API_KEY,
     VISION_MODEL,
 } from '../pi/test-runtime';
+import {
+    advertisedToolNames,
+    logicalSkillFile,
+    REPORT_STYLE_SKILL,
+    systemPromptOf,
+    writeSkill,
+} from '../pi/skill-fixtures';
 
 let workDir: string;
 let provider: HermeticProvider | undefined;
@@ -116,6 +124,12 @@ interface RunSessionOverrides {
      * Session turn-cap override.
      */
     maxTurns?: number;
+
+    /**
+     * Repository skills directory the session lists to the model; absent keeps the session without
+     * skills.
+     */
+    skillsDir?: string;
 }
 
 /**
@@ -153,6 +167,7 @@ async function runSession(
         sourceEnvironment: SECRET_ENV,
         ...(overrides.wallClockMs === undefined ? {} : { wallClockMs: overrides.wallClockMs }),
         ...(overrides.maxTurns === undefined ? {} : { maxTurns: overrides.maxTurns }),
+        ...(overrides.skillsDir === undefined ? {} : { skillsDir: overrides.skillsDir }),
     });
     const events = recorder.toJSON().events;
     return { result, events };
@@ -395,5 +410,26 @@ describe('preparation session', () => {
         expect(typeof result.detail).toBe('string');
         expect(SealKind.NoTerminal).toBeDefined();
         expect(result.extensionDir).toBeUndefined();
+    });
+
+    it('lists the repository skills in the preparation session prompt', async () => {
+        const skillsDir = mkdtempSync(join(tmpdir(), 'preparation-skills-'));
+        writeSkill(skillsDir, REPORT_STYLE_SKILL);
+        try {
+            const { result } = await runSession(
+                [finishPreparation({ status: PreparationTerminalStatus.Done, extensionDir: '.' })],
+                { skillsDir },
+            );
+
+            expect(result.status).toBe(PreparationTerminalStatus.Done);
+            const system = systemPromptOf(provider!.requests[0]!);
+            expect(system).toContain(REPORT_STYLE_SKILL.name);
+            expect(system).toContain(REPORT_STYLE_SKILL.description);
+            expect(system).toContain(logicalSkillFile(REPORT_STYLE_SKILL.name));
+            expect(system).not.toContain(skillsDir);
+            expect(advertisedToolNames(provider!.requests[0]!)).toContain(ToolName.Read);
+        } finally {
+            rmSync(skillsDir, { recursive: true, force: true });
+        }
     });
 });

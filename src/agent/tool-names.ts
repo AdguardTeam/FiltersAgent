@@ -26,6 +26,13 @@ export const ToolName = {
     WriteFile: 'write_file',
 
     /**
+     * Reads one file of a repository skill listed in the system prompt. Offered only when the run's
+     * checkout ships skills; the name is pi's own, because pi lists skills only for a session that
+     * offers a tool of that name.
+     */
+    Read: 'read',
+
+    /**
      * Fetches the GitHub issue under investigation.
      */
     FetchIssue: 'fetch_issue',

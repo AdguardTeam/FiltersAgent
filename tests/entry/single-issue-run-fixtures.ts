@@ -31,6 +31,8 @@ import {
 } from '../../src/local/issue-revision';
 import { buildLocalIssueSnapshot } from '../../src/local/issue-snapshot';
 import { DEFAULT_INSTRUCTION_PATH } from '../../src/knowledge/instruction-loader';
+import { REPOSITORY_SKILLS_PATH } from '../../src/knowledge/repository-skills';
+import { REPORT_STYLE_SKILL, writeSkill } from '../pi/skill-fixtures';
 
 /**
  * The detached checkout commit every faked git run resolves to; a full 40-character SHA so the
@@ -184,6 +186,11 @@ export interface PreparedWorkspaceOptions {
     withInstruction: boolean;
 
     /**
+     * Whether the prepared checkout carries one repository skill under the skills directory.
+     */
+    withSkills?: boolean;
+
+    /**
      * A failing answer for the remote default-ref resolution, when the scenario needs one.
      */
     lsRemoteFailure?: ScriptedCommandFailure;
@@ -204,6 +211,9 @@ export function preparedWorkspace(options: PreparedWorkspaceOptions): PreparedWo
         const instructionPath = join(checkoutRoot, DEFAULT_INSTRUCTION_PATH);
         mkdirSync(dirname(instructionPath), { recursive: true });
         writeFileSync(instructionPath, fixtureInstruction(), 'utf8');
+    }
+    if (options.withSkills === true) {
+        writeSkill(join(checkoutRoot, REPOSITORY_SKILLS_PATH), REPORT_STYLE_SKILL);
     }
     const commands: FiltersCommand[] = [];
     const removedPaths: string[] = [];

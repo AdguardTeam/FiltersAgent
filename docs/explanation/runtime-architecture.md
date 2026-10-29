@@ -11,7 +11,18 @@ results to the same model conversation. A runner or host is infrastructure
 around that loop; it is not a second decision-making agent. The LLM runtime
 lives in `src/pi/`, the mode-session wiring in `src/session/`, and the prompts
 as Markdown documents in `src/prompts/documents/`; [AGENTS.md](../../AGENTS.md)
-describes the module layout.
+describes the module layout. Every mode session turns pi's own resource
+discovery off except the repository's skills directory: pi lists each skill's
+name, description and location in the system prompt, and a `read` tool
+confined to that directory serves the skill's files. The listed location is
+logical, `/agent/skills/<skill>/SKILL.md`, rather than the run's temporary
+checkout path, so the same skills give a byte-identical system prompt in every
+session and run, which keeps the provider's prompt cache; the `read` tool maps
+it back to the checkout. A file line longer than pi's read limit is refused
+with that limit named, since none of these sessions has a shell to read it
+another way. What pi reports while loading the skills, from a skipped skill to
+a directory with none loadable, is logged once per issue before its first
+session rather than by every session.
 
 ## Environment selection
 

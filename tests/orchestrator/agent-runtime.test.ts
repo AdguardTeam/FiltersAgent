@@ -58,11 +58,8 @@ import {
 } from '../../src/orchestrator/filtering-executors';
 import type { EvidenceRouteHost } from '../../src/local/evidence-route-contract';
 import { projectEnvironmentResult } from '../../src/environment/environment-result-projection';
-import {
-    AgentRuntime,
-    type AgentRuntimeDependencies,
-    type AgentRuntimeOptions,
-} from '../../src/orchestrator/agent-runtime';
+import { AgentRuntime, type AgentRuntimeDependencies } from '../../src/orchestrator/agent-runtime';
+import type { AgentRuntimeOptions } from '../../src/orchestrator/agent-runtime-options';
 import { finalizeFilteringEnvironmentExecution } from '../../src/orchestrator/filtering-environment-finalization';
 import type {
     FilteringEnvironmentAdapter,
@@ -7026,8 +7023,9 @@ describe('AgentRuntime', () => {
         ]);
     });
 
-    it('passes the run usage collector to the application model runner factory', async () => {
+    it('passes the run usage collector and skills directory to the application model runner factory', async () => {
         const usageCollector = createRunUsageCollector();
+        const skillsDir = join(tmpdir(), 'agent-runtime-skills');
         // The factory exists for the model-driven path only, so the run declares its own
         // application steps; the built-in AdGuard route never builds a session at all.
         const createRunner = vi.fn(
@@ -7044,6 +7042,7 @@ describe('AgentRuntime', () => {
                 ...runtimeOptions(),
                 issueAttachmentArtifactIds: [],
                 usageCollector,
+                skillsDir,
                 instruction: ownApplicationInstruction(),
             },
             {
@@ -7064,9 +7063,11 @@ describe('AgentRuntime', () => {
 
         // The runner factory is the launch's one application-session seam: it receives the run's
         // collector, so the session it builds charges the same usage summary as every other
-        // session of the run.
+        // session of the run, and the run's skills directory, so the application prompt lists the
+        // same repository skills as every other session.
         expect(createRunner).toHaveBeenCalledTimes(1);
         expect(createRunner.mock.calls[0]![0].usageCollector).toBe(usageCollector);
+        expect(createRunner.mock.calls[0]![0].skillsDir).toBe(skillsDir);
         await runtime.dispose();
     });
 

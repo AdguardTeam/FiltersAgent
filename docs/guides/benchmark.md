@@ -154,6 +154,8 @@ checkout contains a loaded repository instruction at
 `.github/filters-agent/AGENTS.md`, the benchmark stops before investigation
 with `infrastructure_failure`, `failureKind: transient`, and the file path
 in the detail.
+Skills in `.github/filters-agent/.agents/skills` do not stop the case: the
+benchmark drops them, and the agent never sees them.
 
 ## Read the results
 

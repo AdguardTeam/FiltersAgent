@@ -1,11 +1,34 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import type { Page } from 'playwright-core';
 import { ToolName } from '../../src/agent/tool-names';
 import { ConsoleCoverage, type IBrowserSession } from '../../src/browser/browser-interfaces';
-import { buildApplicationToolSet } from '../../src/orchestrator/application-session';
+import {
+    ApplicationTerminalStatus,
+    buildApplicationToolSet,
+    createPhaseApplicationModelRunner,
+} from '../../src/orchestrator/application-session';
 import type { AdaptedToolInput } from '../../src/pi/session-tools';
-import type { TraceRecorder } from '../../src/tracer/trace-recorder';
+import { TraceRecorder } from '../../src/tracer/trace-recorder';
 import { BrowserFallbackReason } from '../../src/types/browser-fallback-reason';
+import { RunMode } from '../../src/types/trace';
+import {
+    type HermeticProvider,
+    HermeticScenario,
+    ScriptedReplyKind,
+    startHermeticProvider,
+} from '../pi/hermetic-provider';
+import {
+    advertisedToolNames,
+    logicalSkillFile,
+    REPORT_STYLE_SKILL,
+    systemPromptOf,
+    writeSkill,
+} from '../pi/skill-fixtures';
+import { createTestPiRuntime } from '../pi/test-runtime';
+import { testCoreConfig } from '../config/test-core-config';
 
 const SURFACE_URL = 'chrome-extension://abcdefghijklmnopabcdefghijklmnop/pages/options.html';
 
@@ -249,5 +272,61 @@ describe('application-session tool surface', () => {
         const toolSet = toolSetOf(recorded);
 
         expect(toolSet.inputs.some((input) => input.name === ToolName.EvaluateJs)).toBe(false);
+    });
+});
+
+describe('application-session repository skills', () => {
+    it('lists the repository skills in the application session prompt', async () => {
+        const recorded: RecordedPageCalls = { routes: [], navigations: [], messages: [] };
+        const artifactsDir = mkdtempSync(join(tmpdir(), 'application-session-skills-'));
+        const skillsDir = mkdtempSync(join(tmpdir(), 'application-session-skills-fixture-'));
+        writeSkill(skillsDir, REPORT_STYLE_SKILL);
+        let provider: HermeticProvider | undefined;
+        try {
+            provider = await startHermeticProvider({
+                scenario: HermeticScenario.Scripted,
+                script: [
+                    {
+                        kind: ScriptedReplyKind.ToolCall,
+                        toolName: ToolName.FinishApplication,
+                        toolArguments: JSON.stringify({ status: ApplicationTerminalStatus.Done }),
+                    },
+                ],
+            });
+            const runtime = await createTestPiRuntime({ baseUrl: provider.baseUrl });
+            const runner = createPhaseApplicationModelRunner({
+                runtime,
+                llm: testCoreConfig().llm,
+                recorder: new TraceRecorder({
+                    runId: 'application-session-skills',
+                    issueNumber: 1,
+                    mode: RunMode.Fix,
+                }),
+                session: { ...fakeSession(recorded), artifactsDir },
+                allowedOrigin: 'https://example.com',
+                skillsDir,
+            });
+
+            const result = await runner.run({
+                prompt: 'Apply the prepared filter lists to the blocker.',
+                session: {
+                    targetUrl: 'https://example.com/',
+                    blockerSurfaceUrl: SURFACE_URL,
+                },
+                budget: { turns: 2, budgetMs: 30_000 },
+            });
+
+            expect(result.completed).toBe(true);
+            const system = systemPromptOf(provider.requests[0]!);
+            expect(system).toContain(REPORT_STYLE_SKILL.name);
+            expect(system).toContain(REPORT_STYLE_SKILL.description);
+            expect(system).toContain(logicalSkillFile(REPORT_STYLE_SKILL.name));
+            expect(system).not.toContain(skillsDir);
+            expect(advertisedToolNames(provider.requests[0]!)).toContain(ToolName.Read);
+        } finally {
+            await provider?.close();
+            rmSync(artifactsDir, { recursive: true, force: true });
+            rmSync(skillsDir, { recursive: true, force: true });
+        }
     });
 });

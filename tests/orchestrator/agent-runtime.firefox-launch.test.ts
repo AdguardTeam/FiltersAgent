@@ -9,7 +9,8 @@ import { ExtensionLaunchFamily } from '../../src/environment/extension-launch';
 import { PreparedExtensionSource } from '../../src/environment/extension-preparation';
 import type { LoadedInstruction } from '../../src/knowledge/instruction-loader';
 import type { PreparedExtension } from '../../src/local/prepared-extension';
-import { AgentRuntime, type AgentRuntimeOptions } from '../../src/orchestrator/agent-runtime';
+import { AgentRuntime } from '../../src/orchestrator/agent-runtime';
+import type { AgentRuntimeOptions } from '../../src/orchestrator/agent-runtime-options';
 import { extensionFilteringExecutor } from '../../src/orchestrator/extension-filtering-executor';
 import { REPORTER_SETTINGS_SESSION_REQUIRED } from '../../src/orchestrator/validation-baseline-lock';
 import {

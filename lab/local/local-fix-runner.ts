@@ -1,11 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import {
-    isAbsolute,
-    join,
-    relative,
-    resolve as resolveLocalFixRunnerCandidateTargetPath,
-} from 'node:path';
+import { join, resolve as resolveLocalFixRunnerCandidateTargetPath } from 'node:path';
 import * as v from 'valibot';
 import type { BlockerModuleRunDependencies } from '../../src/proxy-blocker/blocker-module-executor';
 import type { ExecutorName } from '../../src/environment/executor-name';
@@ -45,13 +40,10 @@ import {
     guidanceRepositorySlugFromRemote,
 } from './knowledge-base-preparer';
 import type { PreparedKnowledgeBase } from './knowledge-base-preparer';
-import {
-    loadRunInstruction,
-    refuseLoadedRunInstruction,
-    toInstructionProvenance,
-} from './instruction-provisioning';
-import { fileBackedApplicationRefusalDetail } from '../../src/knowledge/instruction-application';
+import { toInstructionProvenance } from './instruction-provisioning';
+import { loadRepositorySteering } from './repository-steering';
 import { parseRepositorySlugFromGitUrl } from '../../src/types/repository-slug';
+import { isPathAtOrBelow } from '../../src/types/path-containment';
 import type { VerifiedIssueRevision } from '../../src/local/issue-revision';
 import { clearLocalRunOutputDir } from '../../src/local/output-directory';
 import {
@@ -72,7 +64,6 @@ import { RedirectOriginPolicy } from '../../src/browser/redirect-origin-policy';
 import {
     LocalFailureStage,
     INTAKE_SKIPPED_PREFIX,
-    FileBackedApplicationRefusalError,
     infrastructureFailureReasonForStage,
 } from './local-failure-stage';
 import type { LocalRunConfig } from '../../src/local/run-config-types';
@@ -364,13 +355,7 @@ function configuredFiltersRepository(filtersRemoteUrl: string | null): string | 
 function resolveCandidateTarget(checkoutPath: string, filePath: string): string {
     const root = resolveLocalFixRunnerCandidateTargetPath(checkoutPath);
     const target = resolveLocalFixRunnerCandidateTargetPath(root, filePath);
-    const relativePath = relative(root, target);
-    if (
-        relativePath === '' ||
-        relativePath === '..' ||
-        relativePath.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`) ||
-        isAbsolute(relativePath)
-    ) {
+    if (target === root || !isPathAtOrBelow(root, target)) {
         throw new Error(`Candidate file escapes the filters checkout: ${filePath}`);
     }
     return target;
@@ -787,30 +772,16 @@ async function runLocalFixWithInput(
                 repositoryPath: preparedFilters.filtersPath,
                 adguardExtensionManifestVersion: undefined,
             };
-            // The instruction is run input, not environment: a failed explicit load is an input
-            // failure naming the path, and a successful one reclassifies back to environment for
-            // whatever provisioning follows.
+            // The instruction is run input, not environment: a failed explicit load or a refusal
+            // is an input failure naming the path, and a successful one reclassifies back to
+            // environment for whatever provisioning follows.
             failureStage = LocalFailureStage.Input;
-            const instruction = await loadRunInstruction(
+            const { instruction, skillsDir } = await loadRepositorySteering(
                 preparedFilters.checkoutPath,
                 runConfig.instructionPath,
+                options.refuseRepositoryInstruction ?? false,
                 logger,
             );
-            if (options.refuseRepositoryInstruction) {
-                refuseLoadedRunInstruction(instruction, logger);
-            }
-            // The same gate the public entry applies: a file-backed verification method can never
-            // be honoured yet, so the run refuses here, before the core's paid investigation.
-            const fileBackedRefusal = instruction
-                ? fileBackedApplicationRefusalDetail(instruction.content)
-                : undefined;
-            if (fileBackedRefusal !== undefined) {
-                logger.warn(
-                    { instructionPath: instruction?.path, detail: fileBackedRefusal },
-                    'run instruction declares an unsupported file-backed verification method; refusing before the investigation',
-                );
-                throw new FileBackedApplicationRefusalError(fileBackedRefusal);
-            }
             failureStage = LocalFailureStage.Environment;
             // Skip, not disable: the built-in KnowledgeBase provisioning belongs to runs whose
             // instruction did not replace it with its own linked documents.
@@ -848,6 +819,7 @@ async function runLocalFixWithInput(
                             filtersBaseSha: preparedFilters.provenance.commit,
                             knowledgeGuidanceSource: preparedKnowledgeBase?.guidanceSource,
                             ...(instruction ? { instruction } : {}),
+                            skillsDir,
                             // The local filters source is where an operator installed the
                             // repository's linter; the disposable clone has no dependencies.
                             ...(options.lintCommand === undefined

@@ -14,7 +14,6 @@ import * as v from 'valibot';
 import * as vitest from 'vitest';
 import { vi } from 'vitest';
 import type { BrowserContext } from 'playwright-core';
-import type { CoreConfig } from '../../src/config/config';
 import type { RawIssue } from '../../src/github/fetch-issue';
 import type { IssueFacts } from '../../src/types/issue-facts';
 import type {
@@ -64,6 +63,13 @@ import { RuleGuidanceSourceKind } from '../../src/knowledge/guidance-source';
 import { GuidanceDocumentOrigin, GuidanceDocumentRole } from '../../src/knowledge/guidance-source';
 import type { LoadedInstruction } from '../../src/knowledge/instruction-loader';
 import { extractPreparationSection } from '../../src/knowledge/instruction-preparation';
+import {
+    CORE_PROBE_NAME,
+    coreConfig,
+    environmentSelectionArgs,
+    localFacts,
+    localIssue,
+} from './fix-core-fixtures';
 import type { PreparationSessionResult } from '../../src/orchestrator/preparation-session';
 import type { KnowledgeGuidanceSource } from '../../src/knowledge/rule-guidance';
 import { resolveRuleGuidanceSource } from '../../src/orchestrator/fix-core-inputs';
@@ -150,11 +156,6 @@ beforeEach(() => {
  * @param createAdapter - Adapter factory to install under the extension registration.
  * @returns The registry seeded for one core run.
  */
-/**
- * The probe executor name for the two-element core runs: a preparable, activation-scriptable
- * registration distinct from runtime-owned executor classes.
- */
-const CORE_PROBE_NAME = 'probe_proxy';
 
 /**
  * Build a two-element hermetic core registry: the probe registration beside the production
@@ -238,7 +239,6 @@ const { completeFixResultAfterEnvironmentCleanup } = fixEnvironmentLifecycle;
 const { serializeVerifiedCandidateBinding } = agenticRunEvidence;
 
 import { createTestPiRuntime } from '../pi/test-runtime';
-import { testCoreConfig } from '../config/test-core-config';
 import { ConsoleCoverage } from '../../src/browser/browser-interfaces';
 type FixCoreDependencies = fixCoreInputs.FixCoreDependencies;
 type FixCoreOptions = fixCoreInputs.FixCoreOptions;
@@ -817,57 +817,6 @@ describe('completeFixResultAfterEnvironmentCleanup', () => {
 });
 
 /**
- * The arguments of the standard environment-selection call fixture.
- *
- * @param kind - The environment kind selected.
- * @returns The parsed selection arguments.
- */
-function environmentSelectionArgs(
-    kind:
-        | 'browser_extension'
-        | 'adguard_cli'
-        | 'unsupported_product_case'
-        | typeof CORE_PROBE_NAME = 'browser_extension',
-): Record<string, unknown> {
-    const call = environmentSelectionCall(kind) as { function: { arguments: string } };
-    return JSON.parse(call.function.arguments) as Record<string, unknown>;
-}
-
-function environmentSelectionCall(
-    kind:
-        | 'browser_extension'
-        | 'adguard_cli'
-        | 'unsupported_product_case'
-        | typeof CORE_PROBE_NAME = 'browser_extension',
-) {
-    return {
-        id: `select-${kind}`,
-        function: {
-            name: 'select_environment',
-            arguments: JSON.stringify({
-                kind,
-                requiredCapabilities:
-                    kind === 'browser_extension' ? ['browser_navigation', 'filtering_control'] : [],
-                intent: {
-                    issueType: kind === 'unsupported_product_case' ? 'product_specific' : 'ads',
-                    rationale: 'The agent classified the issue from its prompt-safe evidence.',
-                    confidence: 0.9,
-                    evidence: [
-                        {
-                            source: 'issue_body',
-                            observation: 'The report describes a website-filtering symptom.',
-                        },
-                    ],
-                    conflicts: [],
-                },
-                rationale: 'The selected environment best fits the issue and host capabilities.',
-                confidence: 0.85,
-            }),
-        },
-    };
-}
-
-/**
  * Provider that drives one complete model-selected environment lifecycle.
  */
 
@@ -1021,64 +970,6 @@ function writeUnpackedBareDir(workDir: string): string {
     const bare = join(workDir, 'bare');
     mkdirSync(bare, { recursive: true });
     return bare;
-}
-
-/**
- * Build a parser-compatible local issue fixture.
- *
- * @returns A local in-scope browser-extension issue.
- */
-function localIssue(): RawIssue {
-    return {
-        number: 4,
-        url: 'https://github.com/example-owner/example-repo/issues/4',
-        title: 'Ad placeholder remains visible',
-        body: [
-            '### Issue URL (Ads)',
-            'https://example.com/article',
-            '',
-            '### System configuration',
-            'AdGuard product: | AdGuard Browser Extension v5.4.3',
-            'Filters: | AdGuard Base filter',
-        ].join('\n'),
-        state: 'open',
-        labels: ['T: Ads', 'N: AdGuard Browser Extension'],
-        assignee: null,
-        comments: [],
-    };
-}
-
-/**
- * The facts a deterministic intake of {@link localIssue} produced — spelled literally now that the
- * parser is gone.
- *
- * @returns The validated-shape issue facts.
- */
-function localFacts(): IssueFacts {
-    return {
-        issueNumber: 4,
-        issueUrl: 'https://github.com/example-owner/example-repo/issues/4',
-        reportedSiteUrls: ['https://example.com/article'],
-        labels: ['T: Ads', 'N: AdGuard Browser Extension'],
-        declaredIssueType: 'Ads',
-        problemType: 'ads',
-        product: 'AdGuard Browser Extension v5.4.3',
-        enabledFilters: [{ name: 'AdGuard Base filter', officialFilterId: 2 }],
-        screenshots: [],
-    };
-}
-
-/**
- * Build minimal local core configuration.
- *
- * @param baseUrl - LLM base URL; tests wiring the loop onto the hermetic provider pass its base
- *   URL, everything else keeps the fixture gateway host.
- * @returns GitHub-independent configuration for tests.
- */
-function coreConfig(baseUrl = 'https://llm.example.test/v1'): CoreConfig {
-    return testCoreConfig({
-        llm: { baseUrl, apiKey: 'local-key', visionModel: 'gemini-3.5-flash' },
-    });
 }
 
 function candidateBindingFixture(baseline: 'read_back' | 'declared' = 'read_back') {
@@ -3231,6 +3122,8 @@ describe('runFixCore', () => {
         mkdirSync(join(filtersPath, 'BaseFilter', 'sections'), { recursive: true });
         writeFileSync(join(filtersPath, 'BaseFilter/sections/foreign.txt'), '');
         const instruction = instructionWithPreparationSection();
+        const skillsDir = join(root, 'skills');
+        mkdirSync(skillsDir, { recursive: true });
         const piRuntime = await scriptedPiRuntime(preparedSessionScript());
         const { createBrowserSession, createBrowserRegistry, launchReadBack } =
             preparedSessionStubs();
@@ -3254,6 +3147,7 @@ describe('runFixCore', () => {
                     browserMode: 'on',
                     agentRuntime: {},
                     instruction,
+                    skillsDir,
                 },
                 {
                     piRuntime,
@@ -3275,7 +3169,13 @@ describe('runFixCore', () => {
                 expect.objectContaining({
                     preparationSection: section.content,
                     workDir: resolve(join(root, 'artifacts', 'preparation')),
+                    skillsDir,
                 }),
+            );
+            // The instruction declares its own application steps, so the prepared launch builds
+            // a model-driven application session, and that session lists the same skills.
+            expect(launchReadBack.createPhaseApplicationModelRunner).toHaveBeenCalledWith(
+                expect.objectContaining({ skillsDir }),
             );
             expect(pinnedReleaseSeamMock).not.toHaveBeenCalled();
             expect(result.extensionProvenance).toEqual({

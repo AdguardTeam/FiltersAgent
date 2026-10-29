@@ -148,6 +148,12 @@ export interface PhaseApplicationRunnerDependencies {
      * Run-scoped usage collector threaded into the session like every other mode session.
      */
     usageCollector?: RunUsageCollector;
+
+    /**
+     * The repository's skills directory, when the run's checkout ships one; forwarded to the
+     * session so the application prompt lists the skills and offers `read`.
+     */
+    skillsDir?: string;
 }
 
 /**
@@ -473,6 +479,7 @@ export function createPhaseApplicationModelRunner(
                 logger,
                 signal: request.signal,
                 usageCollector: dependencies.usageCollector,
+                skillsDir: dependencies.skillsDir,
             });
 
             const completed = outcome.kind === SealKind.Terminal;

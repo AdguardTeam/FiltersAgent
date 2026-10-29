@@ -16,7 +16,7 @@ import type {
     ExecutorAdapterContext,
     FilteringExecutor,
 } from '../../src/orchestrator/filtering-executors';
-import type { AgentRuntimeOptions } from '../../src/orchestrator/agent-runtime';
+import type { AgentRuntimeOptions } from '../../src/orchestrator/agent-runtime-options';
 import type { SingleShotClient } from '../../src/pi/single-shot-types';
 import type { PiRuntime } from '../../src/pi/runtime';
 import type { IssueFacts } from '../../src/types/issue-facts';

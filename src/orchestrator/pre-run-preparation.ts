@@ -171,6 +171,12 @@ export interface PreRunPreparationOptions {
     instruction?: LoadedInstruction;
 
     /**
+     * The repository's skills directory, when its checkout ships one; forwarded to the instruction
+     * preparation session so its prompt lists the skills.
+     */
+    skillsDir?: string;
+
+    /**
      * Caller cancellation.
      */
     signal?: AbortSignal;
@@ -373,6 +379,7 @@ export async function prepareRunExtension(
             signal: options.signal,
             logger: context.logger,
             usageCollector: context.usageCollector,
+            skillsDir: options.skillsDir,
         });
         return await loadInstructionPreparedExtension(result, workDir, preparationSection.sha256);
     }

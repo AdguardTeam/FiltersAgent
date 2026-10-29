@@ -31,6 +31,7 @@ import {
     DEFAULT_INSTRUCTION_PATH,
     type LoadedInstruction,
 } from '../../src/knowledge/instruction-loader';
+import { REPOSITORY_SKILLS_PATH } from '../../src/knowledge/repository-skills';
 import { GuidanceDocumentOrigin, GuidanceDocumentRole } from '../../src/knowledge/guidance-source';
 import { testCoreConfig } from '../config/test-core-config';
 import { runDefaultSingleIssue } from '../../src/entry/single-issue-run';
@@ -933,6 +934,50 @@ describe('runDefaultSingleIssue', () => {
         expect(investigatedOptions[0]?.instruction).toBeUndefined();
         expect(investigatedOptions[0]?.loadDefaultRuleGuidance).toBeTypeOf('function');
     });
+
+    it.each([{ withSkills: true }, { withSkills: false }])(
+        "hands the investigation the checkout's skills directory only when it exists (withSkills=$withSkills)",
+        async ({ withSkills }) => {
+            const workspace = preparedWorkspace({
+                localSourceAvailable: true,
+                withInstruction: false,
+                withSkills,
+            });
+            const investigatedOptions: FixCoreOptions[] = [];
+
+            const result = await runDefaultSingleIssue(
+                {
+                    config: testCoreConfig(),
+                    slug: { owner: 'remote-owner', repo: 'remote-list' },
+                    checkoutPath: workspace.localSourcePath,
+                    issueNumber: 4,
+                    commentsEnabled: false,
+                    screenshotsBranch: 'filters-agent-screenshots',
+                    artifactsDir: join(scratchDir('single-issue-artifacts-'), 'out'),
+                },
+                {
+                    preparationDependencies: workspace.dependencies,
+                    ...extractedReportSeam(),
+                    investigate: async (config, issue, options) => {
+                        void config;
+                        void issue;
+                        investigatedOptions.push(options);
+                        return processedRunResult(4);
+                    },
+                    fetchIssue: async (config, issueNumber) => {
+                        void config;
+                        return rawIssueFixture(issueNumber);
+                    },
+                },
+            );
+
+            expect(result.kind).toBe(DefaultSingleIssueResultKind.Processed);
+            expect(investigatedOptions).toHaveLength(1);
+            expect(investigatedOptions[0]?.skillsDir).toBe(
+                withSkills ? join(workspace.checkoutRoot, REPOSITORY_SKILLS_PATH) : undefined,
+            );
+        },
+    );
 
     it('hands the investigation the extracted report facts on the snapshot path', async () => {
         const workspace = preparedWorkspace({ localSourceAvailable: true, withInstruction: false });

@@ -26,6 +26,7 @@ import {
     sep as localOutputDirectoryPathSeparator,
 } from 'node:path';
 import { type ExtensionEnvironmentKind } from '../types/extension-environment-kind';
+import { isPathAtOrBelow } from '../types/path-containment';
 import { createDirectoryIfMissing, fsyncDirectory, lstatIfExists } from './local-fs-primitives';
 
 export const LOCAL_RUN_OUTPUT_MARKER_NAME = '.adguard-filters-agent-output';
@@ -52,23 +53,6 @@ function hasUnsafeControl(value: string): boolean {
         const codePoint = character.codePointAt(0) ?? 0;
         return codePoint <= 31 || codePoint === 127;
     });
-}
-
-/**
- * Check whether one absolute path is the same as or nested below another absolute path.
- *
- * @param parentPath - Absolute boundary directory.
- * @param candidatePath - Absolute path tested against the boundary.
- * @returns True when the candidate stays at or below the parent.
- */
-function isPathAtOrBelow(parentPath: string, candidatePath: string): boolean {
-    const relativePath = relative(parentPath, candidatePath);
-    return (
-        relativePath === '' ||
-        (relativePath !== '..' &&
-            !relativePath.startsWith(`..${localOutputDirectoryPathSeparator}`) &&
-            !isAbsolute(relativePath))
-    );
 }
 
 /**

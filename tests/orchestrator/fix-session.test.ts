@@ -1,6 +1,7 @@
 import {
     ENUMERATION_NOTICE_KEY,
     ENUMERATION_STREAK_LIMIT,
+    ENUMERATION_STREAK_PHASE,
 } from '../../src/orchestrator/tool-enumeration-backstop';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -914,12 +915,12 @@ describe('fix session wiring', () => {
                 .events.filter(
                     (event) =>
                         event.type === TraceEventType.Decision &&
-                        event.payload.phase === 'tool_enumeration_streak',
+                        event.payload.phase === ENUMERATION_STREAK_PHASE,
                 )
                 .map((event) => event.payload),
         ).toEqual([
             {
-                phase: 'tool_enumeration_streak',
+                phase: ENUMERATION_STREAK_PHASE,
                 tool: 'search_rules',
                 consecutiveCalls: ENUMERATION_STREAK_LIMIT,
             },

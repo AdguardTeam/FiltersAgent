@@ -20,6 +20,7 @@ import {
     LinkedDocumentDownloadError,
     MAX_LINKED_DOCUMENT_BYTES,
 } from './linked-document-downloader';
+import { REPOSITORY_AGENT_DIRECTORY } from './repository-agent-directory';
 
 /**
  * Checkout-relative path probed when the run supplies no explicit instruction path.
@@ -28,7 +29,7 @@ import {
  * root `AGENTS.md` — the coding agent's file, which is never a run instruction. An explicit
  * `instructionPath` override always wins over this default.
  */
-export const DEFAULT_INSTRUCTION_PATH = '.github/filters-agent/AGENTS.md';
+export const DEFAULT_INSTRUCTION_PATH = `${REPOSITORY_AGENT_DIRECTORY}/AGENTS.md`;
 
 /**
  * Character ceiling on the instruction text itself.

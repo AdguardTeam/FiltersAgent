@@ -56,7 +56,7 @@ pass `--no-comment` to keep them in the output directory only.
 | `--environment <mode>` | `current` (default) runs against the filters' current state; `historical` uses the filters commit and reporter extension build in `--run-config` |
 | `--run-config <path>` | JSON case file with the issue identity, historical filters commit, and `extensionBuild` (`version`, `releaseTag`, `autobuildCommit`) |
 | `--output-dir <path>` | Output directory; defaults to `./tmp/adguard-agent-runs/issue-<number>-<environment>` |
-| `--instruction <path>` | Run instruction file, relative to the checkout; defaults to `.github/filters-agent/AGENTS.md` when present |
+| `--instruction <path>` | Run instruction file, relative to the checkout; defaults to `.github/filters-agent/AGENTS.md` when present. It does not move the [skills](../guides/github-action.md#skills): a `fix issue` or `backlog` run lists them from `.github/filters-agent/.agents/skills` |
 | `--lint-command <command>` | The filters repository's own lint command, run over each candidate rule |
 | `--model <name>` | Override the reasoning model for this run; vision follows it when `LLM_VISION_MODEL` is unset |
 | `--routing-check` | Stop right after the agent locks its environment selection |

@@ -358,6 +358,45 @@ Two limits apply:
 The instruction, without its linked documents, is capped at 16 000 characters; a longer one fails
 the run at start rather than being cut.
 
+### Skills
+
+A repository can also give the agent procedures it loads only when a task matches. Put each skill
+in `.github/filters-agent/.agents/skills/<name>/SKILL.md`:
+
+```markdown
+---
+name: report-style
+description: How this repository writes its report.
+---
+
+Read `references/report.md` and follow it when you write the report.
+```
+
+- The location is fixed: `instructionPath` changes the instruction file, never the skills
+  directory.
+- In a skill folder the file is named exactly `SKILL.md`. A `skill.md`, a folder whose name starts
+  with a dot and a `SKILL.md` symlink to a missing file are skipped without a warning.
+- `name` is lowercase letters, digits and hyphens, at most 64 characters, and defaults to the
+  folder name. `description` is required, at most 1024 characters, and says when the skill applies.
+- The agent sees every skill's name and description in its prompt and reads the skill itself when
+  the task matches. Only those lines ride every prompt, so keep them short. A skill with
+  `disable-model-invocation: true` is never listed to the agent.
+- Point to another file by a path relative to the skill's folder, as the example does: the agent
+  resolves it from the `SKILL.md` location. Nothing outside the skills directory is readable, and a
+  skill folder symlinked to a place outside it is listed but cannot be read.
+- Only text files are read: a file containing a NUL byte is refused. A single line over 50 KB
+  cannot be read either, so keep reference files broken into lines rather than minified.
+- Scripts bundled with a skill do not run.
+- The run log warns once per issue, not once per session, naming the file, or the directory when
+  none loads. A skill without a description or with malformed YAML frontmatter is skipped, and so
+  is one of two skills with the same name; the warning names the one used. An invalid name or a
+  longer description only warns: the skill still loads. A skill with
+  `disable-model-invocation: true` is warned about too, and a directory with no loadable skill at
+  all gets one warning.
+- Every `.md` file at the top of the skills directory is itself read as a skill, so keep a
+  `README.md` out of it. A `SKILL.md` at the top makes the whole directory one skill, and its
+  subfolders and other top-level `.md` files are then ignored.
+
 ### Where an accepted rule goes
 
 You do not have to tell the action anything for this to work. The agent chooses the list from what

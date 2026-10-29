@@ -1,5 +1,7 @@
 import { BrowserMode } from '../types/browser-mode';
 import type { CoreConfig } from '../config/config';
+import { createLogger } from '../logger/logger';
+import { reportRepositorySkills } from '../pi/repository-skills-report';
 import { type FixRunResult } from '../types/fix-run-result';
 import { runAgenticFixCore } from './agentic-fix-core';
 import type { FixCoreDependencies, FixCoreIssueInput, FixCoreOptions } from './fix-core-inputs';
@@ -30,6 +32,15 @@ export async function runFixCore(
 ): Promise<FixRunResult> {
     if (options.browserMode === BrowserMode.Off) {
         throw new Error('Model-driven fix requires browser mode auto or on.');
+    }
+    // Once per issue run, before the preparation session: every session reloads the skills
+    // directory, so reporting it there would repeat each warning per session. A backlog reports
+    // once per issue, each from its own checkout.
+    if (options.skillsDir !== undefined) {
+        reportRepositorySkills(
+            options.skillsDir,
+            createLogger({ verbose: options.verbose ?? false }),
+        );
     }
     return await runAgenticFixCore(config, issue, options, dependencies);
 }

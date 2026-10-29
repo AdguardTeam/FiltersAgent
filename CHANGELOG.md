@@ -10,6 +10,13 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- Added repository skills: a skill in `.github/filters-agent/.agents/skills`
+  is listed to the agent, which reads its files with a `read` tool confined to
+  that directory, and the run log warns once per issue about a skipped,
+  flagged or hidden skill and a directory with none loadable.
+
 ### Fixed
 
 - Fixed a candidate that hides an anti-adblock modal but leaves the page

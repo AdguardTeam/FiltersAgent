@@ -44,7 +44,7 @@ model. One model can fill both roles.
 - Verify candidate rules in the AdGuard Browser Extension, in uBlock Origin in
   Firefox, or in any proxy blocker packaged as a blocker module.
 - Teach the agent your filter policy, rule placement and report format in one
-  instruction file.
+  instruction file, and give it on-demand procedures as skills beside it.
 - Investigate a single issue, or a snapshot of one, from the command line.
 - Replay fixed historical issues as a benchmark and compare the agent's rules
   with the maintainers' commits.
@@ -67,7 +67,7 @@ from GitHub-hosted runners and GitHub Issues enabled on the repository.
 
 The workflow uses `AdguardTeam/FiltersAgent@v1`. The
 [GitHub Action guide](docs/guides/github-action.md) covers the instruction
-file, other blockers, rule placement, linting and the report template.
+file, skills, other blockers, rule placement, linting and the report template.
 
 ### Run it locally
 

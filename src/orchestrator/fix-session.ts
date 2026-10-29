@@ -9,7 +9,11 @@
  * evidence progress (`terminal-rejection-fingerprint.ts`).
  */
 import { TraceEventType } from '../types/trace';
-import { createToolEnumerationBackstop } from './tool-enumeration-backstop';
+import {
+    createToolEnumerationBackstop,
+    ENUMERATION_STREAK_PHASE,
+    withEnumerationBackstop,
+} from './tool-enumeration-backstop';
 import { ToolName } from '../agent/tool-names';
 import type { ToolRegistry } from '../agent/tool-registry';
 import type { LlmConfig } from '../config/config';
@@ -146,6 +150,12 @@ export interface FixSessionOptions {
      * the sealed trace carries the rendered summary block.
      */
     usageCollector?: RunUsageCollector;
+
+    /**
+     * The repository's skills directory, when the run's checkout ships one; forwarded to the
+     * session so the fix prompt lists the skills and offers `read`.
+     */
+    skillsDir?: string;
 }
 
 /**
@@ -219,7 +229,7 @@ export async function runFixSession(options: FixSessionOptions): Promise<FixSess
                     'to stop repeating the call and act on the results it has',
             );
             options.recorder.record(TraceEventType.Decision, {
-                phase: 'tool_enumeration_streak',
+                phase: ENUMERATION_STREAK_PHASE,
                 tool: streak.tool,
                 consecutiveCalls: streak.consecutiveCalls,
             });
@@ -282,6 +292,10 @@ export async function runFixSession(options: FixSessionOptions): Promise<FixSess
                 ? AbortSignal.any([options.signal, routingController.signal])
                 : (options.signal ?? routingController?.signal),
         usageCollector: options.usageCollector,
+        skillsDir: options.skillsDir,
+        // The registry tools pass through the backstop in their adapter; the skills read is
+        // built by the session layer, so it is counted here.
+        adaptSkillsRead: (tool) => withEnumerationBackstop(tool, enumerationBackstop),
         onTurnEnd: sink.onTurnEnd,
     });
     return sealFixTrace(outcome, options, {

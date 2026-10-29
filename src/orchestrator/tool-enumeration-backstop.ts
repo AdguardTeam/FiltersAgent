@@ -23,11 +23,14 @@
  * treats every tool alike.
  *
  * "Every tool" has to mean every tool the session dispatches, so the fix session's tool adapter is
- * where results pass through it. Enumeration comes from repository tools too: a run can spend its
- * 35 minutes on 293 `search_rules` calls — 72 pattern variants for the one rule blocking
- * `player.ex.co`, 234 of them answering nothing — with a 40-call streak that a backstop on the
- * browser-tool tail alone never sees.
+ * where registry results pass through it, and `withEnumerationBackstop` wraps the one tool that
+ * does not come from the registry, the repository skills `read`. Enumeration comes from repository
+ * tools too: a run can spend its 35 minutes on 293 `search_rules` calls — 72 pattern variants for
+ * the one rule blocking `player.ex.co`, 234 of them answering nothing — with a 40-call streak that
+ * a backstop on the browser-tool tail alone never sees.
  */
+
+import type { SessionToolResult, SessionToolSpec } from '../pi/session-tool-types';
 
 /**
  * Consecutive same-tool calls after which the notice rides along with the real result.
@@ -52,6 +55,14 @@ export const ENUMERATION_STREAK_LIMIT = 12;
  * refuses the call and never ends the run.
  */
 export const ENUMERATION_NOTICE_KEY = 'enumerationNotice';
+
+/**
+ * `phase` of the decision event the fix session records for each tripped streak.
+ *
+ * It is the marker a trace reader looks a caught enumeration up by, so it is spelled once here,
+ * next to the backstop it reports, instead of being respelled at the record call.
+ */
+export const ENUMERATION_STREAK_PHASE = 'tool_enumeration_streak';
 
 /**
  * One tripped streak, as the run's evidence records it.
@@ -83,6 +94,14 @@ export interface ToolEnumerationBackstopOptions {
  * One run's attached enumeration backstop.
  */
 export interface ToolEnumerationBackstop {
+    /**
+     * Count one dispatched tool call and hand back the notice the model should see with its result.
+     *
+     * @param toolName - The tool that was just dispatched.
+     * @returns Nothing below the bound; at and above it, the notice.
+     */
+    count: (toolName: string) => string | undefined;
+
     /**
      * Count one dispatched tool call and hand back what the model should see.
      *
@@ -132,26 +151,79 @@ export function createToolEnumerationBackstop(
     let streakTool: string | undefined;
     let consecutiveCalls = 0;
 
+    const count = (toolName: string): string | undefined => {
+        if (toolName === streakTool) {
+            consecutiveCalls += 1;
+        } else {
+            streakTool = toolName;
+            consecutiveCalls = 1;
+        }
+        if (consecutiveCalls < ENUMERATION_STREAK_LIMIT) {
+            return undefined;
+        }
+        if (consecutiveCalls === ENUMERATION_STREAK_LIMIT) {
+            // Once per streak, at the trip: the evidence needs to show the loop was caught,
+            // not carry one identical decision event for every call that follows it.
+            options.onStreak({ tool: toolName, consecutiveCalls });
+        }
+        return enumerationNotice(toolName, consecutiveCalls);
+    };
+
     return {
+        count,
         observe: (toolName: string, result: Record<string, unknown>): Record<string, unknown> => {
-            if (toolName === streakTool) {
-                consecutiveCalls += 1;
-            } else {
-                streakTool = toolName;
-                consecutiveCalls = 1;
+            const notice = count(toolName);
+            return notice === undefined ? result : { ...result, [ENUMERATION_NOTICE_KEY]: notice };
+        },
+    };
+}
+
+/**
+ * Append the notice to a text result, labelled with the key the registry tools' JSON results carry
+ * it under, so the model meets one notice under one name on every tool.
+ *
+ * @param text - The text the model would otherwise receive.
+ * @param notice - The notice the backstop returned.
+ * @returns The text with the notice after it.
+ */
+function withNoticeText(text: string, notice: string): string {
+    return `${text}\n\n${ENUMERATION_NOTICE_KEY}: ${notice}`;
+}
+
+/**
+ * Pass one text tool that is not registry-backed through the run's enumeration backstop.
+ *
+ * Every call is counted, whether it returns or throws: a failed call is still a model turn spent on
+ * the same tool, and it still breaks another tool's streak. At and above the bound the notice is
+ * appended to the text the model receives, the result's or the error's, and the real answer stays
+ * in front of it.
+ *
+ * @param tool - The session tool to wrap.
+ * @param backstop - The run's enumeration backstop.
+ * @returns The same tool, counted by the backstop.
+ */
+export function withEnumerationBackstop(
+    tool: SessionToolSpec,
+    backstop: ToolEnumerationBackstop,
+): SessionToolSpec {
+    return {
+        ...tool,
+        execute: async (args, signal): Promise<SessionToolResult> => {
+            let result: SessionToolResult;
+            try {
+                result = await tool.execute(args, signal);
+            } catch (error) {
+                const notice = backstop.count(tool.name);
+                if (notice === undefined) {
+                    throw error;
+                }
+                const message = error instanceof Error ? error.message : String(error);
+                throw new Error(withNoticeText(message, notice), { cause: error });
             }
-            if (consecutiveCalls < ENUMERATION_STREAK_LIMIT) {
-                return result;
-            }
-            if (consecutiveCalls === ENUMERATION_STREAK_LIMIT) {
-                // Once per streak, at the trip: the evidence needs to show the loop was caught,
-                // not carry one identical decision event for every call that follows it.
-                options.onStreak({ tool: toolName, consecutiveCalls });
-            }
-            return {
-                ...result,
-                [ENUMERATION_NOTICE_KEY]: enumerationNotice(toolName, consecutiveCalls),
-            };
+            const notice = backstop.count(tool.name);
+            return notice === undefined
+                ? result
+                : { ...result, content: withNoticeText(result.content, notice) };
         },
     };
 }

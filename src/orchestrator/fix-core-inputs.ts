@@ -198,6 +198,13 @@ export interface FixCoreOptions {
     instruction?: LoadedInstruction;
 
     /**
+     * The repository's skills directory, when its checkout ships one. Listed to every model session
+     * of the run — the instruction preparation, the fix session and each bounded application
+     * session — and the only directory their `read` tool serves.
+     */
+    skillsDir?: string;
+
+    /**
      * The repository's own lint command, when the run has one: offered to the model as `lint_rule`
      * and run once more over the published candidate, whose objection the report carries as a note.
      * It never decides anything; absent, no lint runs at all.

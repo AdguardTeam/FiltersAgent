@@ -12,7 +12,10 @@ import { ExtensionLaunchFamily } from '../environment/extension-launch';
 import { parseAdguardListKey } from '../environment/filter-list-ref';
 import { createLogger } from '../logger/logger';
 import { parseRuleApplication } from '../knowledge/instruction-application';
-import { createPhaseApplicationModelRunner as buildPhaseApplicationModelRunner } from './application-session';
+import {
+    createPhaseApplicationModelRunner as buildPhaseApplicationModelRunner,
+    type PhaseApplicationRunnerDependencies,
+} from './application-session';
 import { createHostExtensionApplicationRunner } from './host-extension-application';
 import type {
     ApplicationGoal,
@@ -44,7 +47,6 @@ import { PhaseLabel } from '../types/validation';
 import {
     hostPerformsApplication,
     type PhaseApplicationFlowHost,
-    type PhaseApplicationModelRunnerDependencies,
     type RuntimeApplicationOutcome,
 } from './phase-application-flow-host';
 
@@ -111,16 +113,15 @@ function phaseApplicationModelRunner(
     session: IBrowserSession,
     request: EnvironmentPhaseConfigurationRequest,
 ): PhaseApplicationRunner | undefined {
-    const { llm, piRuntime } = host;
-    const logger = createLogger({ verbose: host.verbose });
-    const depends: PhaseApplicationModelRunnerDependencies = {
-        runtime: piRuntime,
-        llm,
+    const depends: PhaseApplicationRunnerDependencies = {
+        runtime: host.piRuntime,
+        llm: host.llm,
         recorder: host.recorder,
         session,
         allowedOrigin: canonicalPhaseApplicationOrigin(request.targetUrl),
-        logger,
+        logger: createLogger({ verbose: host.verbose }),
         usageCollector: host.usageCollector,
+        skillsDir: host.skillsDir,
     };
     if (host.createPhaseApplicationModelRunner) {
         return host.createPhaseApplicationModelRunner(depends);
@@ -128,15 +129,7 @@ function phaseApplicationModelRunner(
     if (request.signal?.aborted ?? false) {
         return undefined;
     }
-    return buildPhaseApplicationModelRunner({
-        runtime: piRuntime,
-        llm,
-        recorder: host.recorder,
-        session,
-        allowedOrigin: canonicalPhaseApplicationOrigin(request.targetUrl),
-        logger,
-        usageCollector: host.usageCollector,
-    });
+    return buildPhaseApplicationModelRunner(depends);
 }
 
 /**

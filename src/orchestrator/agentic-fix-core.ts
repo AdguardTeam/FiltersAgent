@@ -263,6 +263,7 @@ export async function runAgenticFixCore(
                     preparedExtension: options.preparedExtension,
                     instruction: options.instruction,
                     signal: options.signal,
+                    skillsDir: options.skillsDir,
                 },
                 {
                     runPreparationSession: dependencies.runPreparationSession,
@@ -333,6 +334,7 @@ export async function runAgenticFixCore(
                 // between-phases rule application performs this instruction's application contract
                 // through the bounded application sessions.
                 instruction: options.instruction,
+                skillsDir: options.skillsDir,
                 llm: config.llm,
                 piRuntime,
                 // The run's one collector also meters the bounded application sessions, so their
@@ -375,6 +377,7 @@ export async function runAgenticFixCore(
             logger,
             instruction: options.instruction,
             usageCollector: dependencies.usageCollector,
+            skillsDir: options.skillsDir,
         });
         dependencies.onAgentRunArtifacts?.({
             decision: run.terminalSource === FixTerminalSource.ModelFinishFix ? run.terminal : null,

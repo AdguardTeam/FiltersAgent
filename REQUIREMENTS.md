@@ -123,6 +123,9 @@ call with a structured (Valibot) answer. `@earendil-works/pi-*` is imported only
 
 Tool names are declared once, in `src/agent/tool-names.ts`; their model-facing guidance is in
 `src/agent/tool-catalog.ts`. Each mode gets its own tool surface from `src/agent/tool-factory.ts`.
+`read` is the one tool no mode surface declares: the session runner adds it when the repository
+ships a skill the agent is shown, confined to the skills directory. The fix session counts its calls
+in the same enumeration backstop as every registry tool.
 
 ### 6.2 Shipped tool surface
 

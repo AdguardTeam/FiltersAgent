@@ -10,12 +10,14 @@
  * `launchModeSession` runs the session and hands back the sealed outcome plus the run's compaction
  * count; each session caller maps the seal onto its own result.
  */
-import type { ToolName } from '../agent/tool-names';
+import { TOOL_GUIDANCE } from '../agent/tool-catalog';
+import { ToolName } from '../agent/tool-names';
 import type { LlmConfig } from '../config/config';
 import type { Logger } from '../logger/logger';
 import { providerMaxRetries } from '../pi/llm-wiring';
 import type { PiRuntime } from '../pi/runtime';
 import { runAgentSession } from '../pi/session-runner';
+import { createSkillsReadTool } from '../pi/skills-read-tool';
 import type { TerminalToolController } from '../pi/terminal-tool';
 import type { TerminalOutcome } from '../pi/seal-types';
 import type { TurnObserver } from '../pi/session-observations';
@@ -30,6 +32,7 @@ import {
     recordSessionCompaction,
     recordSessionTurn,
     recordToolBounce,
+    withExecutionRecording,
 } from '../tracer/session-trace';
 import type { TraceRecorder } from '../tracer/trace-recorder';
 
@@ -128,6 +131,20 @@ export interface ModeSessionRequest<T> {
     tools: SessionToolSpec[];
 
     /**
+     * The repository's skills directory, when the run's checkout ships one. The session lists the
+     * skills pi loads from it and offers the confined `read` tool; absent keeps the session without
+     * skills.
+     */
+    skillsDir?: string;
+
+    /**
+     * Wraps the confined `read` tool before its trace recording, for a mode whose own tools pass
+     * through a run-wide adapter: the fix session counts it in its enumeration backstop. Absent
+     * leaves the tool as built.
+     */
+    adaptSkillsRead?: (tool: SessionToolSpec) => SessionToolSpec;
+
+    /**
      * The mode's turn cap.
      */
     maxTurns: number;
@@ -195,6 +212,7 @@ export async function launchModeSession<T>(
     const compaction = recordSessionCompaction(recorder);
     const recordTurn = recordSessionTurn(recorder);
     const extraTurnSink = request.onTurnEnd;
+    const adaptSkillsRead = request.adaptSkillsRead ?? ((tool: SessionToolSpec) => tool);
     const { systemPrompt, userTask, nudge, wrapUp } = renderSessionPrompts(
         request.terminalToolName,
         request.renderTask,
@@ -207,6 +225,19 @@ export async function launchModeSession<T>(
         wrapUp,
         terminal: request.terminal,
         tools: request.tools,
+        ...(request.skillsDir === undefined
+            ? {}
+            : {
+                  skills: {
+                      dir: request.skillsDir,
+                      readTool: withExecutionRecording(
+                          adaptSkillsRead(
+                              createSkillsReadTool(request.skillsDir, TOOL_GUIDANCE[ToolName.Read]),
+                          ),
+                          recorder,
+                      ),
+                  },
+              }),
         budgets: {
             maxTurns: request.maxTurns,
             wallClockMs: request.wallClockMs,
