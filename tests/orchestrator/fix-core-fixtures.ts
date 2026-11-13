@@ -57,8 +57,6 @@ export function environmentSelectionCall(kind: SelectionFixtureKind = 'browser_e
                     ],
                     conflicts: [],
                 },
-                rationale: 'The selected environment best fits the issue and host capabilities.',
-                confidence: 0.85,
             }),
         },
     };

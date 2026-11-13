@@ -108,8 +108,6 @@ function lockedHost(requiredCapabilities: EnvironmentCapability[] = []): Environ
             evidence: [{ source: 'issue_body', observation: 'A visible ad remains.' }],
             conflicts: [],
         },
-        rationale: 'Use the proxy executor.',
-        confidence: 0.8,
     });
     return host;
 }

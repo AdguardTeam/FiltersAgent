@@ -328,8 +328,6 @@ function scriptedAnalysisOnlyLoop(): ScriptedReply[] {
                 ],
                 conflicts: [],
             },
-            rationale: 'The selected route matches the reported desktop filtering surface.',
-            confidence: 0.85,
         }),
         toolCall('finish_fix', {
             outcome: 'analysis_only',

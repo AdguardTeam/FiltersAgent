@@ -103,8 +103,6 @@ function readyExtensionSelection(productVersion: string) {
             evidence: [{ source: 'issue_body', observation: 'An advertisement is visible.' }],
             conflicts: [],
         },
-        rationale: 'Use the Browser Extension environment.',
-        confidence: 1,
     });
     host.bindActualContext('browser_extension', {
         product: 'AdGuard Browser Extension',
@@ -141,8 +139,6 @@ function cliSelection(state: 'ready' | 'limited') {
             evidence: [{ source: 'issue_body', observation: 'The desktop product is reported.' }],
             conflicts: [],
         },
-        rationale: 'Use the CLI approximation selected by the agent.',
-        confidence: 1,
     });
     if (state === 'limited') {
         host.attachExecutorPreparation({
@@ -637,8 +633,6 @@ describe('FixRunResultSchema browser session evidence', () => {
                 evidence: [{ source: 'issue_body', observation: 'An advertisement is visible.' }],
                 conflicts: [],
             },
-            rationale: 'Use the Browser Extension environment.',
-            confidence: 1,
         });
         host.bindActualContext('browser_extension', {
             product: 'AdGuard Browser Extension',

@@ -41,6 +41,32 @@ describe('EnvironmentSelectionHost', () => {
         });
     });
 
+    it('records the intent rationale and confidence as the reason for the lock', () => {
+        const selectionHost = host();
+
+        expect(selectionHost.select(extensionDecision)).toMatchObject({ accepted: true });
+        expect(selectionHost.snapshot()).toMatchObject({
+            rationale: intent.rationale,
+            confidence: intent.confidence,
+        });
+    });
+
+    it('rejects a selection that carries a rationale and confidence outside the intent', () => {
+        const selectionHost = host();
+
+        expect(
+            selectionHost.select({
+                ...extensionDecision,
+                rationale: 'The extension can reproduce this report.',
+                confidence: 0.85,
+            }),
+        ).toMatchObject({
+            accepted: false,
+            errorKind: 'invalid_environment_selection',
+        });
+        expect(selectionHost.snapshot()).toBeNull();
+    });
+
     it('binds the executable official baseline to the locked Extension environment', () => {
         const selectionHost = host();
 
@@ -131,7 +157,6 @@ describe('EnvironmentSelectionHost', () => {
                 ...extensionDecision,
                 kind: 'unsupported_product_case',
                 requiredCapabilities: [],
-                rationale: 'The report concerns the Browser Assistant user interface.',
                 intent: { ...intent, issueType: 'product_specific' },
             }),
         ).toMatchObject({ accepted: true, state: 'unsupported', filterBaseline: null });
@@ -250,7 +275,6 @@ describe('EnvironmentSelectionHost', () => {
                 ...extensionDecision,
                 kind: 'unsupported_product_case',
                 requiredCapabilities: [],
-                rationale: 'The report concerns the Browser Assistant user interface.',
                 intent: { ...intent, issueType: 'product_specific' },
             }),
         ).toMatchObject({
@@ -337,7 +361,7 @@ describe('EnvironmentSelectionHost', () => {
         const selectionHost = host();
         const invalid = {
             ...extensionDecision,
-            rationale: 'x'.repeat(2_001),
+            intent: { ...intent, rationale: 'x'.repeat(2_001) },
         };
 
         expect(selectionHost.select(invalid)).toMatchObject({

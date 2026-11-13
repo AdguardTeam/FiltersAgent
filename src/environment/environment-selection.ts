@@ -45,6 +45,7 @@ import {
 } from './environment-selection-contract';
 import {
     EVIDENCE_ROUTE_CAPABILITIES,
+    SOLE_EXECUTOR_CONFIDENCE,
     SOLE_EXECUTOR_INTENT_RATIONALE,
     SOLE_EXECUTOR_RATIONALE,
     boundedContext,
@@ -175,8 +176,8 @@ export class EnvironmentSelectionHost {
             if (this.selected.rejectedRequests.length < MAX_SELECTION_HISTORY) {
                 this.selected.rejectedRequests.push({
                     requestedKind: parsed.output.kind,
-                    rationale: parsed.output.rationale,
-                    confidence: parsed.output.confidence,
+                    rationale: parsed.output.intent.rationale,
+                    confidence: parsed.output.intent.confidence,
                     rejectedAt: this.now(),
                     errorKind: EnvironmentSelectionRejectionReason.EnvironmentLocked,
                 });
@@ -200,7 +201,11 @@ export class EnvironmentSelectionHost {
                     `${[...this.descriptors.keys()].join(', ')}.`,
             };
         }
-        return this.lock(parsed.output);
+        return this.lock(
+            parsed.output,
+            parsed.output.intent.rationale,
+            parsed.output.intent.confidence,
+        );
     }
 
     /**
@@ -231,19 +236,21 @@ export class EnvironmentSelectionHost {
                 selectedKind: this.selected.selectedKind,
             };
         }
-        return this.lock({
-            kind: name,
-            requiredCapabilities: [],
-            intent: {
-                issueType: IntentIssueType.Unknown,
-                rationale: SOLE_EXECUTOR_INTENT_RATIONALE,
-                confidence: 1,
-                evidence: [],
-                conflicts: [],
+        return this.lock(
+            {
+                kind: name,
+                requiredCapabilities: [],
+                intent: {
+                    issueType: IntentIssueType.Unknown,
+                    rationale: SOLE_EXECUTOR_INTENT_RATIONALE,
+                    confidence: SOLE_EXECUTOR_CONFIDENCE,
+                    evidence: [],
+                    conflicts: [],
+                },
             },
-            rationale: SOLE_EXECUTOR_RATIONALE,
-            confidence: 1,
-        });
+            SOLE_EXECUTOR_RATIONALE,
+            SOLE_EXECUTOR_CONFIDENCE,
+        );
     }
 
     /**
@@ -253,9 +260,15 @@ export class EnvironmentSelectionHost {
      * through here, so both produce byte-identical snapshot shapes.
      *
      * @param request - Validated selection request naming the resolver's executor set.
+     * @param rationale - Why this environment was locked, recorded in the snapshot.
+     * @param confidence - Confidence in the lock, from 0 to 1, recorded in the snapshot.
      * @returns Accepted lock metadata for the named executor or the reserved case.
      */
-    private lock(request: AgentEnvironmentSelectionRequest): EnvironmentSelectionResponse {
+    private lock(
+        request: AgentEnvironmentSelectionRequest,
+        rationale: string,
+        confidence: number,
+    ): EnvironmentSelectionResponse {
         const descriptor =
             request.kind === EnvironmentSelectionReservedCase.UnsupportedProductCase
                 ? null
@@ -302,8 +315,8 @@ export class EnvironmentSelectionHost {
         this.selected = v.parse(EnvironmentSelectionSnapshotSchema, {
             selectedKind: request.kind,
             state,
-            rationale: request.rationale,
-            confidence: request.confidence,
+            rationale,
+            confidence,
             requiredCapabilities: [...new Set(request.requiredCapabilities)],
             advertisedCapabilities,
             missingCapabilities: [...new Set(missingCapabilities)],

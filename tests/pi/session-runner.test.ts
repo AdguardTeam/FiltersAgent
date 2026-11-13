@@ -412,8 +412,8 @@ describe('runAgentSession', () => {
     });
 
     it('returns a pi schema rejection as a tool error and seals with the corrected payload', async () => {
-        // `{ verdict: 'maybe' }` fails the advertised picklist BEFORE execute runs: pi bounces
-        // it with its own validation wording, the runner counts it through the
+        // `{ verdict: 'maybe' }` fails the advertised picklist BEFORE execute runs: the call is
+        // bounced with a validation error, the runner counts it through the
         // tool_execution_end observation, and the corrected call seals the run.
         const { outcome, requests } = await runScripted([
             verdictCall({ verdict: 'maybe' }),
@@ -429,8 +429,8 @@ describe('runAgentSession', () => {
         expect(requests).toHaveLength(2);
         const toolMessages = requests[1]!.messages.filter((m) => m.role === 'tool');
         const toolText = JSON.stringify(toolMessages);
-        // pi's wording, not ours — assert only what it contractually carries: the tool name and
-        // the offending property path (verified against the installed dists).
+        // Assert only what the refusal contractually carries, whoever words it: the tool name
+        // and the offending property path.
         expect(toolText).toContain(TERMINAL_TOOL_NAME);
         expect(toolText).toContain('verdict');
     });

@@ -386,8 +386,6 @@ function selectionRequest(
             evidence: [{ source: 'issue_body', observation: 'The report describes the symptom.' }],
             conflicts: [],
         },
-        rationale: 'This environment best matches the available evidence and capabilities.',
-        confidence: 0.85,
     };
 }
 
@@ -2102,11 +2100,11 @@ describe('AgentRuntime', () => {
         });
     });
 
-    it('reuses the first successful reporter screenshot observation within one run', async () => {
+    it('sends every question about a reporter screenshot to vision', async () => {
         const analyzeScreenshot = vi.fn(async (args: Record<string, unknown>) => ({
             artifactId: args.artifactId,
             model: 'vision-model',
-            analysis: 'A red arrow identifies the yellow sponsored link as the reported target.',
+            analysis: `Answer to: ${String(args.prompt)}`,
         }));
         const baseRegistry = emptyRegistry();
         baseRegistry.register({
@@ -2128,18 +2126,67 @@ describe('AgentRuntime', () => {
             issueScreenshotIndex: 1,
             prompt: 'Identify annotations and the exact reporter-defined target.',
         });
-        const repeated = await runtime.registry.dispatch('analyze_screenshot', {
+        const second = await runtime.registry.dispatch('analyze_screenshot', {
             issueScreenshotIndex: 1,
-            prompt: 'Inspect the same reporter screenshot again.',
+            prompt: 'Where does the tip of the arrow land?',
         });
 
         expect(first).toEqual({
             issueScreenshotIndex: 1,
             model: 'vision-model',
-            analysis: 'A red arrow identifies the yellow sponsored link as the reported target.',
+            analysis: 'Answer to: Identify annotations and the exact reporter-defined target.',
         });
-        expect(repeated).toEqual({ ...first, cached: true });
-        expect(analyzeScreenshot).toHaveBeenCalledTimes(1);
+        expect(second).toEqual({
+            issueScreenshotIndex: 1,
+            model: 'vision-model',
+            analysis: 'Answer to: Where does the tip of the arrow land?',
+        });
+        expect(analyzeScreenshot).toHaveBeenCalledTimes(2);
+    });
+
+    it('keeps the first analysis of a reporter screenshot as the reporter symptom', async () => {
+        const baseRegistry = emptyRegistry();
+        baseRegistry.register({
+            definition: {
+                type: 'function',
+                function: {
+                    name: 'analyze_screenshot',
+                    description: 'Analyze a registered screenshot',
+                    parameters: { type: 'object', properties: {} },
+                },
+            },
+            handler: async (args: Record<string, unknown>) => ({
+                artifactId: args.artifactId,
+                analysis: `Answer to: ${String(args.prompt)}`,
+            }),
+        });
+        let reporterSymptom: (() => string | undefined) | undefined;
+        const runtime = await createExtensionRuntime(runtimeOptions(), {
+            createBaseRegistry: async () => baseRegistry,
+            createBrowserSession: async () => ({ close: vi.fn() }) as unknown as BrowserSession,
+            createBrowserRegistry: async (context) => {
+                reporterSymptom = context.reporterSymptom;
+                return emptyRegistry();
+            },
+        });
+
+        await runtime.registry.dispatch('analyze_screenshot', {
+            issueScreenshotIndex: 1,
+            prompt: 'Describe the reporter-visible defect.',
+        });
+        await runtime.registry.dispatch('analyze_screenshot', {
+            issueScreenshotIndex: 1,
+            prompt: 'Where does the tip of the arrow land?',
+        });
+        await runtime.registry.dispatch('launch_browser', {
+            extension: 'none',
+            targetUrl: 'https://nettg.pl/',
+            profile: browserProfile,
+        });
+
+        // The browser tools judge the page against what the reporter showed: the first analysis
+        // describes the screenshot, a later answer covers one detail of it and is not added.
+        expect(reporterSymptom?.()).toBe('Answer to: Describe the reporter-visible defect.');
     });
 
     it('returns bounded reporter screenshot references for an invalid index', async () => {

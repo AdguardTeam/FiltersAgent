@@ -601,7 +601,7 @@ describe('createSingleShotClient', () => {
         expect(provider.requests[0]!.reasoningEffort).toBeNull();
     });
 
-    it('refuses an image beyond the vision byte cap before any request', async () => {
+    it('refuses an image that cannot be decoded before any request', async () => {
         provider = await startHermeticProvider({
             scenario: HermeticScenario.Scripted,
             script: [{ kind: ScriptedReplyKind.Text, text: '{"verdict":"x","count":1}' }],
@@ -618,7 +618,7 @@ describe('createSingleShotClient', () => {
                 ],
                 schema: VerdictSchema,
             }),
-        ).rejects.toThrow(/byte cap/);
+        ).rejects.toThrow(/could not be decoded/);
         expect(provider.requests).toHaveLength(0);
     });
 });
@@ -749,6 +749,24 @@ describe('vision image limits', { timeout: VISION_FIT_TEST_TIMEOUT_MS }, () => {
         expect(image.toString('base64').length).toBeGreaterThan(
             VISION_IMAGE_LIMITS.maxEncodedBytes,
         );
+
+        const [received] = await sendImages([{ bytes: image }]);
+
+        expect(received!.bytes.toString('base64').length).toBeLessThanOrEqual(
+            VISION_IMAGE_LIMITS.maxEncodedBytes,
+        );
+    });
+
+    it('fits an image whose file is larger than the per-image size limit', async () => {
+        // Random noise does not compress, so the file itself passes the per-image limit.
+        const width = 1_500;
+        const height = 1_200;
+        const noise = randomBytes(width * height * 3);
+        const image = encodePng(width, height, (x, y) => {
+            const offset = (y * width + x) * 3;
+            return [noise[offset]!, noise[offset + 1]!, noise[offset + 2]!];
+        });
+        expect(image.byteLength).toBeGreaterThan(MAX_VISION_IMAGE_BYTES);
 
         const [received] = await sendImages([{ bytes: image }]);
 

@@ -636,8 +636,6 @@ function cliSelection(): unknown {
             evidence: [{ source: 'issue_body', observation: 'A banner remains visible.' }],
             conflicts: [],
         },
-        rationale: 'CLI is the closest available approximation of the reported desktop product.',
-        confidence: 0.8,
     };
 }
 

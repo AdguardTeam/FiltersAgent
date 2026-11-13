@@ -302,8 +302,6 @@ function selectionArguments(kind: typeof DEMO_MODULE_EXECUTOR | 'unsupported_pro
             ],
             conflicts: [],
         },
-        rationale: 'The selected environment matches the reported capability.',
-        confidence: 0.85,
     };
 }
 

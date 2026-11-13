@@ -213,8 +213,6 @@ function selectionRequest(kind: string): Record<string, unknown> {
             evidence: [{ source: 'issue_body', observation: 'The report describes the symptom.' }],
             conflicts: [],
         },
-        rationale: 'This environment best matches the available evidence and capabilities.',
-        confidence: 0.85,
     };
 }
 

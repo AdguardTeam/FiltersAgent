@@ -134,8 +134,6 @@ export const AgentEnvironmentSelectionRequestSchema = v.strictObject({
     kind: EnvironmentSelectionKindSchema,
     requiredCapabilities: v.pipe(v.array(EnvironmentCapabilitySchema), v.maxLength(16)),
     intent: AgentIntentAssessmentSchema,
-    rationale: BoundedModelTextSchema,
-    confidence: v.pipe(v.number(), v.minValue(0), v.maxValue(1)),
 });
 
 export const ReportedExecutionContextSchema = v.strictObject({

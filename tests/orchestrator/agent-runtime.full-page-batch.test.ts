@@ -137,8 +137,6 @@ async function lockExtensionEnvironment(runtime: AgentRuntime): Promise<void> {
                 ],
                 conflicts: [],
             },
-            rationale: 'The reported symptom is reproducible in the browser extension environment.',
-            confidence: 0.9,
         });
     }
 }

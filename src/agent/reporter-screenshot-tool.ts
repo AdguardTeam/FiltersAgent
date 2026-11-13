@@ -4,9 +4,9 @@
  * of transcribing an opaque artifact identity.
  *
  * The plain tool in `analyze-screenshot-tool.ts` owns the vision call itself; this one wraps that
- * registration, resolves a reporter index onto the artifact behind it, caches the first successful
- * reporter analysis, and reports every inspected capture back to its host. It sits here rather than
- * with the runtime lifecycle because it is one tool with two variants, not a lifecycle concern.
+ * registration, resolves a reporter index onto the artifact behind it, and reports every successful
+ * reporter analysis and every inspected capture back to its host. It sits here rather than with the
+ * runtime lifecycle because it is one tool with two variants, not a lifecycle concern.
  */
 import type { ToolDefinition, ToolRegistry } from './tool-registry';
 import { ToolName } from './tool-names';
@@ -38,25 +38,14 @@ export interface ReporterScreenshotToolHost {
     dispatchBaseTool(name: string, args: Record<string, unknown>): Promise<Record<string, unknown>>;
 
     /**
-     * Read the cached analysis of one reporter screenshot.
-     *
-     * @param artifactId - Reporter screenshot artifact identity.
-     * @returns The cached result, or undefined when this screenshot was never analyzed.
-     */
-    cachedReporterScreenshotResult(artifactId: string): Record<string, unknown> | undefined;
-
-    /**
-     * Retain the first successful analysis of one reporter screenshot for the rest of the run.
+     * Record one successful analysis of a reporter screenshot. The run keeps the first analysis of
+     * each screenshot as the reporter's observation; a later question about the same screenshot is
+     * answered by vision again and changes nothing here.
      *
      * @param artifactId - Reporter screenshot artifact identity.
      * @param analysis - Non-empty analysis text returned by the vision provider.
-     * @param result - Complete tool result to cache for a repeated request.
      */
-    recordReporterScreenshotAnalysis(
-        artifactId: string,
-        analysis: string,
-        result: Record<string, unknown>,
-    ): void;
+    recordReporterScreenshotAnalysis(artifactId: string, analysis: string): void;
 
     /**
      * Credit one screenshot artifact as inspected by the vision model.
@@ -194,17 +183,6 @@ export function registerReporterScreenshotTool(
                     resolvedIssueScreenshotIndex = requestedIndex;
                     resolvedArtifactId = host.issueAttachmentArtifactIds[requestedIndex - 1]!;
                 }
-                const cachedReporterResult =
-                    resolvedIssueScreenshotIndex !== undefined
-                        ? host.cachedReporterScreenshotResult(resolvedArtifactId)
-                        : undefined;
-                if (cachedReporterResult) {
-                    return {
-                        ...cachedReporterResult,
-                        issueScreenshotIndex: resolvedIssueScreenshotIndex,
-                        cached: true,
-                    };
-                }
                 const dispatchArgs: Record<string, unknown> = {
                     ...args,
                     artifactId: resolvedArtifactId,
@@ -231,7 +209,7 @@ export function registerReporterScreenshotTool(
                     };
                 }
                 if (host.issueAttachmentArtifactIds.includes(resolvedArtifactId) && hasAnalysis) {
-                    host.recordReporterScreenshotAnalysis(resolvedArtifactId, analysis, result);
+                    host.recordReporterScreenshotAnalysis(resolvedArtifactId, analysis);
                 }
                 if (hasAnalysis) {
                     host.recordScreenshotAnalysis(resolvedArtifactId);

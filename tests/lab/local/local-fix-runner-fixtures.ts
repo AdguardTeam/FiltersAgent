@@ -137,8 +137,6 @@ export function extensionEnvironmentSelection() {
             ],
             conflicts: [],
         },
-        rationale: 'Use the Browser Extension for this ordinary website-filtering report.',
-        confidence: 0.95,
     });
     host.bindActualContext('browser_extension', {
         product: 'AdGuard Browser Extension',

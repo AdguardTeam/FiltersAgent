@@ -38,16 +38,12 @@ export const extensionDecision = {
     kind: 'browser_extension',
     requiredCapabilities: ['browser_navigation', 'filtering_control'],
     intent,
-    rationale: 'The extension can reproduce this website-filtering report.',
-    confidence: 0.85,
 };
 
 export const cliDecision = {
     kind: 'adguard_cli',
     requiredCapabilities: [],
     intent,
-    rationale: 'CLI is the closest available approximation of the reported desktop product.',
-    confidence: 0.8,
 };
 
 export const extensionDescriptor: FilteringEnvironmentDescriptor = {

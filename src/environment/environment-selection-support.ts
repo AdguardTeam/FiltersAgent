@@ -31,6 +31,12 @@ export const SOLE_EXECUTOR_RATIONALE = 'Sole executor available for this run';
 export const SOLE_EXECUTOR_INTENT_RATIONALE = 'No executor choice was offered for this run.';
 
 /**
+ * Confidence recorded with the deterministic sole-executor lock: nothing was chosen, so nothing is
+ * uncertain.
+ */
+export const SOLE_EXECUTOR_CONFIDENCE = 1;
+
+/**
  * Capabilities the AdGuard CLI evidence route grants once its first session launches. The route
  * exists only after preparation proved the proxy filters an HTTPS request to the run's target.
  *

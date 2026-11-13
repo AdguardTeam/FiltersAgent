@@ -10,6 +10,20 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed `select_environment` refusing a call that gives its rationale and
+  confidence only inside `intent`: the request now has that one pair, and the
+  top-level `rationale` and `confidence` are gone.
+- Fixed a tool call refused for its arguments naming the wrong field: the
+  refusal lists every missing or unknown field by its real path, for every
+  tool.
+- Fixed a second question about a reporter screenshot getting the answer to
+  the first one: every question goes to the vision model.
+- Fixed a reporter screenshot larger than 5 MB being refused before it
+  reached the vision model: it is fitted to the provider's image limits like
+  any other image.
+
 ## [1.2.0] - 2026-10-29
 
 ### Added

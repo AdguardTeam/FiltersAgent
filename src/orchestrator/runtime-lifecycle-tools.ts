@@ -95,25 +95,14 @@ export interface RuntimeLifecycleToolsHost {
     recordGuidanceConsulted(): void;
 
     /**
-     * Read the cached analysis of one reporter screenshot.
-     *
-     * @param artifactId - Reporter screenshot artifact identity.
-     * @returns The cached result, or undefined when this screenshot was never analyzed.
-     */
-    cachedReporterScreenshotResult(artifactId: string): Record<string, unknown> | undefined;
-
-    /**
-     * Retain the first successful analysis of one reporter screenshot for the rest of the run.
+     * Record one successful analysis of a reporter screenshot. The run keeps the first analysis of
+     * each screenshot as the reporter's observation; a later question about the same screenshot is
+     * answered by vision again and changes nothing here.
      *
      * @param artifactId - Reporter screenshot artifact identity.
      * @param analysis - Non-empty analysis text returned by the vision provider.
-     * @param result - Complete tool result to cache for a repeated request.
      */
-    recordReporterScreenshotAnalysis(
-        artifactId: string,
-        analysis: string,
-        result: Record<string, unknown>,
-    ): void;
+    recordReporterScreenshotAnalysis(artifactId: string, analysis: string): void;
 
     /**
      * Credit one screenshot artifact as inspected by the vision model.
@@ -248,10 +237,8 @@ export function registerLifecycleTools(
     registerReporterScreenshotTool(registry, {
         issueAttachmentArtifactIds: host.issueAttachmentArtifactIds,
         dispatchBaseTool: (name, args) => host.dispatchBaseTool(name, args),
-        cachedReporterScreenshotResult: (artifactId) =>
-            host.cachedReporterScreenshotResult(artifactId),
-        recordReporterScreenshotAnalysis: (artifactId, analysis, result) =>
-            host.recordReporterScreenshotAnalysis(artifactId, analysis, result),
+        recordReporterScreenshotAnalysis: (artifactId, analysis) =>
+            host.recordReporterScreenshotAnalysis(artifactId, analysis),
         recordScreenshotAnalysis: (artifactId) => host.recordScreenshotAnalysis(artifactId),
         noteWithheldPageCapture: (artifactId, obstruction, result) => {
             const captureSessionId = host.screenshotSessionId(artifactId);

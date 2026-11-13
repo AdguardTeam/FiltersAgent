@@ -534,8 +534,6 @@ describe('fix session wiring', () => {
                             ],
                             conflicts: [],
                         },
-                        rationale: 'The selected environment best fits the issue.',
-                        confidence: 0.85,
                     }),
                 ),
                 toolCall('open_page', '{"url":"https://example.org/article"}'),
@@ -1501,7 +1499,5 @@ function environmentSelectionArgs() {
             ],
             conflicts: [],
         },
-        rationale: 'The selected environment best fits the issue and host capabilities.',
-        confidence: 0.85,
     };
 }

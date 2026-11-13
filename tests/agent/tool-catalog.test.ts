@@ -215,13 +215,7 @@ describe('TOOL_PARAMETER_SCHEMAS', () => {
 
     it('advertises the registered required fields for the strict fix-real tools', () => {
         const expectedRequired = {
-            select_environment: [
-                'kind',
-                'requiredCapabilities',
-                'intent',
-                'rationale',
-                'confidence',
-            ],
+            select_environment: ['kind', 'requiredCapabilities', 'intent'],
             update_observed_intent: [
                 'issueType',
                 'rationale',

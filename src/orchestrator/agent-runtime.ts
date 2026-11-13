@@ -790,11 +790,6 @@ export class AgentRuntime {
     private reporterScreenshotObservations: string[] = [];
 
     /**
-     * Successful reporter screenshot results reused for repeated inspection requests in this run.
-     */
-    private readonly reporterScreenshotResults = new Map<string, Record<string, unknown>>();
-
-    /**
      * Unique reporter screenshot artifacts successfully inspected by the vision model.
      */
     private readonly analyzedIssueScreenshotArtifactIds = new Set<string>();
@@ -2192,18 +2187,13 @@ export class AgentRuntime {
             recordGuidanceConsulted: () => {
                 this.guidanceConsulted = true;
             },
-            cachedReporterScreenshotResult: (artifactId) =>
-                this.reporterScreenshotResults.get(artifactId),
-            recordReporterScreenshotAnalysis: (artifactId, analysis, result) => {
+            recordReporterScreenshotAnalysis: (artifactId, analysis) => {
                 if (!this.analyzedIssueScreenshotArtifactIds.has(artifactId)) {
                     this.reporterScreenshotObservations.push(
                         analysis.slice(0, MAX_REPORTER_SCREENSHOT_OBSERVATION_LENGTH),
                     );
                 }
                 this.analyzedIssueScreenshotArtifactIds.add(artifactId);
-                const cachedResult = { ...result };
-                delete cachedResult.artifactId;
-                this.reporterScreenshotResults.set(artifactId, cachedResult);
             },
             recordScreenshotAnalysis: (artifactId) => {
                 this.recordScreenshotAnalysis(artifactId);

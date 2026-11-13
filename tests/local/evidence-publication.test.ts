@@ -360,8 +360,6 @@ function createPublicationFixture(candidate: CandidatePatch | null) {
             evidence: [{ source: 'issue_body', observation: 'An ad remains visible.' }],
             conflicts: [],
         },
-        rationale: 'Use the browser extension environment.',
-        confidence: 0.95,
     });
     environment.bindActualContext('browser_extension', {
         product: 'AdGuard Browser Extension',

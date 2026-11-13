@@ -134,8 +134,6 @@ describe('the filter baseline a run declares', () => {
                 ],
                 conflicts: [],
             },
-            rationale: 'uBlock Origin in Firefox reproduces this report directly.',
-            confidence: 0.9,
         };
 
         // Without a declared baseline the reported uBO list names resolve to nothing and the

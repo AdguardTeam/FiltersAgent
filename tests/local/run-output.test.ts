@@ -197,8 +197,6 @@ function readyAdguardCliSelection(): EnvironmentSelectionSnapshot {
             evidence: [{ source: 'issue_body', observation: 'A visible advertisement remains.' }],
             conflicts: [],
         },
-        rationale: 'Use the isolated AdGuard CLI engine.',
-        confidence: 1,
     });
     host.attachExecutorPreparation({
         ready: true,

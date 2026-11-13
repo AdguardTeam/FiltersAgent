@@ -173,8 +173,8 @@ export interface SessionToolBounceObservation {
     args: Record<string, unknown>;
 
     /**
-     * Why the call was refused — pi's own text with its echoed copy of the arguments stripped, so
-     * the reason is a reason and the payload is recorded once, as the call's arguments. Stripped on
+     * Why the call was refused — the refusal with any echoed copy of the arguments stripped, so the
+     * reason is a reason and the payload is recorded once, as the call's arguments. Stripped on
      * EVERY bounce, whatever recorded the call, because this same text is the fingerprint the
      * terminal tool's same-reason streak compares: with pi's echoed submission left inside, the
      * streak degrades into a byte-comparison of payloads and a model shortening its answer by one

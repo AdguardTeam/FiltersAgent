@@ -9,6 +9,7 @@ import {
 } from '@earendil-works/pi-coding-agent';
 import type { ReasoningEffort } from '../config/reasoning-effort';
 import { createLogger, type Logger } from '../logger/logger';
+import { explainPreExecuteRejection } from './pre-execute-validation';
 import { attachRunGuards } from './run-guards';
 import { settleRun } from './run-sealing';
 import type { PiRuntime } from './runtime';
@@ -262,6 +263,13 @@ function toPiTool(
                     'parsed tool arguments the model sent as JSON text',
                 );
             }
+            explainPreExecuteRejection({
+                toolName: spec.name,
+                description: spec.description,
+                advertisedSchema: parameters,
+                schema: spec.parameters,
+                args: prepared,
+            });
             return prepared;
         },
         ...(spec.executionMode === undefined ? {} : { executionMode: spec.executionMode }),

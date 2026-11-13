@@ -6,11 +6,10 @@ import { resizeImage } from '@earendil-works/pi-coding-agent';
  * Caller-input conversion for single-shot LLM calls: caller-authored messages to pi context parts
  * (system entries merge into the one system prompt, user entries become text or
  * text-plus-image-parts messages) and image intake (screenshot file path or in-memory bytes become
- * pi image content parts, with MIME sniffing, the vision byte cap and the provider's per-image
- * limits enforced before any request leaves the module). Every image any vision request carries
- * passes through here, so this is the one place that fits images to {@link VISION_IMAGE_LIMITS}.
- * Owned by the input side of the single-shot mechanism so the call-path module stays inside the
- * repo's ~500-line module rule.
+ * pi image content parts, with MIME sniffing and the provider's per-image limits enforced before
+ * any request leaves the module). Every image any vision request carries passes through here, so
+ * this is the one place that fits images to {@link VISION_IMAGE_LIMITS}. Owned by the input side of
+ * the single-shot mechanism so the call-path module stays inside the repo's ~500-line module rule.
  *
  * The same limits decide, before a request is even planned, whether a stored full-page overview may
  * be offered to vision at all ({@link visionOverviewRefusal}); every caller that makes that
@@ -49,11 +48,13 @@ export const VisionImageMime = {
 export type VisionImageMime = (typeof VisionImageMime)[keyof typeof VisionImageMime];
 
 /**
- * Largest image a caller may hand to the vision model, in raw bytes before base64 encoding.
+ * Raw-byte budget, before base64 encoding, for one image the run itself produces for vision: a
+ * full-page overview or a capture tile.
  *
- * One shared cap for both APIs that keeps a request of a few images below the gateway's roughly 10
- * MB request ceiling. What the provider itself accepts per image is {@link VISION_IMAGE_LIMITS},
- * which every image is fitted to after this cap admits it.
+ * One shared budget for both APIs that keeps a request of a few such images below the gateway's
+ * roughly 10 MB request ceiling. It does not refuse an image a caller attaches: an image of any
+ * size, a reporter screenshot included, is fitted to {@link VISION_IMAGE_LIMITS}, which is what the
+ * provider itself accepts per image.
  */
 export const MAX_VISION_IMAGE_BYTES = 5 * 1024 * 1024;
 
@@ -337,12 +338,6 @@ function maxSidePx(imageCount: number): number {
  */
 async function toImageContent(image: SingleShotImage, sideLimitPx: number): Promise<ImageContent> {
     const bytes = 'path' in image ? await readFile(image.path) : image.bytes;
-    if (bytes.byteLength > MAX_VISION_IMAGE_BYTES) {
-        throw new Error(
-            `Vision image exceeds the ${MAX_VISION_IMAGE_BYTES}-byte cap ` +
-                `(${bytes.byteLength} bytes)`,
-        );
-    }
     const fitted = await resizeImage(bytes, sniffImageMime(bytes), {
         maxWidth: sideLimitPx,
         maxHeight: sideLimitPx,
@@ -360,8 +355,8 @@ async function toImageContent(image: SingleShotImage, sideLimitPx: number): Prom
 /**
  * Downscale an encoded image to fit a side limit and an encoded-size limit, aspect kept.
  *
- * Unlike a request image, the source may be past the per-image byte cap: the result is a derivative
- * at a caller-chosen small size, never the original.
+ * Unlike a request image, the result is a derivative at a caller-chosen small size, never the
+ * original.
  *
  * @param bytes - Encoded image bytes.
  * @param sideLimitPx - Longest side the result may have.
@@ -383,8 +378,8 @@ export async function fitImage(
 
 /**
  * Convert caller messages into pi context parts: system texts joined in order, user messages with
- * optional image parts; each image is read, capped and fitted at that instant, against the side
- * limit the request's total image count selects.
+ * optional image parts; each image is read and fitted at that instant, against the side limit the
+ * request's total image count selects.
  *
  * @param messages - Caller-authored single-shot messages.
  * @returns The joined system prompt (when any) and the pi message list.

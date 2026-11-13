@@ -319,7 +319,7 @@ export const TOOL_PARAMETER_SCHEMAS: Readonly<
     // optional and only doc-pinned value
     // vocabularies keep their picklists — the advertisement's only job is to let a plausible call
     // through pi's pre-execute validation into the gate refusal; a call outside the mirrored shape
-    // bounces at pi's own "Validation failed for tool" like any other tool.
+    // bounces at that validation with "Validation failed for tool" like any other tool.
     [ToolName.SelectEnvironment]: v.object({
         kind: v.optional(EnvironmentSelectionKindSchema),
         requiredCapabilities: v.optional(v.array(v.string())),
@@ -339,8 +339,6 @@ export const TOOL_PARAMETER_SCHEMAS: Readonly<
                 conflicts: v.optional(v.array(v.string())),
             }),
         ),
-        rationale: v.optional(v.string()),
-        confidence: v.optional(v.number()),
     }),
     [ToolName.LookupRuleGuidance]: v.object({
         topic: v.optional(RuleGuidanceTopicSchema),

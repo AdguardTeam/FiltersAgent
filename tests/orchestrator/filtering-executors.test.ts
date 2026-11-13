@@ -247,8 +247,6 @@ describe('extensionFilteringExecutor', () => {
                 evidence: [{ source: 'issue_body', observation: 'A banner remains visible.' }],
                 conflicts: [],
             },
-            rationale: 'Lock the extension environment.',
-            confidence: 0.9,
         });
         const context: ExecutorActivationContext = {
             environmentHost: host,
@@ -287,8 +285,6 @@ describe('extensionFilteringExecutor', () => {
                 evidence: [{ source: 'issue_body', observation: 'A banner remains visible.' }],
                 conflicts: [],
             },
-            rationale: 'Lock the extension environment.',
-            confidence: 0.9,
         });
         await extensionFilteringExecutor.activate({
             ...context,

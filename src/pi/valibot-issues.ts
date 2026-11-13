@@ -12,6 +12,21 @@ import type { BaseIssue } from 'valibot';
  */
 
 /**
+ * Render the dotted path of the value a Valibot issue is about.
+ *
+ * @param issue - One validation issue emitted by Valibot.
+ * @returns The path, or an empty string for an issue about the parsed value itself.
+ */
+export function formatIssuePath(issue: BaseIssue<unknown>): string {
+    return (
+        issue.path
+            ?.map((item) => String(item.key))
+            .filter(Boolean)
+            .join('.') ?? ''
+    );
+}
+
+/**
  * Convert Valibot issues into compact model-facing reasons.
  *
  * @param issues - The validation issues emitted by Valibot.
@@ -20,10 +35,7 @@ import type { BaseIssue } from 'valibot';
 export function formatIssues(issues: readonly BaseIssue<unknown>[]): string {
     return issues
         .map((issue) => {
-            const path = issue.path
-                ?.map((item) => String(item.key))
-                .filter(Boolean)
-                .join('.');
+            const path = formatIssuePath(issue);
             return path ? `${path}: ${issue.message}` : issue.message;
         })
         .join('; ');

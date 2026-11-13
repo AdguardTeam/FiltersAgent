@@ -91,8 +91,6 @@ function host(): EnvironmentSelectionHost {
             evidence: [{ source: 'issue_body', observation: 'Advertisement remains visible.' }],
             conflicts: [],
         },
-        rationale: 'Use the extension for this extension report.',
-        confidence: 1,
     });
     return environmentHost;
 }
