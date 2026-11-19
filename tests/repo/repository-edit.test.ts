@@ -34,6 +34,14 @@ function git(cwd: string, ...args: string[]): string {
 }
 
 /**
+ * The position every fixture that plans an insert without caring where it lands passes.
+ */
+const AT_FILE_END = {
+    kind: 'file_end',
+    reason: 'No section keeps rules of this kind.',
+} as const;
+
+/**
  * Commit every present file and report the exact resulting commit.
  *
  * @param checkout - Repository path.
@@ -250,7 +258,9 @@ describe('planRepositoryEdit', () => {
             ['example.de,news.com##.banner', '! Footer', ''].join('\n'),
         );
 
-        expect(planRepositoryEdit(checkout, filePath, 'nettg.pl##.banner')).toEqual({
+        expect(
+            planRepositoryEdit(checkout, filePath, 'nettg.pl##.banner', undefined, undefined),
+        ).toEqual({
             filePath,
             edit: {
                 kind: 'extend_domains',
@@ -272,7 +282,13 @@ describe('planRepositoryEdit', () => {
         );
 
         expect(() =>
-            planRepositoryEdit(checkout, 'BaseFilter/sections/missing.txt', 'nettg.pl##.banner'),
+            planRepositoryEdit(
+                checkout,
+                'BaseFilter/sections/missing.txt',
+                'nettg.pl##.banner',
+                undefined,
+                undefined,
+            ),
         ).toThrow(/BaseFilter\/sections\/missing\.txt/);
     });
 
@@ -288,7 +304,13 @@ describe('planRepositoryEdit', () => {
         );
 
         expect(
-            planRepositoryEdit(checkout, filePath, '||cs.iubenda.com^$domain=reported.test'),
+            planRepositoryEdit(
+                checkout,
+                filePath,
+                '||cs.iubenda.com^$domain=reported.test',
+                undefined,
+                undefined,
+            ),
         ).toEqual({
             filePath,
             edit: {
@@ -307,8 +329,17 @@ describe('planRepositoryEdit', () => {
         writeFileSync(join(checkout, filePath), '||cs.iubenda.com^$script,domain=a.it|b.it\n');
 
         expect(
-            planRepositoryEdit(checkout, filePath, '||cs.iubenda.com^$domain=reported.test'),
-        ).toEqual({ filePath, edit: { kind: 'insert', basis: 'append_eof' } });
+            planRepositoryEdit(
+                checkout,
+                filePath,
+                '||cs.iubenda.com^$domain=reported.test',
+                undefined,
+                AT_FILE_END,
+            ),
+        ).toEqual({
+            filePath,
+            edit: { kind: 'insert', basis: 'append_eof', reason: AT_FILE_END.reason },
+        });
     });
 
     it('extends the unique shared scriptlet family with the reported site', () => {
@@ -324,6 +355,8 @@ describe('planRepositoryEdit', () => {
                 checkout,
                 filePath,
                 "reported.test#%#//scriptlet('set-local-storage-item', 'cookies-accepted', 'true')",
+                undefined,
+                undefined,
             ),
         ).toEqual({
             filePath,
@@ -346,8 +379,13 @@ describe('planRepositoryEdit', () => {
                 checkout,
                 filePath,
                 'nettg.pl#$#.banner { min-height: 0 !important; }',
+                undefined,
+                AT_FILE_END,
             ),
-        ).toEqual({ filePath, edit: { kind: 'insert', basis: 'append_eof' } });
+        ).toEqual({
+            filePath,
+            edit: { kind: 'insert', basis: 'append_eof', reason: AT_FILE_END.reason },
+        });
     });
 
     it('does not extend a rule the list keeps for one project', () => {
@@ -356,7 +394,9 @@ describe('planRepositoryEdit', () => {
             [filePath]: ['one.example,two.example##.banner', 'one.example,two.example##.promo'],
         });
 
-        expect(planRepositoryEdit(checkout, filePath, 'site.example##.banner')).toMatchObject({
+        expect(
+            planRepositoryEdit(checkout, filePath, 'site.example##.banner', undefined, AT_FILE_END),
+        ).toMatchObject({
             filePath,
             edit: { kind: 'insert' },
         });
@@ -371,12 +411,14 @@ describe('planRepositoryEdit', () => {
             ],
         });
 
-        expect(planRepositoryEdit(checkout, filePath, 'site.example##.banner').edit.kind).toBe(
-            'insert',
-        );
-        expect(planRepositoryEdit(checkout, filePath, 'site.example##.promo').edit.kind).toBe(
-            'insert',
-        );
+        expect(
+            planRepositoryEdit(checkout, filePath, 'site.example##.banner', undefined, AT_FILE_END)
+                .edit.kind,
+        ).toBe('insert');
+        expect(
+            planRepositoryEdit(checkout, filePath, 'site.example##.promo', undefined, AT_FILE_END)
+                .edit.kind,
+        ).toBe('insert');
     });
 
     it('does not add a site to a shared rule that covers it through a parent domain', () => {
@@ -385,9 +427,15 @@ describe('planRepositoryEdit', () => {
             [filePath]: ['example.com,two.example##.banner'],
         });
 
-        expect(planRepositoryEdit(checkout, filePath, 'shop.example.com##.banner').edit.kind).toBe(
-            'insert',
-        );
+        expect(
+            planRepositoryEdit(
+                checkout,
+                filePath,
+                'shop.example.com##.banner',
+                undefined,
+                AT_FILE_END,
+            ).edit.kind,
+        ).toBe('insert');
     });
 
     it('ignores matching selector groups outside the model-selected filter scope', () => {
@@ -399,7 +447,9 @@ describe('planRepositoryEdit', () => {
         writeFileSync(join(checkout, filePath), 'one.pl,two.pl##.banner\n');
         writeFileSync(join(checkout, otherFilePath), 'three.de,four.com##.banner\n');
 
-        expect(planRepositoryEdit(checkout, filePath, 'nettg.pl##.banner')).toMatchObject({
+        expect(
+            planRepositoryEdit(checkout, filePath, 'nettg.pl##.banner', undefined, undefined),
+        ).toMatchObject({
             filePath,
             edit: {
                 kind: 'extend_domains',
@@ -423,7 +473,9 @@ describe('planRepositoryEdit', () => {
             ].join('\n'),
         );
 
-        expect(planRepositoryEdit(checkout, filePath, 'nettg.pl##.banner')).toMatchObject({
+        expect(
+            planRepositoryEdit(checkout, filePath, 'nettg.pl##.banner', undefined, undefined),
+        ).toMatchObject({
             filePath,
             edit: {
                 kind: 'extend_domains',
@@ -450,9 +502,11 @@ describe('planRepositoryEdit', () => {
             'three.de,four.com##.banner\n',
         );
 
-        expect(planRepositoryEdit(checkout, filePath, 'nettg.pl##.banner')).toEqual({
+        expect(
+            planRepositoryEdit(checkout, filePath, 'nettg.pl##.banner', undefined, AT_FILE_END),
+        ).toEqual({
             filePath,
-            edit: { kind: 'insert', basis: 'append_eof' },
+            edit: { kind: 'insert', basis: 'append_eof', reason: AT_FILE_END.reason },
         });
     });
 
@@ -464,190 +518,321 @@ describe('planRepositoryEdit', () => {
         writeFileSync(join(checkout, filePath), '! Empty section\n');
         writeFileSync(join(checkout, 'docs/example.txt'), 'one.pl,two.pl##.banner\n');
 
-        expect(planRepositoryEdit(checkout, filePath, 'nettg.pl##.banner')).toEqual({
+        expect(
+            planRepositoryEdit(checkout, filePath, 'nettg.pl##.banner', undefined, AT_FILE_END),
+        ).toEqual({
             filePath,
-            edit: { kind: 'insert', basis: 'append_eof' },
+            edit: { kind: 'insert', basis: 'append_eof', reason: AT_FILE_END.reason },
         });
     });
 
-    it('inserts a new selector before the first rule in the reported-domain block', () => {
+    it('places a new rule under the regular-rules heading of a sectioned list and a site rule inside its group', () => {
+        // The key placement contract: a section-file list is a log whose areas are headings, so a
+        // new rule belongs at the top of the area that keeps rules of its kind, and a site with its
+        // own group takes the rule inside that group.
         const checkout = mkdtempSync(join(tmpdir(), 'repository-edit-'));
         const filePath = 'BaseFilter/sections/foreign.txt';
-        const firstDomainRule = 'wpoznaniu.pl##.g-dyn > a:not([href*="wpoznaniu.pl"]) > img';
+        const candidateRule = 'example.org##.new-ad';
+        const lines = [
+            '! SECTION: Example widgets',
+            '! NOTE: Regular rules',
+            'example.org##.promo-banner',
+            'example.org##.sidebar-ad',
+            '! START: example.org',
+            'example.org##.in-group',
+            '! END: example.org',
+            '!+ NOT_PLATFORM(ext_safari)',
+            'example.org##.safari-only',
+            '!#if (adguard_app_ios)',
+            'example.org##.ios-only',
+            '!#endif',
+            '! !SECTION: Example widgets',
+        ];
+        const content = `${lines.join('\n')}\n`;
+        mkdirSync(join(checkout, 'BaseFilter/sections'), { recursive: true });
+        writeFileSync(join(checkout, filePath), content);
+
+        const underHeading = planRepositoryEdit(checkout, filePath, candidateRule, undefined, {
+            kind: 'before_line',
+            line: 3,
+        });
+        const insideGroup = planRepositoryEdit(
+            checkout,
+            filePath,
+            'example.org##.group-ad',
+            undefined,
+            {
+                kind: 'before_line',
+                line: 6,
+            },
+        );
+
+        expect(underHeading).toEqual({
+            filePath,
+            edit: {
+                kind: 'insert',
+                insertionPoint: 2,
+                anchorRule: 'example.org##.promo-banner',
+                basis: 'chosen_line',
+                heading: '! NOTE: Regular rules',
+            },
+        });
+        expect(insideGroup).toMatchObject({
+            edit: { insertionPoint: 5, heading: '! START: example.org', basis: 'chosen_line' },
+        });
+        expect(applyRepositoryEdit(content, candidateRule, underHeading.edit)).toBe(
+            [
+                '! SECTION: Example widgets',
+                '! NOTE: Regular rules',
+                candidateRule,
+                'example.org##.promo-banner',
+                'example.org##.sidebar-ad',
+                ...lines.slice(4),
+                '',
+            ].join('\n'),
+        );
+    });
+
+    it('names a banner heading by its label without the framing dashes', () => {
+        const checkout = mkdtempSync(join(tmpdir(), 'repository-edit-'));
+        const filePath = 'BaseFilter/sections/foreign.txt';
+        mkdirSync(join(checkout, 'BaseFilter/sections'), { recursive: true });
+        writeFileSync(
+            join(checkout, filePath),
+            ['!------- JS rules ---------------------!', 'example.org##.existing', ''].join('\n'),
+        );
+
+        expect(
+            planRepositoryEdit(checkout, filePath, 'example.org##.new', undefined, {
+                kind: 'before_line',
+                line: 2,
+            }),
+        ).toMatchObject({ edit: { heading: 'JS rules' } });
+    });
+
+    it('refuses a before_line past the last line, directing the place after it to file_end', () => {
+        const checkout = mkdtempSync(join(tmpdir(), 'repository-edit-'));
+        const filePath = 'BaseFilter/sections/foreign.txt';
+        mkdirSync(join(checkout, 'BaseFilter/sections'), { recursive: true });
+        writeFileSync(
+            join(checkout, filePath),
+            ['one.example##.a', 'two.example##.b', ''].join('\n'),
+        );
+
+        expect(() =>
+            planRepositoryEdit(checkout, filePath, 'example.org##.new', undefined, {
+                kind: 'before_line',
+                line: 3,
+            }),
+        ).toThrow(/file_end/u);
+        expect(() =>
+            planRepositoryEdit(checkout, filePath, 'example.org##.new', undefined, {
+                kind: 'before_line',
+                line: 99,
+            }),
+        ).toThrow(/2 lines/u);
+    });
+
+    it('says an empty file is empty and does not offer a line range', () => {
+        const checkout = mkdtempSync(join(tmpdir(), 'repository-edit-'));
+        const filePath = 'BaseFilter/sections/foreign.txt';
+        mkdirSync(join(checkout, 'BaseFilter/sections'), { recursive: true });
+        writeFileSync(join(checkout, filePath), '');
+
+        let message = '';
+        try {
+            planRepositoryEdit(checkout, filePath, 'example.org##.new', undefined, {
+                kind: 'before_line',
+                line: 1,
+            });
+        } catch (error) {
+            message = (error as Error).message;
+        }
+
+        expect(message).toMatch(/empty/u);
+        expect(message).toMatch(/file_end/u);
+        expect(message).not.toMatch(/between 1 and 0/u);
+    });
+
+    it('refuses a before_line directly under a !+ hint, quoting the hint', () => {
+        const checkout = mkdtempSync(join(tmpdir(), 'repository-edit-'));
+        const filePath = 'BaseFilter/sections/foreign.txt';
+        mkdirSync(join(checkout, 'BaseFilter/sections'), { recursive: true });
+        writeFileSync(
+            join(checkout, filePath),
+            ['!+ NOT_PLATFORM(ext_safari)', 'example.org##.safari-only', ''].join('\n'),
+        );
+
+        expect(() =>
+            planRepositoryEdit(checkout, filePath, 'example.org##.new', undefined, {
+                kind: 'before_line',
+                line: 2,
+            }),
+        ).toThrow(/!\+ NOT_PLATFORM\(ext_safari\)/u);
+    });
+
+    it('records the platform condition the chosen line sits inside', () => {
+        const checkout = mkdtempSync(join(tmpdir(), 'repository-edit-'));
+        const filePath = 'BaseFilter/sections/foreign.txt';
         mkdirSync(join(checkout, 'BaseFilter/sections'), { recursive: true });
         writeFileSync(
             join(checkout, filePath),
             [
-                '! https://github.com/AdguardTeam/AdguardFilters/issues/109929',
-                firstDomainRule,
-                'wpoznaniu.pl##.g-single',
-                '! Footer',
+                'example.org##.outside',
+                '!#if (adguard_app_ios)',
+                'example.org##.ios-only',
+                '!#else',
+                'example.org##.other-platform',
+                '!#endif',
+                'example.org##.after',
                 '',
             ].join('\n'),
         );
 
         expect(
-            planRepositoryEdit(checkout, filePath, 'wpoznaniu.pl##div[class^="inner-ads-header"]'),
+            planRepositoryEdit(checkout, filePath, 'example.org##.new-ios', undefined, {
+                kind: 'before_line',
+                line: 3,
+            }),
+        ).toMatchObject({
+            edit: { condition: '!#if (adguard_app_ios)' },
+        });
+        expect(
+            planRepositoryEdit(checkout, filePath, 'example.org##.new-other', undefined, {
+                kind: 'before_line',
+                line: 5,
+            }),
+        ).toMatchObject({
+            edit: { condition: '!#if (adguard_app_ios) !#else' },
+        });
+        expect(
+            planRepositoryEdit(checkout, filePath, 'example.org##.new-after', undefined, {
+                kind: 'before_line',
+                line: 7,
+            }).edit,
+        ).not.toHaveProperty('condition');
+    });
+
+    it('refuses sorted when the leading region is not flagged sorted', () => {
+        const checkout = mkdtempSync(join(tmpdir(), 'repository-edit-'));
+        const filePath = 'BaseFilter/sections/foreign.txt';
+        mkdirSync(join(checkout, 'BaseFilter/sections'), { recursive: true });
+        writeFileSync(
+            join(checkout, filePath),
+            ['zulu.example##.late', 'alpha.example##.early', ''].join('\n'),
+        );
+
+        expect(() =>
+            planRepositoryEdit(checkout, filePath, 'example.org##.new', undefined, {
+                kind: 'sorted',
+            }),
+        ).toThrow(/first outline marker/u);
+    });
+
+    it('refuses a new line without a position, asking for one', () => {
+        const checkout = mkdtempSync(join(tmpdir(), 'repository-edit-'));
+        const filePath = 'BaseFilter/sections/foreign.txt';
+        mkdirSync(join(checkout, 'BaseFilter/sections'), { recursive: true });
+        writeFileSync(join(checkout, filePath), 'example.org##.existing\n');
+
+        expect(() =>
+            planRepositoryEdit(checkout, filePath, 'example.org##.new', undefined, undefined),
+        ).toThrow(/before_line.*sorted.*file_end/u);
+    });
+
+    it('accepts file_end with its reason and records the reason', () => {
+        const checkout = mkdtempSync(join(tmpdir(), 'repository-edit-'));
+        const filePath = 'BaseFilter/sections/foreign.txt';
+        mkdirSync(join(checkout, 'BaseFilter/sections'), { recursive: true });
+        writeFileSync(join(checkout, filePath), 'example.org##.existing\n');
+
+        expect(
+            planRepositoryEdit(checkout, filePath, 'example.org##.new', undefined, {
+                kind: 'file_end',
+                reason: 'The file keeps one rule per site and this site has none.',
+            }),
         ).toEqual({
             filePath,
             edit: {
                 kind: 'insert',
-                insertionPoint: 1,
-                anchorRule: firstDomainRule,
-                basis: 'domain_block',
+                basis: 'append_eof',
+                reason: 'The file keeps one rule per site and this site has none.',
             },
         });
     });
 
-    it('anchors an ordinary selector before the terminal fixing-other-filters banner', () => {
+    it('records no section for a line with no heading above it', () => {
         const checkout = mkdtempSync(join(tmpdir(), 'repository-edit-'));
         const filePath = 'BaseFilter/sections/foreign.txt';
-        const candidateRule = 'www.nebule.pl##.l-sec--commercial-banner';
-        const content = [
-            'last.example##.ordinary-rule',
-            '!---------------------------------------------------------------------',
-            '!------------------------------ Fixing other filters -----------------',
-            '!---------------------------------------------------------------------',
-            '! SECTION: Fixing other filters',
-            '! AdGuard platforms related only',
-            '!',
-            '! NOTE: Fixing other filters end ⬆️',
-            '! !SECTION: Fixing other filters',
-            '',
-        ].join('\n');
         mkdirSync(join(checkout, 'BaseFilter/sections'), { recursive: true });
-        writeFileSync(join(checkout, filePath), content);
+        writeFileSync(join(checkout, filePath), 'example.org##.existing\n');
 
-        const plan = planRepositoryEdit(checkout, filePath, candidateRule);
-
-        expect(plan).toEqual({
+        expect(
+            planRepositoryEdit(checkout, filePath, 'example.org##.new', undefined, {
+                kind: 'before_line',
+                line: 1,
+            }),
+        ).toEqual({
             filePath,
             edit: {
                 kind: 'insert',
-                insertionPoint: 1,
-                anchorRule:
-                    '!---------------------------------------------------------------------',
-                basis: 'terminal_section',
-            },
-        });
-        expect(applyRepositoryEdit(content, candidateRule, plan.edit)).toBe(
-            [
-                'last.example##.ordinary-rule',
-                candidateRule,
-                '!---------------------------------------------------------------------',
-                '!------------------------------ Fixing other filters -----------------',
-                '!---------------------------------------------------------------------',
-                '! SECTION: Fixing other filters',
-                '! AdGuard platforms related only',
-                '!',
-                '! NOTE: Fixing other filters end ⬆️',
-                '! !SECTION: Fixing other filters',
-                '',
-            ].join('\n'),
-        );
-    });
-
-    it('keeps a generic insert inside an intended terminal regular-rules section', () => {
-        const checkout = mkdtempSync(join(tmpdir(), 'repository-edit-'));
-        const filePath = 'MobileFilter/sections/specific_web.txt';
-        const candidateRule = 'new.example##.mobile-ad';
-        mkdirSync(join(checkout, 'MobileFilter/sections'), { recursive: true });
-        writeFileSync(
-            join(checkout, filePath),
-            [
-                '! SECTION: Regular rules',
-                'existing.example##.mobile-ad',
-                '! NOTE: Regular rules end ⬆️',
-                '! !SECTION: Regular rules',
-                '',
-            ].join('\n'),
-        );
-
-        expect(planRepositoryEdit(checkout, filePath, candidateRule)).toEqual({
-            filePath,
-            edit: {
-                kind: 'insert',
-                insertionPoint: 2,
-                anchorRule: '! NOTE: Regular rules end ⬆️',
-                basis: 'terminal_section',
+                insertionPoint: 0,
+                anchorRule: 'example.org##.existing',
+                basis: 'chosen_line',
             },
         });
     });
 
-    it('keeps a generic insert outside a specialized terminal section', () => {
-        const checkout = mkdtempSync(join(tmpdir(), 'repository-edit-'));
-        const filePath = 'BaseFilter/sections/specific.txt';
-        const candidateRule = 'new.example##.article-ad';
-        mkdirSync(join(checkout, 'BaseFilter/sections'), { recursive: true });
-        writeFileSync(
-            join(checkout, filePath),
-            [
-                'existing.example##.ordinary-ad',
-                '!---------------- Ad-Shield ----------------',
-                '! SECTION: Ad-Shield',
-                'ad-shield.example##.special-case',
-                '! !SECTION: Ad-Shield',
-                '',
-            ].join('\n'),
-        );
-
-        expect(planRepositoryEdit(checkout, filePath, candidateRule)).toEqual({
-            filePath,
-            edit: {
-                kind: 'insert',
-                insertionPoint: 1,
-                anchorRule: '!---------------- Ad-Shield ----------------',
-                basis: 'terminal_section',
-            },
-        });
-    });
-
-    it('does not join a same-domain block inside fixing-other-filters', () => {
+    it('ignores the position for a domain extension and for a declared placement with a comment line', () => {
         const checkout = mkdtempSync(join(tmpdir(), 'repository-edit-'));
         const filePath = 'BaseFilter/sections/foreign.txt';
-        const candidateRule = 'www.nebule.pl##.ordinary-leftover';
+        const commentLine = '! https://github.com/example-owner/example-repo/issues/1';
         mkdirSync(join(checkout, 'BaseFilter/sections'), { recursive: true });
         writeFileSync(
             join(checkout, filePath),
-            [
-                'last.example##.ordinary-rule',
-                '!---------------- Fixing other filters ----------------',
-                '! SECTION: Fixing other filters',
-                'www.nebule.pl##.extension-specific-workaround',
-                '! !SECTION: Fixing other filters',
-                '',
-            ].join('\n'),
+            ['one.example,two.example##.banner', '! Footer', ''].join('\n'),
         );
+        const impossible = { kind: 'before_line', line: 999 } as const;
 
-        expect(planRepositoryEdit(checkout, filePath, candidateRule)).toEqual({
+        expect(
+            planRepositoryEdit(checkout, filePath, 'new.example##.banner', undefined, impossible),
+        ).toMatchObject({ edit: { kind: 'extend_domains', line: 1 } });
+        expect(
+            planRepositoryEdit(
+                checkout,
+                filePath,
+                'new.example##.ad',
+                { byRuleType: {}, unqualified: { filePath, commentLine } },
+                impossible,
+            ),
+        ).toEqual({
             filePath,
-            edit: {
-                kind: 'insert',
-                insertionPoint: 1,
-                anchorRule: '!---------------- Fixing other filters ----------------',
-                basis: 'terminal_section',
-            },
+            edit: { kind: 'insert', basis: 'append_eof', precedingComment: commentLine },
         });
     });
 
-    it('does not move unsectioned terminal rules into an earlier closed section', () => {
+    it('uses the position for a declared placement without a comment line', () => {
         const checkout = mkdtempSync(join(tmpdir(), 'repository-edit-'));
-        const filePath = 'BaseFilter/sections/specific.txt';
+        const filePath = 'BaseFilter/sections/foreign.txt';
         mkdirSync(join(checkout, 'BaseFilter/sections'), { recursive: true });
-        writeFileSync(
-            join(checkout, filePath),
-            [
-                '! SECTION: Temporary',
-                'old.example##.temporary',
-                '! !SECTION: Temporary',
-                'existing.example##.specific',
-                '',
-            ].join('\n'),
-        );
+        writeFileSync(join(checkout, filePath), ['example.org##.existing', ''].join('\n'));
 
-        expect(planRepositoryEdit(checkout, filePath, 'new.example##.specific')).toEqual({
+        expect(
+            planRepositoryEdit(
+                checkout,
+                filePath,
+                'example.org##.new',
+                { byRuleType: {}, unqualified: { filePath } },
+                { kind: 'before_line', line: 1 },
+            ),
+        ).toEqual({
             filePath,
-            edit: { kind: 'insert', basis: 'append_eof' },
+            edit: {
+                kind: 'insert',
+                insertionPoint: 0,
+                anchorRule: 'example.org##.existing',
+                basis: 'chosen_line',
+            },
         });
     });
 });
@@ -722,10 +907,16 @@ describe('a declared placement', () => {
         mkdirSync(join(checkout, 'filters'), { recursive: true });
         writeFileSync(join(checkout, filePath), content);
 
-        const plan = planRepositoryEdit(checkout, filePath, candidateRule, {
-            byRuleType: {},
-            unqualified: { filePath, commentLine },
-        });
+        const plan = planRepositoryEdit(
+            checkout,
+            filePath,
+            candidateRule,
+            {
+                byRuleType: {},
+                unqualified: { filePath, commentLine },
+            },
+            undefined,
+        );
 
         expect(plan).toEqual({
             filePath,
@@ -746,10 +937,16 @@ describe('a declared placement', () => {
         const checkout = mkdtempSync(join(tmpdir(), 'repository-edit-declared-missing-'));
 
         expect(() =>
-            planRepositoryEdit(checkout, 'filters/filters-2027.txt', 'example.com##.ad', {
-                byRuleType: {},
-                unqualified: { filePath: 'filters/filters-2027.txt' },
-            }),
+            planRepositoryEdit(
+                checkout,
+                'filters/filters-2027.txt',
+                'example.com##.ad',
+                {
+                    byRuleType: {},
+                    unqualified: { filePath: 'filters/filters-2027.txt' },
+                },
+                undefined,
+            ),
         ).toThrow(/filters\/filters-2027\.txt/);
     });
 
@@ -763,10 +960,16 @@ describe('a declared placement', () => {
         );
 
         expect(() =>
-            planRepositoryEdit(checkout, 'filters/annoyances-cookies.txt', 'example.com##.ad', {
-                byRuleType: {},
-                unqualified: { filePath: 'filters/filters-2026.txt' },
-            }),
+            planRepositoryEdit(
+                checkout,
+                'filters/annoyances-cookies.txt',
+                'example.com##.ad',
+                {
+                    byRuleType: {},
+                    unqualified: { filePath: 'filters/filters-2026.txt' },
+                },
+                undefined,
+            ),
         ).toThrow(/filters\/filters-2026\.txt.*filters\/annoyances-cookies\.txt/);
     });
 });

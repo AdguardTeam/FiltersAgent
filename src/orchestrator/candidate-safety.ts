@@ -319,6 +319,7 @@ export function enforceCandidateSafety(
                 proposal.placement.filePath,
                 proposal.rule,
                 options.declaredPlacement,
+                proposal.placement.position,
             );
         } catch (error) {
             const detail = error instanceof Error ? error.message : String(error);

@@ -27,6 +27,14 @@ import {
     startHermeticProvider,
 } from '../pi/hermetic-provider';
 import { VISION_MODEL, createTestPiRuntime } from '../pi/test-runtime';
+import { MIN_SORTED_SECTION_RULES } from '../../src/repo/sorted-insertion';
+import { FILE_WINDOW_RADIUS_LINES } from '../../src/repo/search';
+import {
+    MAX_OUTLINE_HEADER_BYTES,
+    MAX_OUTLINE_LABEL_BYTES,
+    MAX_WINDOW_LINE_BYTES,
+} from '../../src/agent/rule-search-compact';
+import { MAX_TOOL_RESULT_BYTES } from '../../src/pi/tool-result-envelope';
 
 const githubConfig: GithubReadConfig = {
     owner: 'AdguardTeam',
@@ -120,6 +128,30 @@ function writePinnedGuidanceDocuments(
             'Use the proper section.',
         ].join('\n') + '\n',
     );
+}
+
+/**
+ * A temp checkout holding one list file, with the registry that searches it.
+ *
+ * @param prefix - Prefix of the temp directory name.
+ * @param relativePath - Checkout-relative path of the list file.
+ * @param lines - Exact lines of the file; a trailing newline is added.
+ * @returns The registry over the checkout and the checkout root the test must remove.
+ */
+async function searchCheckout(
+    prefix: string,
+    relativePath: string,
+    lines: readonly string[],
+): Promise<{ registry: Awaited<ReturnType<typeof createToolRegistry>>; root: string }> {
+    const root = mkdtempSync(join(tmpdir(), prefix));
+    mkdirSync(join(root, relativePath, '..'), { recursive: true });
+    writeFileSync(join(root, relativePath), `${lines.join('\n')}\n`, 'utf8');
+    const registry = await createToolRegistry({
+        githubConfig: githubConfig,
+        allowedIssueNumber: 1,
+        checkoutPath: root,
+    });
+    return { registry, root };
 }
 
 describe('createToolRegistry', () => {
@@ -371,6 +403,361 @@ describe('createToolRegistry', () => {
             });
         } finally {
             rmSync(tmpDir, { recursive: true, force: true });
+        }
+    });
+
+    it('passes filePath and line through search_rules to the outline and the window', async () => {
+        const { registry, root } = await searchCheckout(
+            'tool-factory-search-outline-',
+            'BaseFilter/sections/foreign.txt',
+            [
+                '! Title: Example list',
+                '! SECTION: Example widgets',
+                '! NOTE: Regular rules',
+                'example.org##.first',
+                'example.org##.second',
+                '! !SECTION: Example widgets',
+            ],
+        );
+        try {
+            const typedPath = 'BaseFilter\\sections\\foreign.txt';
+            const path = 'BaseFilter/sections/foreign.txt';
+
+            const outline = await registry.dispatch('search_rules', { filePath: typedPath });
+            const window = await registry.dispatch('search_rules', {
+                filePath: typedPath,
+                line: 4,
+            });
+
+            expect(outline).toMatchObject({
+                filePath: path,
+                lineCount: 6,
+                header: '! Title: Example list',
+                markers: [
+                    { l: 2, k: 'section', t: '! SECTION: Example widgets' },
+                    { l: 3, k: 'note', t: '! NOTE: Regular rules', r: 2 },
+                    { l: 6, k: 'section_end', t: '! !SECTION: Example widgets' },
+                ],
+            });
+            expect(window).toMatchObject({
+                filePath: path,
+                lineCount: 6,
+                lines: [
+                    { line: 1, text: '! Title: Example list' },
+                    { line: 2, text: '! SECTION: Example widgets' },
+                    { line: 3, text: '! NOTE: Regular rules' },
+                    { line: 4, text: 'example.org##.first' },
+                    { line: 5, text: 'example.org##.second' },
+                    { line: 6, text: '! !SECTION: Example widgets' },
+                ],
+            });
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it('refuses a line without a filePath and a read mixed with a target', async () => {
+        const { registry, root } = await searchCheckout(
+            'tool-factory-search-line-',
+            'BaseFilter/sections/foreign.txt',
+            [],
+        );
+        try {
+            await expect(registry.dispatch('search_rules', { line: 3 })).rejects.toThrow(
+                /outline.*window.*match/is,
+            );
+            await expect(
+                registry.dispatch('search_rules', {
+                    selector: '.ad',
+                    filePath: 'BaseFilter/sections/foreign.txt',
+                    line: 3,
+                }),
+            ).rejects.toThrow(/outline.*window.*match/is);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it('names the outline, window and match modes for a call with no arguments', async () => {
+        const { registry, root } = await searchCheckout(
+            'tool-factory-search-empty-',
+            'BaseFilter/sections/foreign.txt',
+            [],
+        );
+        try {
+            await expect(registry.dispatch('search_rules', {})).rejects.toThrow(
+                /outline.*window.*match/is,
+            );
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it('refuses a line that is not a positive integer', async () => {
+        const { registry, root } = await searchCheckout(
+            'tool-factory-search-line-shape-',
+            'BaseFilter/sections/foreign.txt',
+            ['example.org##.ad'],
+        );
+        try {
+            for (const line of [0, 1.5]) {
+                await expect(
+                    registry.dispatch('search_rules', {
+                        filePath: 'BaseFilter/sections/foreign.txt',
+                        line,
+                    }),
+                ).rejects.toThrow();
+            }
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it('cuts an overlong window line and flags it', async () => {
+        const overlong = `example.com##.${'a'.repeat(MAX_WINDOW_LINE_BYTES)}`;
+        const { registry, root } = await searchCheckout(
+            'tool-factory-search-window-cut-',
+            'BaseFilter/sections/foreign.txt',
+            ['! SECTION: Long rule', overlong],
+        );
+        try {
+            const window = await registry.dispatch('search_rules', {
+                filePath: 'BaseFilter/sections/foreign.txt',
+                line: 2,
+            });
+            const lines = window.lines as Array<{
+                line: number;
+                text: string;
+                truncated?: boolean;
+            }>;
+
+            expect(lines[1]).toMatchObject({ line: 2, truncated: true });
+            expect(Buffer.byteLength(lines[1]!.text, 'utf8')).toBe(MAX_WINDOW_LINE_BYTES);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it('keeps section headings that differ only late in the line apart', async () => {
+        const { registry, root } = await searchCheckout(
+            'tool-factory-search-labels-',
+            'BaseFilter/sections/foreign.txt',
+            [
+                '! SECTION: Cookies - Specific rules (JS)',
+                '! SECTION: Cookies - Specific rules (HTML)',
+                '! SECTION: Cookies - Specific rules (replace)',
+            ],
+        );
+        try {
+            const outline = await registry.dispatch('search_rules', {
+                filePath: 'BaseFilter/sections/foreign.txt',
+            });
+            const markers = outline.markers as Array<Record<string, unknown>>;
+
+            expect(markers.map((marker) => marker.t)).toEqual([
+                '! SECTION: Cookies - Specific rules (JS)',
+                '! SECTION: Cookies - Specific rules (HTML)',
+                '! SECTION: Cookies - Specific rules (replace)',
+            ]);
+            expect(markers.every((marker) => marker.tt === undefined)).toBe(true);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it('shows a banner label with the framing stripped from both ends', async () => {
+        const { registry, root } = await searchCheckout(
+            'tool-factory-search-banner-',
+            'BaseFilter/sections/foreign.txt',
+            ['!------- JS rules ---------------------!', 'example.org##.ad'],
+        );
+        try {
+            const outline = await registry.dispatch('search_rules', {
+                filePath: 'BaseFilter/sections/foreign.txt',
+            });
+            const markers = outline.markers as Array<Record<string, unknown>>;
+
+            expect(markers[0]).toMatchObject({ k: 'banner', t: 'JS rules' });
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it('returns every marker of an outline past the old count cap', async () => {
+        const markerCount = 687;
+        const lines: string[] = [];
+        for (let marker = 0; marker < markerCount; marker += 1) {
+            lines.push(`!#else m${String(marker).padStart(3, '0')}`);
+            lines.push('||ads.example^');
+        }
+        const { registry, root } = await searchCheckout(
+            'tool-factory-search-outline-labels-',
+            'BaseFilter/sections/foreign.txt',
+            lines,
+        );
+        try {
+            const outline = await registry.dispatch('search_rules', {
+                filePath: 'BaseFilter/sections/foreign.txt',
+            });
+
+            expect(outline.markers).toHaveLength(markerCount);
+            expect(outline.truncated).toBeUndefined();
+            expect(Buffer.byteLength(JSON.stringify(outline), 'utf8')).toBeLessThanOrEqual(
+                MAX_TOOL_RESULT_BYTES,
+            );
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it('keeps a worst-case outline under the tool result limit by dropping markers', async () => {
+        const markerCount = 1000;
+        const lines: string[] = [];
+        for (let marker = 0; marker < markerCount; marker += 1) {
+            lines.push(`!#else ${'"\\'.repeat(200)}`);
+            for (let rule = 1; rule <= MIN_SORTED_SECTION_RULES; rule += 1) {
+                lines.push(`||ads-${String(rule).padStart(2, '0')}.example^`);
+            }
+        }
+        const { registry, root } = await searchCheckout(
+            'tool-factory-search-outline-cap-',
+            'BaseFilter/sections/foreign.txt',
+            lines,
+        );
+        try {
+            const outline = await registry.dispatch('search_rules', {
+                filePath: 'BaseFilter/sections/foreign.txt',
+            });
+            const markers = outline.markers as Array<Record<string, unknown>>;
+
+            expect(outline.truncated).toBe(true);
+            expect(markers.length).toBeGreaterThan(0);
+            expect(markers.length).toBeLessThan(markerCount);
+            expect(markers[0]).toMatchObject({ k: 'condition', r: 20, s: true, tt: true });
+            expect(Buffer.byteLength(String(markers[0]!.t), 'utf8')).toBe(MAX_OUTLINE_LABEL_BYTES);
+            expect(Buffer.byteLength(JSON.stringify(outline), 'utf8')).toBeLessThanOrEqual(
+                MAX_TOOL_RESULT_BYTES,
+            );
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it('returns the leading comment header and skips the list header', async () => {
+        const { registry, root } = await searchCheckout(
+            'tool-factory-search-header-',
+            'BaseFilter/sections/foreign.txt',
+            [
+                '[Adblock Plus 2.0]',
+                '',
+                '! Title: Example list',
+                '! Good: advertising rules',
+                '! Bad: tracking rules (should be in tracking.txt)',
+                '||ads.example^',
+            ],
+        );
+        try {
+            const outline = await registry.dispatch('search_rules', {
+                filePath: 'BaseFilter/sections/foreign.txt',
+            });
+
+            expect(outline.header).toBe(
+                [
+                    '! Title: Example list',
+                    '! Good: advertising rules',
+                    '! Bad: tracking rules (should be in tracking.txt)',
+                ].join('\n'),
+            );
+            expect(outline.headerTruncated).toBeUndefined();
+            expect(outline.leading).toMatchObject({ r: 1 });
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it('caps a long header, flags it, and stays under the limit with no markers', async () => {
+        const { registry, root } = await searchCheckout(
+            'tool-factory-search-header-cap-',
+            'BaseFilter/sections/foreign.txt',
+            [`! ${'a'.repeat(MAX_OUTLINE_HEADER_BYTES * 2)}`],
+        );
+        try {
+            const outline = await registry.dispatch('search_rules', {
+                filePath: 'BaseFilter/sections/foreign.txt',
+            });
+
+            expect(outline.markers).toEqual([]);
+            expect(outline.headerTruncated).toBe(true);
+            expect(Buffer.byteLength(String(outline.header), 'utf8')).toBe(
+                MAX_OUTLINE_HEADER_BYTES,
+            );
+            expect(Buffer.byteLength(JSON.stringify(outline), 'utf8')).toBeLessThanOrEqual(
+                MAX_TOOL_RESULT_BYTES,
+            );
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it('keeps a full window under the tool result limit', async () => {
+        const fullLine = '"\\'.repeat(MAX_WINDOW_LINE_BYTES / 2);
+        const { registry, root } = await searchCheckout(
+            'tool-factory-search-window-cap-',
+            'BaseFilter/sections/foreign.txt',
+            Array.from({ length: 40 }, () => fullLine),
+        );
+        try {
+            const window = await registry.dispatch('search_rules', {
+                filePath: 'BaseFilter/sections/foreign.txt',
+                line: 20,
+            });
+
+            expect(window.lines).toHaveLength(2 * FILE_WINDOW_RADIUS_LINES + 1);
+            expect(Buffer.byteLength(JSON.stringify(window), 'utf8')).toBeLessThanOrEqual(
+                MAX_TOOL_RESULT_BYTES,
+            );
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it('shrinks the per-line cap so escaped control characters fit the tool result limit', async () => {
+        // JSON writes a control character as a six-byte `\u0001` escape, so a window of
+        // MAX_WINDOW_LINE_BYTES-long control lines is six times its raw bytes once serialized.
+        const controlLine = '\u0001'.repeat(MAX_WINDOW_LINE_BYTES);
+        const windowLineCount = 2 * FILE_WINDOW_RADIUS_LINES + 1;
+        const { registry, root } = await searchCheckout(
+            'tool-factory-search-window-escaped-',
+            'BaseFilter/sections/foreign.txt',
+            Array.from({ length: windowLineCount }, () => controlLine),
+        );
+        try {
+            const window = await registry.dispatch('search_rules', {
+                filePath: 'BaseFilter/sections/foreign.txt',
+                line: FILE_WINDOW_RADIUS_LINES + 1,
+            });
+            const lines = window.lines as Array<{
+                line: number;
+                text: string;
+                truncated?: boolean;
+            }>;
+
+            expect(Buffer.byteLength(JSON.stringify(window), 'utf8')).toBeLessThanOrEqual(
+                MAX_TOOL_RESULT_BYTES,
+            );
+            // No numbered line is dropped to buy the bytes: the whole window is still there, each
+            // line cut further than the initial cap and flagged as cut.
+            expect(lines.map((entry) => entry.line)).toEqual(
+                Array.from({ length: windowLineCount }, (_unused, index) => index + 1),
+            );
+            expect(lines.every((entry) => entry.truncated === true)).toBe(true);
+            expect(
+                lines.every(
+                    (entry) => Buffer.byteLength(entry.text, 'utf8') < MAX_WINDOW_LINE_BYTES,
+                ),
+            ).toBe(true);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
         }
     });
 

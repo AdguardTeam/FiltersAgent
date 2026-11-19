@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { candidatePatchVerificationRefusal } from '../../src/orchestrator/candidate-verdict';
+import { candidatePatchVerificationRefusal } from '../../src/orchestrator/candidate-verification-refusal';
 import type { CandidateVisualReview } from '../../src/types/candidate-visual-review';
 import type { CandidatePatch } from '../../src/types/fix-run-result';
 import { calculateTrustedBaselineHash } from '../../src/validator/trusted-validation-context';

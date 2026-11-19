@@ -18,7 +18,8 @@ import { adaptSessionTools, toolGatedRefusal } from '../pi/session-tools';
 import { toAdvertisedSchema } from '../pi/tool-schema';
 import { ToolGateCause, type SessionToolSpec, type ToolGateState } from '../pi/session-tool-types';
 import { ToolName } from '../agent/tool-names';
-import { TOOL_GUIDANCE, TOOL_PARAMETER_SCHEMAS } from '../agent/tool-catalog';
+import { TOOL_GUIDANCE } from '../agent/tool-guidance';
+import { TOOL_PARAMETER_SCHEMAS } from '../agent/tool-catalog';
 import { EVALUATE_JS_POLICY_REJECTION_KIND } from '../browser/browser-tools';
 import { FULL_PAGE_CAPTURE_INCOMPLETE_KIND } from '../analyzer/full-page-capture-inspection';
 
@@ -194,9 +195,13 @@ export interface RegistryToolAdaptation {
 
     /**
      * Last word on the result the model receives, after the quarantine and the dispatch observer
-     * have seen the executed one: the fix surface's enumeration backstop adds its notice here.
+     * have seen the executed one: the fix surface's enumeration backstop adds its notice here. The
+     * call's arguments ride along so the backstop can tell an enumerating call from a read.
      */
-    deliver?: (result: Record<string, unknown>) => Record<string, unknown>;
+    deliver?: (
+        result: Record<string, unknown>,
+        args: Record<string, unknown>,
+    ) => Record<string, unknown>;
 }
 
 /**
@@ -224,7 +229,7 @@ export function adaptRegistryTool(
             const result = await registry.dispatch(name, args);
             quarantine.observe(name, result);
             adaptation.onDispatched?.(result);
-            return adaptation.deliver === undefined ? result : adaptation.deliver(result);
+            return adaptation.deliver === undefined ? result : adaptation.deliver(result, args);
         },
     };
 }

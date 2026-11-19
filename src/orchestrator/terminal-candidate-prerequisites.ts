@@ -6,6 +6,7 @@
  * Both are retryable prerequisites of the terminal judgement (`terminal-outcome-validator`), kept
  * here so that module stays inside the repo's ~500-line rule.
  */
+import { ToolName } from '../agent/tool-names';
 import { candidatePlacementProblem } from '../repo/candidate-placement-check';
 import { normalizeRule } from '../repo/rule-normalizer';
 import type { FinishFixValidationRejection } from '../types/terminal-rejection';
@@ -57,20 +58,20 @@ export function validateCandidateScope(
         errorKind: 'candidate_scope_invalid',
         retryable: true,
         requiredAction: 'scope_candidate_to_reported_domain',
-        requiredTool: 'apply_rule',
+        requiredTool: ToolName.ApplyRule,
         candidateRule: candidate.canonical,
         expectedTargetDomain: normalizeScopeDomain(reportedDomain),
     };
 }
 
 /**
- * Return a draft whose rule cannot be inserted into the file it names to the model, with the
- * reason, while it can still choose another file.
+ * Return a draft whose rule cannot be inserted where it names to the model, with the reason, while
+ * it can still choose another file or place.
  *
  * The agent decides where the rule goes. This only checks that the edit is possible — the file is
- * one of the repository's own lists, it exists, and it is the file the run instruction declares for
- * rules of this kind when it declares one — so the patch the run publishes lands in the file the
- * agent chose.
+ * one of the repository's own lists, it exists, it is the file the run instruction declares for
+ * rules of this kind when it declares one, and the position can take a new line — so the patch the
+ * run publishes lands in the file and at the place the agent chose.
  *
  * @param view - Read-only projection of the run the judgement reads.
  * @param outcome - Schema-valid draft decision proposed by the model.
@@ -84,19 +85,27 @@ export function validateCandidatePlacement(
         return undefined;
     }
     const { rule, placement } = outcome.ruleProposal;
-    const problem = candidatePlacementProblem(view.placementContext, rule, placement.filePath);
+    const problem = candidatePlacementProblem(
+        view.placementContext,
+        rule,
+        placement.filePath,
+        placement.position,
+    );
     if (problem === undefined) {
         return undefined;
     }
     return {
         error:
-            `The rule cannot be inserted into the file the draft names: ${problem} Choose the ` +
-            'file from where search_rules shows the repository keeps rules like this one.',
+            `The rule cannot go where the draft puts it: ${problem} Choose the file and the ` +
+            'place from search_rules, its outline or a window.',
         errorKind: 'candidate_placement_not_insertable',
         retryable: true,
         requiredAction: 'choose_insertable_placement',
-        requiredTool: 'finish_fix',
+        requiredTool: ToolName.FinishFix,
         candidateRule: normalizeRule(rule).canonical,
         filePath: placement.filePath,
+        // The refused position travels with the file so the streak follows the agent's answer: no
+        // position, a sorted position and a chosen line are different walls, not one repeated one.
+        position: placement.position ?? null,
     };
 }

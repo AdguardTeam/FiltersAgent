@@ -3,6 +3,8 @@ import { summarizeBenchmark } from './benchmark-summary';
 import { csvField } from './benchmark-summary-format';
 import { MILLISECONDS_PER_MINUTE, configurationKey } from './benchmark-summary-statistics';
 import { benchmarkAgentRevision } from './benchmark-summary-pins';
+import type { InsertRepositoryEdit } from '../../src/types/repository-edit';
+import { RepositoryEditKind } from '../../src/types/repository-edit-kind';
 
 export const BENCHMARK_CSV_COLUMNS = [
     'case',
@@ -21,6 +23,8 @@ export const BENCHMARK_CSV_COLUMNS = [
     'agentRule',
     'agentFilePath',
     'agentEdit',
+    'agentBasis',
+    'agentHeading',
     'humanFixCommit',
     'humanRules',
     'humanRemovedRules',
@@ -53,6 +57,28 @@ function jsonOrNull(value: unknown): string | null {
 }
 
 /**
+ * The shape earlier builds wrote: the heading under its legacy name.
+ */
+interface LegacyInsertHeading {
+    /**
+     * Heading text recorded under the name earlier builds wrote.
+     */
+    readonly section?: string;
+}
+
+/**
+ * The heading an insert edit records, under its current name or the legacy `section` field earlier
+ * builds wrote.
+ *
+ * @param edit - The insert edit recorded on the run's candidate.
+ * @returns The heading, or null when the edit records none.
+ */
+function recordedHeading(edit: InsertRepositoryEdit): string | null {
+    // Records are read as JSON without a parse, so an older one still carries the legacy field.
+    return edit.heading ?? (edit as LegacyInsertHeading).section ?? null;
+}
+
+/**
  * Export every raw record, uncounted runs included, as RFC 4180 CSV.
  *
  * @param records - Trusted records and repetition roots.
@@ -67,6 +93,9 @@ export function renderBenchmarkCsv(records: readonly LoadedBenchmarkRecord[]): s
     );
     const rows = records.map(({ record, root }) => {
         const { model, outcome, usage, timings } = record;
+        const candidateEdit = outcome.candidate?.repositoryEdit;
+        const insertionEdit =
+            candidateEdit?.kind === RepositoryEditKind.Insert ? candidateEdit : null;
         const stages = [
             timings.siteCheckMs,
             timings.preparationMs,
@@ -92,6 +121,8 @@ export function renderBenchmarkCsv(records: readonly LoadedBenchmarkRecord[]): s
             outcome.candidate?.rule ?? outcome.candidateForReview?.rule ?? null,
             outcome.candidate?.filePath ?? outcome.candidateForReview?.placement?.filePath ?? null,
             outcome.candidate?.repositoryEdit?.kind ?? null,
+            insertionEdit?.basis ?? null,
+            insertionEdit === null ? null : recordedHeading(insertionEdit),
             record.human.fixCommit,
             jsonOrNull(
                 record.human.rules?.map(({ rule, repositoryEdit, replacedRule }) => ({

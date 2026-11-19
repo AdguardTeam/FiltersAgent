@@ -10,7 +10,7 @@
  * `launchModeSession` runs the session and hands back the sealed outcome plus the run's compaction
  * count; each session caller maps the seal onto its own result.
  */
-import { TOOL_GUIDANCE } from '../agent/tool-catalog';
+import { TOOL_GUIDANCE } from '../agent/tool-guidance';
 import { ToolName } from '../agent/tool-names';
 import type { LlmConfig } from '../config/config';
 import type { Logger } from '../logger/logger';

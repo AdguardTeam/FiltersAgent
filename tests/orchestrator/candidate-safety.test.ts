@@ -32,6 +32,7 @@ function draftOutcome(overrides: Partial<ProposeRuleOutcome> = {}): ProposeRuleO
                 filePath: 'BaseFilter/sections/specific.txt',
                 confidence: 0.9,
                 alternatives: [],
+                position: { kind: 'file_end', reason: 'No section keeps rules of this kind.' },
             },
             duplicateCheck: { classification: 'none', matches: [] },
             productCompatibility: { extension: true },
@@ -54,6 +55,39 @@ beforeEach(() => {
 
 afterEach(() => {
     rmSync(checkoutPath, { recursive: true, force: true });
+});
+
+describe('candidatePatchFromOutcome', () => {
+    it('records the position the draft names on the candidate repository edit', () => {
+        writeFileSync(
+            join(checkoutPath, 'BaseFilter/sections/specific.txt'),
+            [
+                '! SECTION: Example widgets',
+                '! NOTE: Regular rules',
+                'example.com##.existing',
+                '',
+            ].join('\n'),
+        );
+        const base = draftOutcome();
+        const draft: ProposeRuleOutcome = {
+            ...base,
+            ruleProposal: {
+                ...base.ruleProposal,
+                placement: {
+                    ...base.ruleProposal.placement,
+                    position: { kind: 'before_line', line: 3 },
+                },
+            },
+        };
+
+        expect(candidatePatchFromOutcome(draft, checkoutPath)?.repositoryEdit).toEqual({
+            kind: 'insert',
+            insertionPoint: 2,
+            anchorRule: 'example.com##.existing',
+            basis: 'chosen_line',
+            heading: '! NOTE: Regular rules',
+        });
+    });
 });
 
 describe('enforceCandidateSafety', () => {

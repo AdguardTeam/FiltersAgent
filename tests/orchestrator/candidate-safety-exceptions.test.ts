@@ -29,6 +29,7 @@ function draftProposing(rule: string, ruleType: RuleType): ProposeRuleOutcome {
                 filePath: 'BaseFilter/sections/specific.txt',
                 confidence: 0.9,
                 alternatives: [],
+                position: { kind: 'file_end', reason: 'No section keeps rules of this kind.' },
             },
             duplicateCheck: { classification: 'none', matches: [] },
             productCompatibility: { extension: true },

@@ -26,7 +26,7 @@ export interface ToolDefinition {
          *
          * Retained only because the remaining `getDefinitions()` callers still construct the full
          * envelope; no advertisement path reads it. The model-facing text for every tool lives in
-         * `TOOL_GUIDANCE` (`src/agent/tool-catalog.ts`).
+         * `TOOL_GUIDANCE` (`src/agent/tool-guidance.ts`).
          */
         description: string;
 

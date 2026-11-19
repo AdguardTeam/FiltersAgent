@@ -3,7 +3,6 @@ import * as v from 'valibot';
 import { describe, expect, it } from 'vitest';
 import {
     FixRunResultSchema,
-    RepositoryEditSchema,
     noPatchVerdictIsSessionBound,
     type FixRunResult,
     type AgentCandidateArtifactEvidence,
@@ -46,34 +45,6 @@ const extensionProvenance = v.parse(PreparedExtensionProvenanceSchema, {
     manifestVersion: ExtensionManifestVersion.Mv3,
     extensionSourceSha256: 'e'.repeat(64),
     extensionSourceTag: 'v5.5.2.3',
-});
-
-describe('RepositoryEditSchema', () => {
-    it.each([
-        {
-            kind: 'replace',
-            line: 2,
-            originalRule: 'example.com##.old',
-            replacementRule: 'example.com##.new',
-        },
-        {
-            kind: 'remove',
-            line: 2,
-            originalRule: 'example.com##.old',
-        },
-    ])('accepts an exact $kind source edit', (edit) => {
-        expect(v.parse(RepositoryEditSchema, edit)).toEqual(edit);
-    });
-
-    it('rejects multiline exact source edits', () => {
-        expect(() =>
-            v.parse(RepositoryEditSchema, {
-                kind: 'remove',
-                line: 1,
-                originalRule: 'one\ntwo',
-            }),
-        ).toThrow();
-    });
 });
 
 function readyExtensionSelection(productVersion: string) {
@@ -1197,6 +1168,24 @@ describe('FixRunResultSchema candidate carried for review', () => {
         });
 
         expect(v.safeParse(FixRunResultSchema, result).success).toBe(false);
+    });
+
+    it('keeps accepting a single-line candidate rule whose characters are all blanks', () => {
+        // The field guards the shape only: a rule written on one line parses whatever it holds, as
+        // it did before the shared single-line pattern was introduced.
+        const result = resultWithSession({
+            runStatus: 'analysis_only',
+            verificationStatus: 'partial',
+            candidateForReview: { ...candidateForReview, rule: '   ' },
+        });
+        const empty = resultWithSession({
+            runStatus: 'analysis_only',
+            verificationStatus: 'partial',
+            candidateForReview: { ...candidateForReview, rule: '' },
+        });
+
+        expect(v.safeParse(FixRunResultSchema, result).success).toBe(true);
+        expect(v.safeParse(FixRunResultSchema, empty).success).toBe(false);
     });
 });
 

@@ -234,8 +234,8 @@ can be inserted there (`candidate-placement-check.ts`) — the file is one of th
 exists, and it is the declared one when the run instruction declares a placement for the rule's
 kind — returning the reason otherwise. Code never picks another file: a file chosen by heuristics
 can be a list that is not a rule list at all, such as a file of bare dead domains at the repository
-root. The position inside the chosen file is the sorted one when that file's own order proves it
-sorted (`sorted-insertion.ts`), and otherwise the domain block, terminal section, or end of file.
+root. The position inside the chosen file is the agent's choice too, read from the file's outline;
+the host computes the edit and refuses only the positions that would break the file.
 
 **The AdGuard extension is driven by its built-in instruction.** How to apply settings and rules
 to it lives in `src/prompts/documents/instructions/adguard-extension.md`, which a run without its

@@ -1,6 +1,7 @@
 import type { Page } from 'playwright-core';
 import * as v from 'valibot';
-import { TOOL_GUIDANCE, TOOL_PARAMETER_SCHEMAS } from '../agent/tool-catalog';
+import { TOOL_GUIDANCE } from '../agent/tool-guidance';
+import { TOOL_PARAMETER_SCHEMAS } from '../agent/tool-catalog';
 import { ToolName } from '../agent/tool-names';
 import {
     CUSTOM_FILTERS_GROUP_ID,

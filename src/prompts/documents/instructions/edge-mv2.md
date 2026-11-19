@@ -119,9 +119,9 @@ extension itself rather than the lists.
 
 Proposed placement: the list file chosen for this rule and its position there. This instruction
 declares no placement, so the rule goes into the list the repository already keeps rules like this
-one in, at the position that list's own order implies — its sorted place in a sorted list, the end
-otherwise. The user rule the run verified against is the in-browser application path only; the list
-file is where the fix is proposed to ship.
+one in, at the position the agent chooses from the file's layout. The user rule the run verified
+against is the in-browser application path only; the list file is where the fix is proposed to
+ship.
 
 ### Missing information
 

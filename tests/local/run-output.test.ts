@@ -35,6 +35,7 @@ import { projectEnvironmentResult } from '../../src/environment/environment-resu
 import type { FilteringEnvironmentExecution } from '../../src/environment/filtering-environment';
 import type { AgentRunArtifacts } from '../../src/types/agent-run-artifacts';
 import type { FixRunResult } from '../../src/types/fix-run-result';
+import type { InsertRepositoryEdit } from '../../src/types/repository-edit';
 import type { IssueFacts } from '../../src/types/issue-facts';
 import { CandidateVisualCoverageGap } from '../../src/types/candidate-visual-coverage-gap';
 import { renderCandidateVisualReview } from '../../src/local/run-report-candidate-render';
@@ -995,6 +996,164 @@ describe('renderLocalAgentReport', () => {
 
         expect(report).toContain('- Insertion point: `9235`');
         expect(report).toContain('- Insert before rule: `wpoznaniu.pl##.g-dyn`');
+    });
+
+    it('names a blank anchor line without an empty rule code span', () => {
+        const blankAnchorRecord: LocalRunRecord = {
+            ...record,
+            result: bindCandidateEvidence({
+                ...record.result,
+                candidatePatch: {
+                    rule: 'wpoznaniu.pl##div[class^="inner-ads-header"]',
+                    ruleType: 'cosmetic',
+                    syntaxKind: 'element_hiding',
+                    filePath: 'BaseFilter/sections/foreign.txt',
+                    repositoryEdit: {
+                        kind: 'insert',
+                        insertionPoint: 9234,
+                        anchorRule: '',
+                        basis: 'chosen_line',
+                    },
+                },
+            }),
+        };
+
+        const report = renderLocalAgentReport(blankAnchorRecord);
+
+        expect(report).not.toContain('Insert before rule: ``');
+        expect(report).toContain('blank line');
+    });
+
+    it('names a whitespace-only anchor line as blank, not as a comment', () => {
+        const whitespaceAnchorRecord: LocalRunRecord = {
+            ...record,
+            result: bindCandidateEvidence({
+                ...record.result,
+                candidatePatch: {
+                    rule: 'wpoznaniu.pl##div[class^="inner-ads-header"]',
+                    ruleType: 'cosmetic',
+                    syntaxKind: 'element_hiding',
+                    filePath: 'BaseFilter/sections/foreign.txt',
+                    repositoryEdit: {
+                        kind: 'insert',
+                        insertionPoint: 9234,
+                        anchorRule: ' \t ',
+                        basis: 'chosen_line',
+                    },
+                },
+            }),
+        };
+
+        const report = renderLocalAgentReport(whitespaceAnchorRecord);
+
+        expect(report).not.toContain('Insert before comment line');
+        expect(report).toContain('blank line');
+    });
+
+    it('names heading anchors as headings, a dashed banner by its cleaned label', () => {
+        const banner = '!------- JS rules ---------------------!';
+        const note = '! NOTE: Specific rules';
+        const headingAnchorRecord = (anchor: string): LocalRunRecord => ({
+            ...record,
+            result: bindCandidateEvidence({
+                ...record.result,
+                candidatePatch: {
+                    rule: 'wpoznaniu.pl##div[class^="inner-ads-header"]',
+                    ruleType: 'cosmetic',
+                    syntaxKind: 'element_hiding',
+                    filePath: 'BaseFilter/sections/specific.txt',
+                    repositoryEdit: {
+                        kind: 'insert',
+                        insertionPoint: 40,
+                        anchorRule: anchor,
+                        basis: 'chosen_line',
+                    },
+                },
+            }),
+        });
+
+        const bannerReport = renderLocalAgentReport(headingAnchorRecord(banner));
+        const noteReport = renderLocalAgentReport(headingAnchorRecord(note));
+
+        for (const report of [bannerReport, noteReport]) {
+            expect(report).toContain('heading');
+            expect(report).not.toContain('Insert before rule: `!');
+        }
+        // The banner is named by the label between its dashes, not by the raw frame line.
+        expect(bannerReport).toContain('`JS rules`');
+        expect(bannerReport).not.toContain(banner);
+        expect(noteReport).toContain(note);
+    });
+
+    it('renders the heading, the platform condition and the end-of-file reason', () => {
+        const heading = '! NOTE: Specific rules';
+        const condition = '!#if (adguard_ext_android_cb)';
+        const reason = 'No section keeps rules of this kind.';
+        const withPlace: LocalRunRecord = {
+            ...record,
+            result: bindCandidateEvidence({
+                ...record.result,
+                candidatePatch: {
+                    rule: 'example.com##.advert',
+                    ruleType: 'cosmetic',
+                    syntaxKind: 'element_hiding',
+                    filePath: 'BaseFilter/sections/specific.txt',
+                    repositoryEdit: {
+                        kind: 'insert',
+                        insertionPoint: 40,
+                        anchorRule: 'example.org##.existing',
+                        basis: 'chosen_line',
+                        heading,
+                        condition,
+                    },
+                },
+            }),
+        };
+        const withLegacySection: LocalRunRecord = {
+            ...record,
+            result: bindCandidateEvidence({
+                ...record.result,
+                candidatePatch: {
+                    rule: 'example.com##.advert',
+                    ruleType: 'cosmetic',
+                    syntaxKind: 'element_hiding',
+                    filePath: 'BaseFilter/sections/specific.txt',
+                    repositoryEdit: {
+                        kind: 'insert',
+                        insertionPoint: 40,
+                        anchorRule: 'example.org##.existing',
+                        basis: 'chosen_line',
+                        section: heading,
+                    } as unknown as InsertRepositoryEdit,
+                },
+            }),
+        };
+        const atEndOfFile: LocalRunRecord = {
+            ...record,
+            result: bindCandidateEvidence({
+                ...record.result,
+                candidatePatch: {
+                    rule: 'example.com##.advert',
+                    ruleType: 'cosmetic',
+                    syntaxKind: 'element_hiding',
+                    filePath: 'BaseFilter/sections/specific.txt',
+                    repositoryEdit: {
+                        kind: 'insert',
+                        basis: 'append_eof',
+                        reason,
+                    },
+                },
+            }),
+        };
+
+        for (const report of [
+            renderLocalAgentReport(withPlace),
+            renderLocalAgentReport(withLegacySection),
+        ]) {
+            expect(report).toContain(heading);
+        }
+        expect(renderLocalAgentReport(withPlace)).toContain(condition);
+        expect(renderLocalAgentReport(atEndOfFile)).toContain(reason);
     });
 
     it('renders the bound rejected viewport/full-page pair and typed vision verdict', () => {

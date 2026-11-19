@@ -1,12 +1,7 @@
-import { readdirSync, readFileSync, writeFileSync, statSync } from 'node:fs';
+import { readdirSync, writeFileSync, statSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import * as v from 'valibot';
-import {
-    PlacementMapSchema,
-    type PlacementMap,
-    type FilterFileEntry,
-    type FilterSection,
-} from '../types/repo-context';
+import { PlacementMapSchema, type PlacementMap, type FilterFileEntry } from '../types/repo-context';
 
 /**
  * Directories skipped during checkout traversal.
@@ -69,8 +64,8 @@ function listFilesPerDirectory(relPaths: readonly string[]): Map<string, number>
  *   the filter (`BaseFilter/filter.txt` and `BaseFilter/sections/foreign.txt` → `BaseFilter`).
  * - One directory of independent lists, as a uAssets-style repository ships it — `filters/*.txt`,
  *   each file a separately distributed list. Naming them all after `filters` would collapse them
- *   into one filter with one section index, which loses every alternative placement and every
- *   cross-list selector. Each file is its own list instead, named by its path.
+ *   into one filter, which loses every alternative placement and every cross-list selector. Each
+ *   file is its own list instead, named by its path.
  *
  * The discriminator is a directory holding more than one list file directly at the top level: that
  * is a container of lists, not a filter split into sections.
@@ -96,60 +91,6 @@ function filterNameFromRelPath(
 }
 
 /**
- * Detect sections in a filter file from `! Section: <name>` headers.
- *
- * Rules before the first header belong to a section named after the `! Title:` comment (fallback
- * `"default"`). `endLine` is inclusive.
- *
- * @param lines - All lines of the file (1-based indexing applied by caller).
- * @param title - The file title if a `! Title:` comment was found.
- * @returns Detected sections.
- */
-function detectSections(lines: string[], title: string | undefined): FilterSection[] {
-    const sections: FilterSection[] = [];
-    let current: FilterSection | undefined;
-    const flush = (endLine: number) => {
-        if (current) {
-            current.endLine = endLine;
-            sections.push(current);
-        }
-    };
-    lines.forEach((line, idx) => {
-        const lineNo = idx + 1;
-        const sectionMatch = line.match(/^!\s*Section:\s*(.+?)\s*$/i);
-        if (sectionMatch) {
-            flush(lineNo - 1);
-            current = { name: sectionMatch[1], startLine: lineNo + 1, endLine: lineNo };
-        }
-    });
-    flush(lines.length);
-    if (sections.length === 0) {
-        sections.push({
-            name: title ?? 'default',
-            startLine: 1,
-            endLine: lines.length,
-        });
-    }
-    return sections;
-}
-
-/**
- * Extract the `! Title:` value from a file's lines, if present.
- *
- * @param lines - All lines of the file.
- * @returns The title text or undefined.
- */
-function extractTitle(lines: string[]): string | undefined {
-    for (const line of lines) {
-        const m = line.match(/^!\s*Title:\s*(.+?)\s*$/i);
-        if (m) {
-            return m[1];
-        }
-    }
-    return undefined;
-}
-
-/**
  * Generate a placement map by scanning a filter-list checkout.
  *
  * Every `.txt` file the checkout holds is a list file, keyed by its checkout-relative path; how
@@ -165,16 +106,12 @@ export function generatePlacementMap(checkoutPath: string): PlacementMap {
         .sort()
         .map((absPath) => relative(checkoutPath, absPath));
     const listFilesPerDir = listFilesPerDirectory(relPaths);
-    const files = relPaths.map((relPath): FilterFileEntry => {
-        const lines = readFileSync(join(checkoutPath, relPath), 'utf8').split(/\r?\n/);
-        const title = extractTitle(lines);
-        const sections = detectSections(lines, title);
-        return {
+    const files = relPaths.map(
+        (relPath): FilterFileEntry => ({
             filter: filterNameFromRelPath(relPath, listFilesPerDir),
             relativePath: relPath,
-            sections,
-        };
-    });
+        }),
+    );
     const map = {
         checkoutPath,
         generatedAt: new Date().toISOString(),

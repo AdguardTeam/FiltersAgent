@@ -20,20 +20,10 @@ describe('generatePlacementMap', () => {
         ]);
     });
 
-    it('records relative paths and the title-derived default section name', () => {
+    it('records relative paths', () => {
         const map = generatePlacementMap(checkout);
         const base = map.files.find((f) => f.filter === 'BaseFilter')!;
         expect(base.relativePath).toBe('BaseFilter/filter.txt');
-    });
-
-    it('detects sections with correct line ranges', () => {
-        const map = generatePlacementMap(checkout);
-        const base = map.files.find((f) => f.filter === 'BaseFilter')!;
-        const generic = base.sections.find((s) => s.name === 'Generic network rules')!;
-        expect(generic.startLine).toBe(3);
-        expect(generic.endLine).toBe(6);
-        const specific = base.sections.find((s) => s.name === 'Domain-specific rules')!;
-        expect(specific.startLine).toBe(8);
     });
 
     it('produces a schema-valid map', () => {

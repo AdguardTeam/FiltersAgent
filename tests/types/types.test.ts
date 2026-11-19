@@ -136,9 +136,8 @@ describe('repo-context schemas', () => {
             filePath: '/repo/BaseFilter/filter.txt',
             line: 3,
             filter: 'BaseFilter',
-            section: 'Generic network rules',
         });
-        expect(m.section).toBe('Generic network rules');
+        expect(m.filter).toBe('BaseFilter');
     });
 
     it('rejects a RuleMatch with an empty rule', () => {
@@ -161,10 +160,9 @@ describe('repo-context schemas', () => {
                 {
                     filter: 'BaseFilter',
                     relativePath: 'BaseFilter/filter.txt',
-                    sections: [{ name: 'General', startLine: 1, endLine: 5 }],
                 },
             ],
         });
-        expect(map.files[0].sections[0].endLine).toBe(5);
+        expect(map.files[0].relativePath).toBe('BaseFilter/filter.txt');
     });
 });

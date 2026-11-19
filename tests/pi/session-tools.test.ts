@@ -21,7 +21,7 @@ import { buildTerminalTool } from '../../src/pi/terminal-tool';
 import { buildRegistrySessionTools } from '../../src/session/registry-session-tools';
 import { SealKind } from '../../src/pi/seal-types';
 import { ToolGateCause, type SessionToolSpec } from '../../src/pi/session-tool-types';
-import { TOOL_GUIDANCE } from '../../src/agent/tool-catalog';
+import { TOOL_GUIDANCE } from '../../src/agent/tool-guidance';
 import { TraceRecorder } from '../../src/tracer/trace-recorder';
 import {
     type HermeticProvider,

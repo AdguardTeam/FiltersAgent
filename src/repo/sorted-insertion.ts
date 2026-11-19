@@ -1,4 +1,5 @@
 import { findCosmeticSeparator, normalizeRule, RuleKind } from './rule-normalizer';
+import { isRuleLine } from './rule-line';
 import { samePlacementFamily } from './rule-family';
 
 /**
@@ -13,7 +14,7 @@ import { samePlacementFamily } from './rule-family';
  * Sortedness is measured rather than assumed: the same measurement over AdguardFilters
  * `BaseFilter/sections/specific.txt` (0.519) and uAssets `filters/filters-2026.txt` (0.522) shows
  * those files are chronological logs, where the sorted position would be meaningless and the
- * existing domain-block and end-of-file anchors stay right.
+ * agent's own chosen line is what places the rule.
  */
 
 /**
@@ -68,6 +69,21 @@ export const MIN_SORTED_ADJACENT_RATIO = 0.98;
 export const MIN_SORTED_SECTION_RULES = 20;
 
 /**
+ * One zero-based inclusive line range of a list file inside which a rule may take its sorted place.
+ */
+export interface RuleRegion {
+    /**
+     * Zero-based index of the region's first line.
+     */
+    startIndex: number;
+
+    /**
+     * Zero-based index of the region's last line, inclusive.
+     */
+    endIndex: number;
+}
+
+/**
  * A planned position inside a section proven to be sorted.
  */
 export interface SortedInsertion {
@@ -77,24 +93,11 @@ export interface SortedInsertion {
     insertionPoint: number;
 
     /**
-     * Exact line the rule is planned to precede; absent when the position is the end of the file.
+     * Exact line the insertion precedes — a following rule, or a blank line between two rules of
+     * the run. Absent only when the rule sorts after the run's last rule, so no following line
+     * belongs to the run to anchor or link to.
      */
     anchorRule?: string;
-
-    /**
-     * Key the section proved sorted under.
-     */
-    sortKey: RuleSortKey;
-
-    /**
-     * Number of rules the section holds, as counted for the measurement.
-     */
-    sectionRules: number;
-
-    /**
-     * Fraction of the section's adjacent rule pairs already in ascending order.
-     */
-    orderedRatio: number;
 }
 
 /**
@@ -141,11 +144,6 @@ interface SortedSection {
      * Comparator the section's order holds under.
      */
     comparator: SortComparator;
-
-    /**
-     * Fraction of adjacent pairs in ascending order under that comparator.
-     */
-    orderedRatio: number;
 }
 
 /**
@@ -162,14 +160,6 @@ interface ChosenSection {
      */
     candidateKey: string;
 }
-
-/**
- * Marker of a list header line such as `[Adblock Plus 2.0]`.
- *
- * It parses as a network pattern rather than as a comment, so without this it would join the file's
- * first section as a rule and distort that section's measured order.
- */
-const LIST_HEADER_PATTERN = /^\[.*\]$/u;
 
 /**
  * Extract the key one line sorts under.
@@ -211,7 +201,7 @@ function ruleSections(lines: readonly string[]): RuleSection[] {
         if (kind === RuleKind.Empty) {
             continue;
         }
-        if (kind === RuleKind.Comment || LIST_HEADER_PATTERN.test(line.trim())) {
+        if (!isRuleLine(line, kind)) {
             current = undefined;
             continue;
         }
@@ -280,7 +270,7 @@ function proveSorted(lines: readonly string[], section: RuleSection): SortedSect
             const comparator: SortComparator = { sortKey, caseFolded };
             const ratio = orderedRatio(lines, section, comparator);
             if (ratio !== undefined && ratio >= MIN_SORTED_ADJACENT_RATIO) {
-                return { section, comparator, orderedRatio: ratio };
+                return { section, comparator };
             }
         }
     }
@@ -332,41 +322,144 @@ function chooseSection(
 }
 
 /**
- * Plan the sorted position of a candidate rule inside a list file that keeps its rules sorted.
+ * Determine whether the rules inside one line range are kept sorted.
+ *
+ * A region is sorted when at least one run of rules in it proves sorted, and every run in it that
+ * is long enough to carry order (at least {@link MIN_SORTED_SECTION_RULES} rules) proves sorted
+ * too: a short run is a coincidence either way, and one hand-placed line must not make the whole
+ * region look like a log.
+ *
+ * @param lines - Exact repository lines in the {@link filterFileLines} model.
+ * @param startIndex - Zero-based first index of the range.
+ * @param endIndex - Zero-based last index of the range, inclusive.
+ * @returns Whether the range is kept sorted.
+ */
+export function isSortedRuleRange(
+    lines: readonly string[],
+    startIndex: number,
+    endIndex: number,
+): boolean {
+    const range = lines.slice(startIndex, endIndex + 1);
+    const sections = ruleSections(range);
+    const proven = new Set(sections.filter((section) => proveSorted(range, section) !== undefined));
+    return (
+        proven.size > 0 &&
+        sections.every(
+            (section) =>
+                proven.has(section) || section.ruleIndices.length < MIN_SORTED_SECTION_RULES,
+        )
+    );
+}
+
+/**
+ * The ordered body of a section's rules: the run without the hand-placed outliers that a tolerated
+ * inversion leaves at either edge.
+ *
+ * A section passes as sorted while a single misplaced line remains, and that line is nearly always
+ * at an edge: a maintainer drops a new rule under the header, or edits the last line of the block.
+ * Such a line is not an anchor for a candidate — a small trailing outlier sorts before almost every
+ * rule, so treating it as one sends the candidate to the run's end.
+ */
+interface OrderedBody {
+    /**
+     * Position of the body's first rule inside the section's rule list.
+     */
+    start: number;
+
+    /**
+     * Position of the body's last rule inside the section's rule list, inclusive.
+     */
+    end: number;
+}
+
+/**
+ * Cut the tolerated leading and trailing outliers off a section's keys.
+ *
+ * Only an edge inversion is trimmed — a first key greater than the next one, or a last key smaller
+ * than the previous one — and the trim repeats while the new edge is inverted too. An inversion
+ * between two interior rules is not an edge outlier: the body keeps it, and the reverse search
+ * still reads the order around it.
+ *
+ * @param keys - The section's comparable keys, in file order.
+ * @returns The positions the ordered body spans.
+ */
+function orderedBody(keys: readonly string[]): OrderedBody {
+    let start = 0;
+    let end = keys.length - 1;
+    while (start < end && keys[start] > keys[start + 1]) {
+        start += 1;
+    }
+    while (end > start && keys[end] < keys[end - 1]) {
+        end -= 1;
+    }
+    return { start, end };
+}
+
+/**
+ * Plan the sorted position of a candidate rule inside one outline region the agent named.
+ *
+ * Only the named region is read, and only its own runs may hold the rule: a plan that fell back to
+ * a sorted block elsewhere in the file would put the rule in a section the agent never chose.
+ *
+ * The position is the line after the last smaller key, searched from the end of the section's
+ * ordered body. A section can carry one hand-placed line at either edge whose key breaks the order
+ * while the rest still ascends — an unsorted head of one greater key, or a smaller key a maintainer
+ * left at the tail — so those edge outliers are trimmed before the search and never serve as
+ * anchors. Inside the body the first greater key from the top would land the rule in an unsorted
+ * head, which is why the search runs from the end. When no body rule has a smaller key the rule
+ * goes before the body's first rule, and when every body rule is smaller it goes after the body's
+ * last one, where it sorts last and has no following rule to anchor.
  *
  * @param lines - Exact repository lines in the {@link filterFileLines} model.
  * @param candidateRule - Locked candidate rule.
- * @returns The sorted position with its anchor, or undefined when the file keeps no usable order.
+ * @param region - The outline region the agent named, in zero-based inclusive line indices.
+ * @returns The sorted position with its anchor, or undefined when the region holds no sorted run of
+ *   the candidate's rule family.
  */
 export function findSortedInsertion(
     lines: readonly string[],
     candidateRule: string,
+    region: RuleRegion,
 ): SortedInsertion | undefined {
-    const sorted = ruleSections(lines)
-        .map((section) => proveSorted(lines, section))
+    const range = lines.slice(region.startIndex, region.endIndex + 1);
+    const sorted = ruleSections(range)
+        .map((section) => proveSorted(range, section))
         .filter((entry): entry is SortedSection => entry !== undefined);
     if (sorted.length === 0) {
         return undefined;
     }
-    const selection = chooseSection(lines, sorted, candidateRule);
+    const selection = chooseSection(range, sorted, candidateRule);
     if (selection === undefined) {
         return undefined;
     }
     const { chosen, candidateKey } = selection;
-    const successor = chosen.section.ruleIndices.find((index) => {
-        const key = sortKeyOf(lines[index] ?? '', chosen.comparator);
-        return key !== undefined && key > candidateKey;
-    });
-    // No successor means the candidate sorts last in its block; it still belongs inside the block,
-    // so the position is the line right after the block's final rule — a comment, a blank line, or
-    // the end of the file.
-    const insertionPoint = successor ?? (chosen.section.ruleIndices.at(-1) as number) + 1;
-    const anchorRule = insertionPoint < lines.length ? lines[insertionPoint] : undefined;
+    const indices = chosen.section.ruleIndices;
+    const keys: string[] = [];
+    for (const index of indices) {
+        const key = sortKeyOf(range[index], chosen.comparator);
+        if (key === undefined) {
+            return undefined;
+        }
+        keys.push(key);
+    }
+    const body = orderedBody(keys);
+    // The insertion precedes the body rule at this position; a position past the body means the
+    // rule sorts after its last rule, where no following body rule exists to anchor.
+    let followingBodyPosition: number = body.start;
+    let localInsertionPoint = indices[body.start];
+    for (let position = body.end; position >= body.start; position -= 1) {
+        if (keys[position] < candidateKey) {
+            localInsertionPoint = indices[position] + 1;
+            followingBodyPosition = position + 1;
+            break;
+        }
+    }
+    // The line at the position is the exact boundary the rule is planned to precede: a following
+    // rule, or a blank line between two rules of the ordered body. Only sorting after the body's
+    // last rule leaves no following line of the body to anchor.
+    const anchorRule = followingBodyPosition <= body.end ? range[localInsertionPoint] : undefined;
     return {
-        insertionPoint,
+        insertionPoint: region.startIndex + localInsertionPoint,
         ...(anchorRule === undefined ? {} : { anchorRule }),
-        sortKey: chosen.comparator.sortKey,
-        sectionRules: chosen.section.ruleIndices.length,
-        orderedRatio: chosen.orderedRatio,
     };
 }

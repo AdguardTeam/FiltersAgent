@@ -1,9 +1,59 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { PlacementMap, SearchQuery, RuleMatch } from '../types/repo-context';
+import * as v from 'valibot';
+import type { FilterFileEntry, PlacementMap, SearchQuery, RuleMatch } from '../types/repo-context';
+import { SearchQuerySchema } from '../types/repo-context';
+import type { FileOutline } from './file-outline';
+import { buildFileOutline } from './file-outline';
+import { filterFileLines } from './filter-file-lines';
 import { RuleKind, normalizeRule, type NormalizedRule } from './rule-normalizer';
 import { matchesQuery } from './rule-matcher';
 import { domainScopeCovers, domainScopeSearchTerms, finalDomainLabel } from './domain-scope';
+
+/**
+ * How many lines a file window shows on either side of the line it is opened at.
+ */
+export const FILE_WINDOW_RADIUS_LINES = 15;
+
+/**
+ * One verbatim, numbered slice of a list file around a chosen line.
+ */
+export interface ListFileWindow {
+    /**
+     * Checkout-relative path of the file the window was read from.
+     */
+    filePath: string;
+
+    /**
+     * Number of lines in the file, in the {@link filterFileLines} line model.
+     */
+    lineCount: number;
+
+    /**
+     * The window's lines, in file order, each with its 1-based number.
+     */
+    lines: Array<{
+        /**
+         * 1-based line number inside the file.
+         */
+        line: number;
+
+        /**
+         * Exact line text.
+         */
+        text: string;
+    }>;
+}
+
+/**
+ * The marker outline of one named list file, carrying the canonical path the placement map found.
+ */
+export interface ListFileOutline extends FileOutline {
+    /**
+     * Checkout-relative path of the file, exactly as the placement map records it.
+     */
+    filePath: string;
+}
 
 /**
  * An intermediate search result: the public {@link RuleMatch} fields plus the normalized rule the
@@ -29,11 +79,6 @@ interface PreliminaryMatch {
      * Filter name the file belongs to.
      */
     filter: string;
-
-    /**
-     * Section name the rule falls within, if any.
-     */
-    section?: string;
 
     /**
      * The normalized rule descriptor.
@@ -154,17 +199,23 @@ function preFilter(line: string, query: SearchQuery): boolean {
 }
 
 /**
- * Find the section name containing a given 1-based line number.
+ * Resolve one model-supplied file path against the checkout's list files.
  *
- * @param sections - The file's sections.
- * @param line - The 1-based line number.
- * @returns The section name or undefined.
+ * @param map - Placement map of the checkout.
+ * @param filePath - Untrusted model-supplied path.
+ * @returns The map entry naming the file.
+ * @throws {Error} Naming the path when the checkout holds no list file at it.
  */
-function sectionForLine(
-    sections: PlacementMap['files'][number]['sections'],
-    line: number,
-): string | undefined {
-    return sections.find((s) => line >= s.startLine && line <= s.endLine)?.name;
+function listFileEntry(map: PlacementMap, filePath: string): FilterFileEntry {
+    const normalized = filePath.replace(/\\/gu, '/');
+    const entry = map.files.find((file) => file.relativePath.replace(/\\/gu, '/') === normalized);
+    if (entry === undefined) {
+        throw new Error(
+            `${filePath} is not one of the checkout's list files. Pass a file path exactly as ` +
+                'search_rules reports it.',
+        );
+    }
+    return entry;
 }
 
 /**
@@ -185,25 +236,31 @@ export function searchRules(
     map: PlacementMap,
     checkoutPath: string,
 ): RuleMatch[] {
+    const checked = v.parse(SearchQuerySchema, query);
     const hasTarget =
-        query.domain !== undefined ||
-        query.selector !== undefined ||
-        query.urlPattern !== undefined ||
-        query.scriptlet !== undefined;
+        checked.domain !== undefined ||
+        checked.selector !== undefined ||
+        checked.urlPattern !== undefined ||
+        checked.scriptlet !== undefined;
     if (!hasTarget) {
         throw new Error(
             'searchRules requires at least one of domain/selector/urlPattern/scriptlet',
         );
     }
+    const onlyFile =
+        checked.filePath === undefined ? undefined : listFileEntry(map, checked.filePath);
 
     const preliminary: PreliminaryMatch[] = [];
 
     for (const file of map.files) {
+        if (onlyFile !== undefined && file !== onlyFile) {
+            continue;
+        }
         const absPath = join(checkoutPath, file.relativePath);
-        const lines = readFileSync(absPath, 'utf8').split(/\r?\n/);
+        const lines = filterFileLines(readFileSync(absPath, 'utf8'));
         lines.forEach((line, idx) => {
             const lineNo = idx + 1;
-            if (!preFilter(line, query)) {
+            if (!preFilter(line, checked)) {
                 return;
             }
             const normalized = normalizeRule(line);
@@ -214,7 +271,7 @@ export function searchRules(
             ) {
                 return;
             }
-            if (!matchesQuery(query, normalized)) {
+            if (!matchesQuery(checked, normalized)) {
                 return;
             }
             preliminary.push({
@@ -222,7 +279,6 @@ export function searchRules(
                 filePath: file.relativePath,
                 line: lineNo,
                 filter: file.filter,
-                section: sectionForLine(file.sections, lineNo),
                 normalized,
             });
         });
@@ -235,15 +291,74 @@ export function searchRules(
             filePath: m.filePath,
             line: m.line,
             filter: m.filter,
-            section: m.section,
         } satisfies RuleMatch,
     }));
 
     rankedResults.sort(
         (a, b) =>
-            compareDomainAffinity(a.preliminary, b.preliminary, query.domain) ||
+            compareDomainAffinity(a.preliminary, b.preliminary, checked.domain) ||
             a.match.filter.localeCompare(b.match.filter) ||
             a.match.line - b.match.line,
     );
     return rankedResults.map(({ match }) => match);
+}
+
+/**
+ * Read the outline of one list file.
+ *
+ * @param map - The placement map for the checkout.
+ * @param checkoutPath - Absolute path to the checkout root.
+ * @param filePath - Checkout-relative path of the list file.
+ * @returns The file's canonical path, header, markers, regions and line count.
+ * @throws {Error} Naming the path when the checkout holds no list file at it.
+ */
+export function outlineListFile(
+    map: PlacementMap,
+    checkoutPath: string,
+    filePath: string,
+): ListFileOutline {
+    const entry = listFileEntry(map, filePath);
+    return {
+        filePath: entry.relativePath,
+        ...buildFileOutline(
+            filterFileLines(readFileSync(join(checkoutPath, entry.relativePath), 'utf8')),
+        ),
+    };
+}
+
+/**
+ * Read a verbatim, numbered window of one list file around a chosen line.
+ *
+ * @param map - The placement map for the checkout.
+ * @param checkoutPath - Absolute path to the checkout root.
+ * @param filePath - Checkout-relative path of the list file.
+ * @param line - One-based line the window is centred on.
+ * @returns The file's line count and {@link FILE_WINDOW_RADIUS_LINES} lines either side.
+ * @throws {Error} Naming the line and the file's line count when the line is outside it.
+ */
+export function readListFileWindow(
+    map: PlacementMap,
+    checkoutPath: string,
+    filePath: string,
+    line: number,
+): ListFileWindow {
+    const entry = listFileEntry(map, filePath);
+    const lines = filterFileLines(readFileSync(join(checkoutPath, entry.relativePath), 'utf8'));
+    const lineCount = lines.length;
+    if (!Number.isInteger(line) || line < 1 || line > lineCount) {
+        throw new Error(
+            `Line ${line} is outside ${filePath}, which has ${lineCount} lines. Pass a line ` +
+                `between 1 and ${lineCount}.`,
+        );
+    }
+    const first = Math.max(1, line - FILE_WINDOW_RADIUS_LINES);
+    const last = Math.min(lineCount, line + FILE_WINDOW_RADIUS_LINES);
+    return {
+        filePath: entry.relativePath,
+        lineCount,
+        lines: Array.from({ length: last - first + 1 }, (_unused, index) => ({
+            line: first + index,
+            text: lines[first + index - 1],
+        })),
+    };
 }

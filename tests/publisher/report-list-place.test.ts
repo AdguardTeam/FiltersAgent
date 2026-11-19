@@ -78,12 +78,13 @@ describe('composeListPlace', () => {
 
     it('keeps a declared comment line visible for an append behind it', () => {
         // The comment is a line the edit itself writes, not a neighbour the file already holds.
+        const comment = '! https://github.com/uBlockOrigin/uAssets/issues/1';
         const place = composeListPlace('filters/filters-2026.txt', SOURCE, {
             kind: RepositoryEditKind.Insert,
             basis: PlacementBasis.AppendEof,
-            precedingComment: '! https://github.com/uBlockOrigin/uAssets/issues/1',
+            precedingComment: comment,
         });
-        expect(place).toContain('`! https://github.com/uBlockOrigin/uAssets/issues/1`');
+        expect(place).toContain(comment);
     });
 
     it('links a file path with a space in it', () => {
@@ -92,5 +93,150 @@ describe('composeListPlace', () => {
         expect(linkTargets(place)).toEqual([
             `https://github.com/example-owner/example-repo/blob/${COMMIT}/Filters/Mobile%20beta/rules.txt`,
         ]);
+    });
+
+    it('names the heading and links the line a chosen-line insert precedes', () => {
+        const heading = '! NOTE: Specific rules';
+        const place = composeListPlace(FILE, SOURCE, {
+            kind: RepositoryEditKind.Insert,
+            insertionPoint: 41,
+            anchorRule: 'example.org##.existing',
+            basis: PlacementBasis.ChosenLine,
+            heading,
+        });
+
+        expect(linkTargets(place)).toEqual([FILE_URL, `${FILE_URL}#L42`]);
+        expect(place).toContain(heading);
+        expect(place).not.toContain('In section');
+    });
+
+    it('names the platform condition the chosen line sits inside', () => {
+        const heading = '! NOTE: Specific rules';
+        const condition = '!#if (adguard_ext_android_cb)';
+        const place = composeListPlace(FILE, SOURCE, {
+            kind: RepositoryEditKind.Insert,
+            insertionPoint: 41,
+            anchorRule: 'example.org##.existing',
+            basis: PlacementBasis.ChosenLine,
+            heading,
+            condition,
+        });
+
+        expect(linkTargets(place)).toEqual([FILE_URL, `${FILE_URL}#L42`]);
+        expect(place).toContain(heading);
+        expect(place).toContain(condition);
+    });
+
+    it('prints a banner heading by its clean label, not its framing line', () => {
+        const place = composeListPlace(FILE, SOURCE, {
+            kind: RepositoryEditKind.Insert,
+            insertionPoint: 41,
+            anchorRule: 'example.org##.existing',
+            basis: PlacementBasis.ChosenLine,
+            heading: 'JS rules',
+        });
+
+        expect(place).toContain('`JS rules`');
+        expect(place).not.toContain('!-------');
+    });
+
+    it('renders the legacy section field of an earlier run', () => {
+        // Results written before the field was renamed carry `section`; the report must read it
+        // exactly like the heading new runs write.
+        const section = '! NOTE: Specific rules';
+        const place = composeListPlace(FILE, SOURCE, {
+            kind: RepositoryEditKind.Insert,
+            insertionPoint: 41,
+            anchorRule: 'example.org##.existing',
+            basis: PlacementBasis.ChosenLine,
+            section,
+        });
+
+        expect(linkTargets(place)).toEqual([FILE_URL, `${FILE_URL}#L42`]);
+        expect(place).toContain(section);
+    });
+
+    it('links the line alone when no heading is above it', () => {
+        const place = composeListPlace(FILE, SOURCE, {
+            kind: RepositoryEditKind.Insert,
+            insertionPoint: 41,
+            anchorRule: 'example.org##.existing',
+            basis: PlacementBasis.ChosenLine,
+        });
+
+        expect(linkTargets(place)).toEqual([FILE_URL, `${FILE_URL}#L42`]);
+        expect(place).toContain('[line 42](');
+    });
+
+    it("gives the agent's reason for an end-of-file insert", () => {
+        const reason = 'The list keeps one rule per site and this site has none';
+        const place = composeListPlace(FILE, SOURCE, {
+            kind: RepositoryEditKind.Insert,
+            basis: PlacementBasis.AppendEof,
+            reason,
+        });
+
+        expect(linkTargets(place)).toEqual([FILE_URL]);
+        expect(place).toContain(reason);
+    });
+
+    it('closes the end-of-file sentence without doubling terminal punctuation', () => {
+        const reason = 'The list keeps one rule per site and this site has none';
+        const sentence = (text: string): string =>
+            composeListPlace(FILE, SOURCE, {
+                kind: RepositoryEditKind.Insert,
+                basis: PlacementBasis.AppendEof,
+                reason: text,
+            });
+
+        expect(sentence(reason).endsWith('none.')).toBe(true);
+        expect(sentence(`${reason}.`).endsWith('none.')).toBe(true);
+        expect(sentence(`${reason}.`).endsWith('none..')).toBe(false);
+        expect(sentence('Nothing fits here!').endsWith('here!')).toBe(true);
+        expect(sentence('Nothing fits here!').endsWith('here!.')).toBe(false);
+    });
+
+    it('keeps rendering the domain-block and terminal-section bases of earlier runs', () => {
+        const domainBlock = composeListPlace(FILE, SOURCE, {
+            kind: RepositoryEditKind.Insert,
+            insertionPoint: 4,
+            anchorRule: 'example.org##.existing',
+            basis: PlacementBasis.DomainBlock,
+        });
+        const terminalSection = composeListPlace(FILE, SOURCE, {
+            kind: RepositoryEditKind.Insert,
+            insertionPoint: 4,
+            anchorRule: 'example.org##.existing',
+            basis: PlacementBasis.TerminalSection,
+        });
+
+        expect(linkTargets(domainBlock)).toEqual([FILE_URL, `${FILE_URL}#L5`]);
+        expect(domainBlock).toContain("site's existing rules");
+        expect(linkTargets(terminalSection)).toEqual([FILE_URL, `${FILE_URL}#L5`]);
+        expect(terminalSection).toContain("end of the file's regular rules");
+    });
+
+    it('renders heading, condition and reason that carry Markdown as inert text', () => {
+        const heading = '! NOTE: [docs](https://example.org/x) and *emphasis*';
+        const condition = '!#if (example_host="a<b>")';
+        const place = composeListPlace(FILE, SOURCE, {
+            kind: RepositoryEditKind.Insert,
+            insertionPoint: 0,
+            anchorRule: '||ads.example^',
+            basis: PlacementBasis.ChosenLine,
+            heading,
+            condition,
+        });
+        const endOfFile = composeListPlace(FILE, SOURCE, {
+            kind: RepositoryEditKind.Insert,
+            basis: PlacementBasis.AppendEof,
+            reason: 'Nothing fits here: see @maintainer, #123 and <b>html</b>.',
+        });
+
+        expect(place).toContain(`\`${heading}\``);
+        expect(place).toContain(`\`${condition}\``);
+        expect(endOfFile).not.toContain('@maintainer');
+        expect(endOfFile).toContain('@\u2060maintainer');
+        expect(endOfFile).not.toContain('<b>');
     });
 });

@@ -12,6 +12,7 @@
  * patch.
  */
 import * as v from 'valibot';
+import { SINGLE_LINE_TEXT_PATTERN } from './single-line-text';
 
 /**
  * Ceiling on the rule carried for review.
@@ -31,23 +32,16 @@ export const MAX_CANDIDATE_FOR_REVIEW_RULE_CHARACTERS = 4_096;
 export const MAX_UNVERIFIED_REASON_CHARACTERS = 1_000;
 
 /**
- * A rule written verbatim as exactly one filter-file line.
- *
- * An embedded CR or LF does not make a longer rule — it makes a second, unreviewed one — so the
- * same single-line shape every other rule field in a serialized result is pinned to applies here.
- *
- * Deliberately flagless: this schema is part of the terminal tool's payload, which is converted to
- * JSON Schema for the model, and that conversion refuses a pattern carrying regex flags.
+ * The candidate an analysis-only run found but could not verify.
  */
-// oxlint-disable-next-line unicorn/require-unicode-regexp -- JSON Schema conversion refuses flags.
-const SINGLE_LINE_RULE_PATTERN = /^[^\r\n]+$/;
-
 export const CandidateForReviewSchema = v.object({
+    // A rule written verbatim as exactly one filter-file line: an embedded CR or LF does not make
+    // a longer rule — it makes a second, unreviewed one.
     rule: v.pipe(
         v.string(),
         v.minLength(1),
         v.maxLength(MAX_CANDIDATE_FOR_REVIEW_RULE_CHARACTERS),
-        v.regex(SINGLE_LINE_RULE_PATTERN),
+        v.regex(SINGLE_LINE_TEXT_PATTERN),
         v.description(
             'The exact single filter rule this run found and could not verify, written as it ' +
                 'would appear in the filter file.',

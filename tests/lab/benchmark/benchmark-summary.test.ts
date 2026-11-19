@@ -22,6 +22,8 @@ import { BenchmarkCaseStatus, BenchmarkFailureKind } from '../../../lab/e2e/benc
 import { GoldenAgentEnvironmentStatus } from '../../../lab/e2e/golden-agent-environment';
 import { BenchmarkPin } from '../../../lab/benchmark/benchmark-summary-pins';
 import { ReasoningEffort } from '../../../src/config/reasoning-effort';
+import { PlacementBasis } from '../../../src/types/placement-basis';
+import type { InsertRepositoryEdit } from '../../../src/types/repository-edit';
 import { RuleType } from '../../../src/types/rule-proposal';
 import { RepositoryEditKind } from '../../../src/types/repository-edit-kind';
 import { RuleSyntaxKind } from '../../../src/types/rule-syntax-kind';
@@ -471,6 +473,42 @@ describe('benchmark summaries', () => {
             humanRules: '',
             humanRemovedRules: '',
         });
+    });
+
+    it('writes the placement basis and the heading each run recorded', () => {
+        const chosen = record('example-chosen');
+        chosen.outcome.candidate!.repositoryEdit = {
+            kind: RepositoryEditKind.Insert,
+            insertionPoint: 4,
+            anchorRule: 'example.org##.old',
+            basis: PlacementBasis.ChosenLine,
+            heading: '! NOTE: Specific rules',
+        };
+        const legacy = record('example-legacy');
+        // A record written before the field was renamed carries `section`; the column reads it too.
+        legacy.outcome.candidate!.repositoryEdit = {
+            kind: RepositoryEditKind.Insert,
+            insertionPoint: 4,
+            anchorRule: 'example.org##.old',
+            basis: PlacementBasis.ChosenLine,
+            section: '! SECTION: example.org',
+        } as unknown as InsertRepositoryEdit;
+        const withoutEdit = record('example-no-edit');
+        const rows = parseCsv(
+            renderBenchmarkCsv([chosen, legacy, withoutEdit].map((value) => loaded(value))),
+        );
+        const values = rows
+            .slice(1)
+            .map((row) =>
+                Object.fromEntries(rows[0]!.map((column, index) => [column, row[index]])),
+            );
+
+        expect(values[0]).toMatchObject({
+            agentBasis: PlacementBasis.ChosenLine,
+            agentHeading: '! NOTE: Specific rules',
+        });
+        expect(values[1]).toMatchObject({ agentHeading: '! SECTION: example.org' });
+        expect(values[2]).toMatchObject({ agentBasis: '', agentHeading: '' });
     });
 
     it('fails naming a root without records', () => {

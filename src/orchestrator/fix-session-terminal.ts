@@ -13,7 +13,7 @@ import {
     FixOutcomeSchema,
     type FixOutcome,
 } from '../types/fix-outcome';
-import { TOOL_GUIDANCE } from '../agent/tool-catalog';
+import { TOOL_GUIDANCE } from '../agent/tool-guidance';
 import { ToolName } from '../agent/tool-names';
 import { buildTerminalTool, type TerminalToolController } from '../pi/terminal-tool';
 import type { SessionToolResult } from '../pi/session-tool-types';

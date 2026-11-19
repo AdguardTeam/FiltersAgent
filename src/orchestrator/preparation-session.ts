@@ -16,7 +16,7 @@
  */
 import * as v from 'valibot';
 import { resolve } from 'node:path';
-import { TOOL_GUIDANCE } from '../agent/tool-catalog';
+import { TOOL_GUIDANCE } from '../agent/tool-guidance';
 import {
     ExtensionLaunchFamily,
     FIREFOX_USER_FILTERS_KEY_PATH_MAX,

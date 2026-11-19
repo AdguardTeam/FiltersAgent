@@ -200,15 +200,15 @@ function isTrustedCommentAuthor(
  * Derive one visited issue's selection verdict from its full history.
  *
  * Contract: a revision-marked report is a comment authored by `inputs.reportAuthorLogin` whose body
- * parses to exactly one valid marker — a marker on a comment from any other author is never
- * trusted, since anyone can post one on a public issue. An issue with none is never reported and is
- * taken at once. Enough reports inside the rolling window before `capturedAt` (created at or after
- * the window's start) stop the issue outright even when a trusted signal follows them. Else a
- * comment by a trusted author — the reporter or a trusted association — created after the latest
- * report or last edited after it reselects the issue as a new revision. Else an `issue.updated_at`
- * newer than the latest report and than every comment's timestamps — a body edit no comment
- * explains — reselects it too. Anything else stays behind as already reported. The run's own
- * notices count as none of these: they are neither reports nor comments that explain an update.
+ * opens with a valid marker — a marker on a comment from any other author is never trusted, since
+ * anyone can post one on a public issue. An issue with none is never reported and is taken at once.
+ * Enough reports inside the rolling window before `capturedAt` (created at or after the window's
+ * start) stop the issue outright even when a trusted signal follows them. Else a comment by a
+ * trusted author — the reporter or a trusted association — created after the latest report or last
+ * edited after it reselects the issue as a new revision. Else an `issue.updated_at` newer than the
+ * latest report and than every comment's timestamps — a body edit no comment explains — reselects
+ * it too. Anything else stays behind as already reported. The run's own notices count as none of
+ * these: they are neither reports nor comments that explain an update.
  *
  * @param history - The visited issue's summary, reporter, and ordered comment history.
  * @param inputs - Validated queue inputs carrying the window and budget bounds.

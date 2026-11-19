@@ -9,6 +9,8 @@
  */
 import { describeCulpritRemoval } from '../repo/culprit-removal';
 import { describeCulpritReplacement } from '../repo/culprit-replacement';
+import { headingLineLabel } from '../repo/file-outline';
+import { isRuleLine } from '../repo/rule-line';
 import { describeSharedRuleExtension } from '../repo/shared-rule-extension';
 import { NOT_OBSERVED_TEXT } from '../environment/environment-proofs';
 import {
@@ -22,6 +24,7 @@ import type {
     PhaseHostRequests,
 } from '../validator/candidate-network-verification';
 import type { FixRunResult } from '../types/fix-run-result';
+import type { InsertRepositoryEdit } from '../types/repository-edit';
 import { RepositoryEditKind } from '../types/repository-edit-kind';
 import type {
     LocalKnowledgeBaseProvenance,
@@ -66,6 +69,42 @@ export function renderProfileScreenshots(profiles: LocalProfileScreenshotEvidenc
         ...renderPathList(`Profile — ${profile.name}`, profile.screenshots),
         '',
     ]);
+}
+
+/**
+ * Name the exact line a new rule lands before, in the file's own terms: a rule, a heading, another
+ * comment line or a blank line.
+ *
+ * @param anchor - The exact repository line the insert precedes.
+ * @returns The report line naming it.
+ */
+function renderAnchor(anchor: string): string {
+    const heading = headingLineLabel(anchor);
+    const label = heading !== undefined ? 'heading' : isRuleLine(anchor) ? 'rule' : 'comment line';
+    const line = heading ?? anchor;
+    // A line of spaces or tabs is blank too, and must not be quoted back as a rule or comment.
+    return line.trim() === ''
+        ? '- Insert before a blank line'
+        : `- Insert before ${label}: \`${line}\``;
+}
+
+/**
+ * Render the place one insert edit records inside the file.
+ *
+ * @param edit - The insert edit recorded on the candidate patch.
+ * @returns One line per recorded fact: the anchor line, the heading, the platform condition and the
+ *   end-of-file reason.
+ */
+function renderInsertPlace(edit: InsertRepositoryEdit): string[] {
+    // `section` is the legacy name earlier builds wrote; a locked result still carries it and it
+    // reads exactly like a heading new runs write.
+    const heading = edit.heading ?? edit.section;
+    return [
+        ...(edit.anchorRule === undefined ? [] : [renderAnchor(edit.anchorRule)]),
+        ...(heading === undefined ? [] : [`- Heading: \`${heading}\``]),
+        ...(edit.condition === undefined ? [] : [`- Condition: \`${edit.condition}\``]),
+        ...(edit.reason === undefined ? [] : [`- End of file reason: ${edit.reason}`]),
+    ];
 }
 
 /**
@@ -148,10 +187,8 @@ export function renderCandidate(result: FixRunResult): string[] {
             );
         }
     }
-    const anchorLines: string[] = [];
-    if (insertionEdit?.anchorRule) {
-        anchorLines.push(`- Insert before rule: \`${insertionEdit.anchorRule}\``);
-    }
+    const anchorLines: string[] =
+        insertionEdit === undefined ? [] : renderInsertPlace(insertionEdit);
     return [
         '### Candidate',
         '',

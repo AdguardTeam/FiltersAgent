@@ -105,10 +105,6 @@ describe('parseReportRevisionMarker', () => {
     });
 
     it('returns null for tolerated malformed comment bodies', () => {
-        const markerBody = renderReportRevisionMarker({
-            schemaVersion: 1,
-            revisionDigest: REVISION_DIGEST,
-        });
         const otherBody = renderReportRevisionMarker({
             schemaVersion: 1,
             revisionDigest: OTHER_REVISION_DIGEST,
@@ -134,9 +130,25 @@ describe('parseReportRevisionMarker', () => {
                 `${REPORT_COMMENT_MARKER_PREFIX}{"schemaVersion":1,"revisionDigest":"${REVISION_DIGEST}","extra":1} -->\nbody`,
             ),
         ).toBeNull();
-        // Duplicated markers leave the comment's revision ambiguous: ignored, never thrown.
-        expect(parseReportRevisionMarker(`${markerBody}\n${otherBody}`)).toBeNull();
-        expect(parseReportRevisionMarker(`${markerBody}\n${markerBody}`)).toBeNull();
+        // A marker that does not open the body is report content, never the comment's revision.
+        expect(parseReportRevisionMarker(`Report text.\n${otherBody}`)).toBeNull();
+    });
+
+    it('reads the opening marker when the report quotes marker-shaped text', () => {
+        const markerBody = renderReportRevisionMarker({
+            schemaVersion: 1,
+            revisionDigest: REVISION_DIGEST,
+        });
+        const quoted = renderReportRevisionMarker({
+            schemaVersion: 1,
+            revisionDigest: OTHER_REVISION_DIGEST,
+        });
+        // A rule or a list heading is quoted in a code span, where nothing is escaped.
+        const body = `${markerBody}\nRule: \`example.org##div:contains(${quoted})\``;
+        expect(parseReportRevisionMarker(body)).toEqual({
+            schemaVersion: 1,
+            revisionDigest: REVISION_DIGEST,
+        });
     });
 });
 

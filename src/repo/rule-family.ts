@@ -60,12 +60,13 @@ export function isExtensibleSharedRule(existing: NormalizedRule): boolean {
 /**
  * Test whether two normalized rules belong to the same broad repository placement family.
  *
- * Element hiding, CSS injection, ExtendedCSS, and scriptlets commonly share one domain block in
- * AdguardFilters. Network rules are kept separate from that cosmetic family.
+ * Element hiding, CSS injection, ExtendedCSS, and scriptlets commonly share one region of a list in
+ * AdguardFilters, so the agent may place either kind in that region. Network rules are kept
+ * separate from that cosmetic family.
  *
  * @param candidateKind - Kind of the locked candidate rule.
  * @param existingKind - Kind of one existing repository rule.
- * @returns Whether the rules can share a reported-domain placement block.
+ * @returns Whether the rules can share one placement region.
  */
 export function samePlacementFamily(candidateKind: RuleKind, existingKind: RuleKind): boolean {
     if (candidateKind === RuleKind.Network) {

@@ -29,6 +29,14 @@ const POPUPS_LIST = 'AnnoyancesFilter/Popups/sections/popups_specific.txt';
 const SESSION_DOMAIN = 'site.example';
 
 /**
+ * The position the planner check passes: where a new line lands is not what it asserts.
+ */
+const AT_FILE_END = {
+    kind: 'file_end',
+    reason: 'No section keeps rules of this kind.',
+} as const;
+
+/**
  * The issue the registry binds; only its number matters here.
  */
 const localIssue: RawIssue = {
@@ -319,7 +327,13 @@ describe('search_rules page check around the probe', () => {
             for (const match of matches) {
                 for (const list of match.lists) {
                     expect(
-                        planRepositoryEdit(checkout, list.filePath, match.candidateRule).edit,
+                        planRepositoryEdit(
+                            checkout,
+                            list.filePath,
+                            match.candidateRule,
+                            undefined,
+                            AT_FILE_END,
+                        ).edit,
                     ).toMatchObject(
                         list.line === undefined
                             ? { kind: 'insert' }

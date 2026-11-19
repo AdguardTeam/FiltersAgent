@@ -4,8 +4,8 @@
  * One short report comment per issue carries a hidden revision marker on its first line: the marker
  * binds the comment to one immutable issue revision digest, so a repeated run on the same revision
  * reports `already_reported` without a write while a new revision posts a new report. Existing
- * comments count for dedupe only when their body parses to exactly one valid marker — a malformed,
- * duplicated, or invalid-digest marker is ignored for dedupe and can never block posting or throw.
+ * comments count for dedupe only when their body opens with a valid marker — a malformed or
+ * invalid-digest marker is ignored for dedupe and can never block posting or throw.
  *
  * This module performs platform writes only; the comment content itself is rendered by
  * `report-render.ts`, so untrusted model-authored text never reaches a marker position.
@@ -96,15 +96,18 @@ export const ReportRevisionMarkerSchema = v.strictObject({
 export type ReportRevisionMarker = v.InferOutput<typeof ReportRevisionMarkerSchema>;
 
 /**
- * Build the scan of one comment body for the hidden revision markers of one kind: any
- * whitespace-tolerant open, the strict JSON payload, and the hidden-comment close. Built for every
- * match pass, so match state is never shared between calls.
+ * Build the match of the hidden revision marker opening a comment body of one kind: any
+ * whitespace-tolerant open, the strict JSON payload, and the hidden-comment close.
  *
- * @param kind - What the markers' comments are.
- * @returns The global scan capturing each marker's payload.
+ * Anchored to the start of the body, where the publisher writes the marker. The report below it
+ * quotes text the run did not author — a rule, a list heading — inside code spans, where nothing is
+ * escaped, so a marker-shaped string there must never be read as a marker.
+ *
+ * @param kind - What the marker's comment is.
+ * @returns The match capturing the marker's payload.
  */
 function revisionMarkerPattern(kind: RevisionCommentKind): RegExp {
-    return new RegExp(`<!--\\s*${REVISION_MARKER_NAMESPACE}${kind}\\s+([\\s\\S]*?)-->`, 'giu');
+    return new RegExp(`^\\s*<!--\\s*${REVISION_MARKER_NAMESPACE}${kind}\\s+([\\s\\S]*?)-->`, 'iu');
 }
 
 /**
@@ -265,13 +268,14 @@ export function renderReportRevisionMarker(
 }
 
 /**
- * Extract the strict payload of one unique revision marker from a comment body.
+ * Extract the strict payload of the revision marker opening a comment body.
  *
- * Contract: a body counts for dedupe only when its body carries exactly one marker that parses and
- * validates against `ReportRevisionMarkerSchema`. A body with no marker, with several (ambiguity is
- * never resolved), or whose single marker is malformed or outside the schema yields null. Tolerance
- * is the contract here, not an error path being swallowed: foreign comments share the issue thread
- * by design, so absent authoritative state is the expected steady behavior and is never logged.
+ * Contract: a body counts for dedupe only when it opens with a marker that parses and validates
+ * against `ReportRevisionMarkerSchema`; marker-shaped text further down is report content and is
+ * not read. A body that opens with no marker, or whose marker is malformed or outside the schema,
+ * yields null. Tolerance is the contract here, not an error path being swallowed: foreign comments
+ * share the issue thread by design, so absent authoritative state is the expected steady behavior
+ * and is never logged.
  *
  * @param body - Existing comment body as returned by the platform, or undefined when it carried
  *   none.
@@ -286,11 +290,7 @@ export function parseReportRevisionMarker(
     if (body === null || body === undefined) {
         return null;
     }
-    const matches = [...body.matchAll(revisionMarkerPattern(kind))];
-    if (matches.length !== 1) {
-        return null;
-    }
-    const payload = matches[0]?.[1]?.trim();
+    const payload = revisionMarkerPattern(kind).exec(body)?.[1].trim();
     if (payload === undefined || payload.length === 0) {
         return null;
     }

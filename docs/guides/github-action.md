@@ -293,7 +293,10 @@ The run loads its filter guidance at start from these role documents:
 
 Rule placement is deliberately not declared: this repository files rules per language and per rule
 kind across `<Filter>/sections/*.txt` — more distinctions than a declaration can name — so the file
-is chosen from where the repository already keeps rules like the new one.
+is chosen from where the repository already keeps rules like the new one. Inside the file, put a
+new rule at the start of the section that keeps rules of its kind: the first rule line below the
+`!` separator under `! NOTE: Specific rules` or the matching `! SECTION:` heading; when the file has
+a `! START:` group for the reported site, put it inside that group instead.
 ```
 
 The link labels are what bind the documents: a label containing `syntax`, `policy` or
@@ -403,19 +406,29 @@ Read `references/report.md` and follow it when you write the report.
 You do not have to tell the action anything for this to work. The agent chooses the list from what
 your repository already holds: the list with the reported site's rules, otherwise the one that keeps
 rules like the new one. It names that list by the path the repository search shows, and the action
-only checks that the rule can go there — the file is one of your repository's own lists and it is in
-the checkout. When it cannot, the agent is told why and chooses again; the action never moves a rule
-to a file of its own choosing.
+only checks that the rule can go there — the file is one of your repository's own lists, it is in
+the checkout, and the position can take a new line. When it cannot, the agent is told why and
+chooses again; the action never moves a rule to a file or a place of its own choosing.
 
-The position inside the file is read from the file itself. When the list keeps its rules sorted — at
-least 98% of adjacent lines in ascending order, in a run of at least 20 rules — the rule takes its
-sorted place, by the whole rule text or, for hiding rules, by the rule with its leading site list
-removed, the way EasyList's `FOP.py` sorts them. Otherwise the rule joins the site's existing rules
-when it has any, and goes at the end when it does not. When the chosen list already holds the same
-rule for other sites, the site is added to that rule instead of a new line. A shared rule is never
-extended when it excludes a site (`~site`), carries a `[$…]` modifier, already covers the site
-through a parent domain or an entity, or belongs to a group the list keeps for one project — its
-exact site list also scopes another rule of the same list. The rule then gets a line of its own.
+The instruction can state where inside a file a rule goes, as the example above does. Such prose
+is part of what the agent follows when it names a position: the action does not parse it, and
+checks only the position the agent names, so keep it consistent with the file's own outline.
+
+The position inside the file is the agent's choice too. It reads the file's outline and names a
+line, the region an outline marker flags as sorted (`s`), or the end of the file with its reason. A
+sorted position names that marker's line, or leaves the line out when the region before the first
+marker is flagged the same way, and the rule goes inside the region the agent named — never into
+one the outline flagged and the agent did not. The action refuses only a position that would break
+the file — a line outside it, a line directly under a `!+` platform hint, or a sorted position
+naming no sorted region or a region with no sorted run of the rule's kind — and the agent chooses
+again. A region is flagged as sorted when at least 98% of adjacent lines there are in ascending
+order, in a run of at least 20 rules, by the whole rule text or, for hiding rules, by the rule with
+its leading site list removed, the way EasyList's `FOP.py` sorts them. When the chosen list already
+holds the same rule for other sites, the site is added to that rule instead of a new line. A shared
+rule is never extended when it excludes a site (`~site`), carries a `[$…]` modifier, already covers
+the site through a parent domain or an entity, or belongs to a group the list keeps for one project
+— its exact site list also scopes another rule of the same list. The rule then gets a line of its
+own, at the position the agent named.
 
 A repository that wants to say where its rules go declares it in its instruction, and may use one
 line per rule kind:
@@ -434,8 +447,7 @@ The optional `comment:` part is the line written immediately before the rule and
 `{{issueUrl}}`, the URL of the issue being worked. It also decides where in the file the rule goes.
 A comment naming the issue makes the file a chronological log, so the rule is appended at the end
 behind that comment — the way uAssets keeps its year files. Leave the comment out and no comment is
-written and the position is read from the file exactly as above, so a sorted list gets a sorted
-insert.
+written, and the agent's position applies, as for an undeclared file.
 
 A declaration settles the file for the kind it governs: a rule of that kind placed anywhere else is
 returned to the agent, and the declared file always gets a new line, never a site added to a shared
@@ -503,7 +515,7 @@ template can carry a heading for a case that rarely happens.
 | `{{stillVisible}}` | What the vision review still saw on the page after that rule — the locations the reporter named that it did not fix. Empty for a verified rule, since one leftover instance is what rejects a candidate. |
 | `{{executor}}`, `{{executorVersion}}` | The blocker the run actually drove, and its version. |
 | `{{policyRationale}}` | The reasons of the policy decision: which rule of your filter policy (in the instruction or a document it links) allowed a rule or ruled it out. Empty when the run carries no policy decision. |
-| `{{listPlace}}` | The file the rule goes into, and where inside it: the line the rule goes before or extends. Both are links to the file at the commit the run analyzed. |
+| `{{listPlace}}` | The file the rule goes into, and where inside it: the heading and platform condition when the run recorded them, the line the rule goes before or extends, or the agent's reason for the end of the file. The file and line are links to the file at the commit the run analyzed. |
 | `{{missingInformation}}` | What the report would need to be actionable, when something is missing. |
 | `{{screenshots}}` | The page without and with the verified rule, side by side. Empty when no rule was verified, and when the workflow lacks `contents: write` (see the example workflow). |
 | `{{artifactsLink}}` | Link to the workflow run holding the full evidence. |

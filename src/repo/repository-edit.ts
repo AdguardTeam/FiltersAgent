@@ -22,10 +22,10 @@ import { placementRuleTypeOfRule } from './candidate-rule-type';
 import { declaredPlacementForTarget } from './declared-placement';
 import { selectExtensionCandidate } from './extension-target';
 import { filterFileLines } from './filter-file-lines';
-import { extendRuleDomains, samePlacementFamily } from './rule-family';
+import { extendRuleDomains } from './rule-family';
+import { planPositionedInsert } from './positioned-insert';
 import { SINGLE_LINE_RULE_MESSAGE, isSingleLineRule, normalizeRule } from './rule-normalizer';
 import { describeSharedRuleExtension } from './shared-rule-extension';
-import { findSortedInsertion } from './sorted-insertion';
 import { CandidateOperation } from '../environment/filtering-environment';
 import {
     declaredPlacementFor,
@@ -35,8 +35,10 @@ import {
 import type { PreparedFiltersCheckout } from '../local/filters-preparer';
 import type { LocalRunRecord } from '../local/run-output';
 import type { CandidatePatch } from '../types/fix-run-result';
+import type { InsertRepositoryEdit, RepositoryEdit } from '../types/repository-edit';
 import { RepositoryEditKind } from '../types/repository-edit-kind';
 import { PlacementBasis } from '../types/placement-basis';
+import type { PlacementPosition } from '../types/rule-proposal';
 import { type ReviewCandidateDisposition } from '../types/review-candidate-disposition';
 import { CandidateBindingFailureCode } from '../types/candidate-binding-failure-code';
 import { GIT_OBJECT_ID_PATTERN } from '../types/git-object-id';
@@ -309,120 +311,6 @@ class CandidateBindingError extends Error {
 }
 
 /**
- * A repository edit that inserts a new rule at a deterministic position.
- */
-export interface InsertRepositoryEdit {
-    /**
-     * Discriminator for a new rule insertion.
-     */
-    kind: typeof RepositoryEditKind.Insert;
-
-    /**
-     * Optional zero-based line index the edit planner chose inside the target file.
-     */
-    insertionPoint?: number;
-
-    /**
-     * Exact repository line immediately following the insertion point.
-     *
-     * When present, the edit is stale unless this rule still occupies {@link insertionPoint}.
-     */
-    anchorRule?: string;
-
-    /**
-     * How the insertion position was chosen; `append_eof` marks the anchorless fallback.
-     */
-    basis?: PlacementBasis;
-
-    /**
-     * Comment line written immediately before the inserted rule, when the run instruction's
-     * placement declaration asks for one — a uAssets-style repository precedes every added rule
-     * with a comment holding the issue URL. Absent everywhere else: the rule is the only line the
-     * edit adds.
-     */
-    precedingComment?: string;
-}
-
-/**
- * A repository edit that adds the candidate domain to an existing shared rule.
- */
-export interface ExtendDomainsRepositoryEdit {
-    /**
-     * Discriminator for extending an existing rule domain list.
-     */
-    kind: typeof RepositoryEditKind.ExtendDomains;
-
-    /**
-     * One-based line number of the exact source rule.
-     */
-    line: number;
-
-    /**
-     * Exact source line that must still exist before applying the edit.
-     */
-    originalRule: string;
-
-    /**
-     * Exact replacement line with the new domain included.
-     */
-    replacementRule: string;
-}
-
-/**
- * A repository edit that replaces one exact existing line.
- */
-export interface ReplaceRepositoryEdit {
-    /**
-     * Discriminator for an exact line replacement.
-     */
-    kind: typeof RepositoryEditKind.Replace;
-
-    /**
-     * One-based line number of the exact source rule.
-     */
-    line: number;
-
-    /**
-     * Exact source line that must still exist before applying the edit.
-     */
-    originalRule: string;
-
-    /**
-     * Complete replacement line.
-     */
-    replacementRule: string;
-}
-
-/**
- * A repository edit that removes one exact existing line.
- */
-export interface RemoveRepositoryEdit {
-    /**
-     * Discriminator for an exact line removal.
-     */
-    kind: typeof RepositoryEditKind.Remove;
-
-    /**
-     * One-based line number of the exact source rule.
-     */
-    line: number;
-
-    /**
-     * Exact source line that must still exist before applying the edit.
-     */
-    originalRule: string;
-}
-
-/**
- * Deterministic repository mutation selected after the candidate rule is locked.
- */
-export type RepositoryEdit =
-    | InsertRepositoryEdit
-    | ExtendDomainsRepositoryEdit
-    | ReplaceRepositoryEdit
-    | RemoveRepositoryEdit;
-
-/**
  * Runner-derived target file and exact mutation for one candidate rule.
  */
 export interface RepositoryEditPlan {
@@ -483,195 +371,19 @@ function resolveFilterPath(checkoutPath: string, filePath: string): string | und
 }
 
 /**
- * Opening marker for one named AdguardFilters section.
- */
-const SECTION_OPENING_PATTERN = /^!\s*SECTION(?:\[[^\]]+\])?\s*:\s*(.+?)\s*$/iu;
-
-/**
- * Closing marker for one named AdguardFilters section.
- */
-const SECTION_CLOSING_PATTERN = /^!\s*!SECTION(?:\[[^\]]+\])?\s*:\s*(.+?)\s*$/iu;
-
-/**
- * Normalize a section name for safe opening/closing and allowlist comparisons.
- *
- * @param name - Raw section marker name.
- * @returns Case-folded name with surrounding whitespace removed.
- */
-function normalizeSectionName(name: string): string {
-    return name.trim().toLocaleLowerCase();
-}
-
-/**
- * Determine whether a named section is explicitly intended for generic rules.
- *
- * Unknown names are deliberately treated as specialized so an ordinary candidate is never placed
- * into an owner-, site-, product-, allowlist-, or temporary-specific block by inference.
- *
- * @param name - Raw named-section label.
- * @returns Whether ordinary candidates may be inserted inside this section.
- */
-function isGenericPlacementSection(name: string): boolean {
-    return normalizeSectionName(name) === 'regular rules';
-}
-
-/**
- * Resolve the active named section containing one exact line.
- *
- * @param lines - Exact repository lines.
- * @param lineIndex - Zero-based line whose section ownership is queried.
- * @returns Active section name, or undefined for an unsectioned line.
- */
-export function sectionNameAtLine(lines: readonly string[], lineIndex: number): string | undefined {
-    let activeName: string | undefined;
-    for (let index = 0; index <= lineIndex; index += 1) {
-        const openingName = SECTION_OPENING_PATTERN.exec(lines[index] ?? '')?.[1];
-        if (openingName) {
-            activeName = openingName;
-            continue;
-        }
-        const closingName = SECTION_CLOSING_PATTERN.exec(lines[index] ?? '')?.[1];
-        if (
-            closingName &&
-            activeName &&
-            normalizeSectionName(closingName) === normalizeSectionName(activeName)
-        ) {
-            activeName = undefined;
-        }
-    }
-    return activeName;
-}
-
-/**
- * Locate a safe insertion anchor at the file's final named-section boundary.
- *
- * Explicit `Regular rules` sections receive new rules above their footer. Every unknown terminal
- * section is treated as specialized, so an ordinary candidate is anchored before its full banner
- * instead of being assigned to that section. Matching names prevent malformed markers from becoming
- * anchors.
- *
- * @param lines - Exact repository lines in the target file.
- * @returns Anchored insertion metadata, or undefined when no complete named section exists.
- */
-function planTerminalSectionInsertion(lines: readonly string[]): InsertRepositoryEdit | undefined {
-    const endNotePattern = /^!\s*NOTE:.*(?:\bend\b|⬆️?)\s*$/iu;
-    const bannerPattern = /^!-{3,}.*-{3,}\s*$/u;
-    let closingIndex = lines.length - 1;
-    while (closingIndex >= 0 && lines[closingIndex].trim() === '') {
-        closingIndex -= 1;
-    }
-    const closingName = SECTION_CLOSING_PATTERN.exec(lines[closingIndex] ?? '')?.[1];
-    if (!closingName) {
-        return undefined;
-    }
-    for (let openingIndex = closingIndex - 1; openingIndex >= 0; openingIndex -= 1) {
-        const openingName = SECTION_OPENING_PATTERN.exec(lines[openingIndex])?.[1];
-        if (
-            !openingName ||
-            normalizeSectionName(openingName) !== normalizeSectionName(closingName)
-        ) {
-            continue;
-        }
-        if (!isGenericPlacementSection(closingName)) {
-            let insertionPoint = openingIndex;
-            while (insertionPoint > 0 && bannerPattern.test(lines[insertionPoint - 1])) {
-                insertionPoint -= 1;
-            }
-            return {
-                kind: RepositoryEditKind.Insert,
-                insertionPoint,
-                anchorRule: lines[insertionPoint],
-                basis: PlacementBasis.TerminalSection,
-            };
-        }
-        let insertionPoint = closingIndex;
-        for (let index = closingIndex - 1; index > openingIndex; index -= 1) {
-            if (endNotePattern.test(lines[index])) {
-                insertionPoint = index;
-                break;
-            }
-        }
-        return {
-            kind: RepositoryEditKind.Insert,
-            insertionPoint,
-            anchorRule: lines[insertionPoint],
-            basis: PlacementBasis.TerminalSection,
-        };
-    }
-    return undefined;
-}
-
-/**
- * Locate a safe insertion point for a candidate without a shared-rule extension target.
- *
- * A file that keeps its rules sorted gets the sorted position first: in such a file a domain's
- * rules are not adjacent at all, so the domain block below would be looking for something that is
- * not there, and appending at the end produces the out-of-place line a maintainer then has to move.
- * Otherwise an existing reported-domain block remains the strongest placement signal, and after
- * that a complete terminal section provides a footer anchor so the candidate cannot be appended
- * after its closing marker. The exact following line is retained as a stale-edit guard.
- *
- * @param targetPath - Canonical target filter file.
- * @param candidateRule - Locked domain-scoped candidate rule.
- * @returns Anchored insertion metadata, or a plain insertion when no safe anchor exists.
- */
-function planInFilePosition(targetPath: string, candidateRule: string): InsertRepositoryEdit {
-    const candidate = normalizeRule(candidateRule);
-    // The same line model candidate binding re-derives from the committed blob, so an anchored
-    // position planned here is the position the review checkout proves rather than a stale one.
-    const lines = filterFileLines(readFileSync(targetPath, 'utf8'));
-    const sorted = findSortedInsertion(lines, candidateRule);
-    if (sorted !== undefined) {
-        return {
-            kind: RepositoryEditKind.Insert,
-            insertionPoint: sorted.insertionPoint,
-            ...(sorted.anchorRule === undefined ? {} : { anchorRule: sorted.anchorRule }),
-            basis: PlacementBasis.SortedPosition,
-        };
-    }
-    if (candidate.domains.length === 1 && !candidate.domains[0].startsWith('~')) {
-        const candidateDomain = candidate.domains[0];
-        const insertionPoint = lines.findIndex((line, lineIndex) => {
-            const existing = normalizeRule(line);
-            if (
-                !samePlacementFamily(candidate.kind, existing.kind) ||
-                !existing.domains.includes(candidateDomain)
-            ) {
-                return false;
-            }
-            const sectionName = sectionNameAtLine(lines, lineIndex);
-            return sectionName === undefined || isGenericPlacementSection(sectionName);
-        });
-        if (insertionPoint !== -1) {
-            return {
-                kind: RepositoryEditKind.Insert,
-                insertionPoint,
-                anchorRule: lines[insertionPoint],
-                basis: PlacementBasis.DomainBlock,
-            };
-        }
-    }
-    return (
-        planTerminalSectionInsertion(lines) ?? {
-            kind: RepositoryEditKind.Insert,
-            basis: PlacementBasis.AppendEof,
-        }
-    );
-}
-
-/**
  * Plan the edit one declared placement asks for.
  *
  * The declaration replaces the whole placement search: no shared-rule owner may retarget the edit
  * to another file. What it says about the position depends on whether it declares a comment. A
  * comment naming the issue makes the file a chronological log — uAssets writes one above every
- * added rule — and the rule belongs at the end behind it. Without a comment the declaration says
- * only _which_ file, so the position inside it is inferred exactly as it is for an undeclared file:
- * a sorted file gets the sorted position, a log gets the end.
+ * added rule — and the rule belongs at the end behind it, so a declared comment ignores the
+ * position. Without a comment the declaration says only _which_ file, and the agent's position
+ * inside it applies exactly as it does for an undeclared file.
  *
  * @param checkoutPath - Root of the pinned filters checkout.
  * @param declared - The declaration governing this candidate's kind, rendered for this run.
  * @param candidateRule - Locked issue-scoped candidate rule.
+ * @param position - The position the agent named inside the declared file, when it named one.
  * @returns The declared file and the insertion the declaration asks for.
  * @throws {Error} Naming the declared file when this checkout does not hold it, so the caller
  *   reports a plan it cannot make instead of planning against a file that is not there.
@@ -680,6 +392,7 @@ function planDeclaredPlacement(
     checkoutPath: string,
     declared: DeclaredPlacement,
     candidateRule: string,
+    position: PlacementPosition | undefined,
 ): RepositoryEditPlan {
     const targetPath = resolveFilterPath(checkoutPath, declared.filePath);
     if (!targetPath) {
@@ -689,7 +402,15 @@ function planDeclaredPlacement(
     }
     const filePath = repositoryRelativePath(realpathSync(checkoutPath), targetPath);
     if (declared.commentLine === undefined) {
-        return { filePath, edit: planInFilePosition(targetPath, candidateRule) };
+        return {
+            filePath,
+            edit: planPositionedInsert(
+                filterFileLines(readFileSync(targetPath, 'utf8')),
+                filePath,
+                candidateRule,
+                position,
+            ),
+        };
     }
     return {
         filePath,
@@ -705,28 +426,32 @@ function planDeclaredPlacement(
  * Plan the exact edit a locked candidate makes to the file the agent chose, without modifying the
  * checkout.
  *
- * The agent decides the file; this answers whether the candidate can be inserted there and how. A
- * rule of the candidate's form already shared by other sites in that file gets the reported domain
- * added to it; otherwise the candidate is a new line at the position the file's own layout implies.
- * A run instruction that declares where rules of the candidate's kind go makes that file the only
- * one allowed, planned the way the declaration says.
+ * The agent decides the file and the position inside it; this only computes the edit the position
+ * resolves to and refuses a position that would break the file. A rule of the candidate's form
+ * already shared by other sites in that file gets the reported domain added to it instead, and that
+ * edit ignores the position. A run instruction that declares where rules of the candidate's kind go
+ * makes that file the only one allowed, planned the way the declaration says.
  *
  * @param checkoutPath - Root of the pinned filters checkout.
  * @param filePath - Repository-relative file the agent chose.
  * @param candidateRule - Locked issue-scoped candidate rule.
- * @param declared - The run instruction's declared placements, rendered for this run.
+ * @param declared - The run instruction's declared placements, rendered for this run, or undefined
+ *   when it declares none.
+ * @param position - The position the agent named inside the file, or undefined when a new line is
+ *   asked for without one.
  * @returns Deterministic target file and insert or domain-extension edit.
- * @throws When the candidate cannot be inserted into the chosen file, naming why.
+ * @throws When the candidate cannot be inserted into the chosen file at that position, naming why.
  */
 export function planRepositoryEdit(
     checkoutPath: string,
     filePath: string,
     candidateRule: string,
-    declared?: DeclaredPlacementSet,
+    declared: DeclaredPlacementSet | undefined,
+    position: PlacementPosition | undefined,
 ): RepositoryEditPlan {
     const governing = declaredPlacementForTarget(filePath, candidateRule, declared);
     if (governing !== undefined) {
-        return planDeclaredPlacement(checkoutPath, governing, candidateRule);
+        return planDeclaredPlacement(checkoutPath, governing, candidateRule, position);
     }
     const kindDeclaration = declaredPlacementFor(declared, placementRuleTypeOfRule(candidateRule));
     if (kindDeclaration !== undefined) {
@@ -748,7 +473,15 @@ export function planRepositoryEdit(
         ? extendRuleDomains(extension.rule, normalizeRule(candidateRule).domains[0])
         : undefined;
     if (!extension || replacementRule === undefined) {
-        return { filePath: chosenPath, edit: planInFilePosition(targetPath, candidateRule) };
+        return {
+            filePath: chosenPath,
+            edit: planPositionedInsert(
+                filterFileLines(readFileSync(targetPath, 'utf8')),
+                chosenPath,
+                candidateRule,
+                position,
+            ),
+        };
     }
     return {
         filePath: chosenPath,

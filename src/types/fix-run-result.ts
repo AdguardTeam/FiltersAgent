@@ -7,9 +7,10 @@ import {
     SYMPTOM_PRESENCE_VALUES,
     type SymptomPresence,
 } from './reporter-symptom-presence';
-import { PLACEMENT_BASIS_VALUES } from './placement-basis';
 import { ReproProfileSchema, reproEnvironmentsEqual } from './repro-profile';
 import { RuleTypeSchema } from './rule-proposal';
+import { RepositoryEditSchema } from './repository-edit';
+import { SINGLE_LINE_TEXT_PATTERN } from './single-line-text';
 import { UpstreamSourceDriftSchema } from './upstream-source-drift';
 import { FilterListKeySchema } from '../environment/filter-list-ref';
 import {
@@ -40,7 +41,6 @@ import {
 import { CandidateForReviewSchema } from './candidate-for-review';
 import { PhaseLabel } from './validation';
 import { MISSING_CATALOG_FILTER_REASON_VALUES } from './missing-catalog-filter-reason';
-import { RepositoryEditKind } from './repository-edit-kind';
 import {
     MAX_MISSING_INFORMATION_ENTRIES,
     MissingInformationEntrySchema,
@@ -419,33 +419,6 @@ export const FixRunStatusSchema = v.picklist(FIX_RUN_STATUS_VALUES);
 
 export const RuleSyntaxKindSchema = v.picklist(RULE_SYNTAX_KIND_VALUES);
 
-export const RepositoryEditSchema = v.variant('kind', [
-    v.object({
-        kind: v.literal(RepositoryEditKind.Insert),
-        insertionPoint: v.optional(v.pipe(v.number(), v.integer(), v.minValue(0))),
-        anchorRule: v.optional(v.pipe(v.string(), v.minLength(1), v.regex(/^[^\r\n]+$/))),
-        basis: v.optional(v.picklist(PLACEMENT_BASIS_VALUES)),
-        precedingComment: v.optional(v.pipe(v.string(), v.minLength(1), v.regex(/^[^\r\n]+$/))),
-    }),
-    v.object({
-        kind: v.literal(RepositoryEditKind.ExtendDomains),
-        line: v.pipe(v.number(), v.integer(), v.minValue(1)),
-        originalRule: v.pipe(v.string(), v.minLength(1), v.regex(/^[^\r\n]+$/)),
-        replacementRule: v.pipe(v.string(), v.minLength(1), v.regex(/^[^\r\n]+$/)),
-    }),
-    v.object({
-        kind: v.literal(RepositoryEditKind.Replace),
-        line: v.pipe(v.number(), v.integer(), v.minValue(1)),
-        originalRule: v.pipe(v.string(), v.minLength(1), v.regex(/^[^\r\n]+$/)),
-        replacementRule: v.pipe(v.string(), v.minLength(1), v.regex(/^[^\r\n]+$/)),
-    }),
-    v.object({
-        kind: v.literal(RepositoryEditKind.Remove),
-        line: v.pipe(v.number(), v.integer(), v.minValue(1)),
-        originalRule: v.pipe(v.string(), v.minLength(1), v.regex(/^[^\r\n]+$/)),
-    }),
-]);
-
 export const CandidatePatchSchema = v.object({
     rule: v.pipe(v.string(), v.minLength(1)),
     ruleType: RuleTypeSchema,
@@ -631,7 +604,7 @@ export const RejectedCandidateScreenshotPathsSchema = v.pipe(
             v.string(),
             v.minLength(1),
             v.maxLength(4_096),
-            v.regex(/^[^\r\n]+$/),
+            v.regex(SINGLE_LINE_TEXT_PATTERN),
         ),
         rejectionReasons: v.pipe(
             v.array(v.pipe(v.string(), v.minLength(1), v.maxLength(200))),

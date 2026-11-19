@@ -40,6 +40,7 @@ import type { SingleShotClient } from '../../src/pi/single-shot-types';
 import { createRunUsageCollector } from '../../src/pi/usage-collector';
 import type { IssueFacts } from '../../src/types/issue-facts';
 import type { FixOutcome } from '../../src/types/fix-outcome';
+import type { PlacementPosition } from '../../src/types/rule-proposal';
 import { deriveCandidateArtifactExecutionSuffix } from '../../src/types/candidate-artifact-identity';
 import type { CandidateVisualReview } from '../../src/types/candidate-visual-review';
 import type { PhaseResult, StructuralSnapshot } from '../../src/types/validation';
@@ -280,6 +281,7 @@ function draftOutcome(
                 filePath: 'BaseFilter/sections/foreign.txt',
                 confidence: 1,
                 alternatives: [],
+                position: { kind: 'file_end', reason: 'No section keeps rules of this kind.' },
             },
             duplicateCheck: { classification: 'none', matches: [] },
             productCompatibility: { extension: true },
@@ -306,6 +308,26 @@ function placedIn(
         ruleProposal: {
             ...draft.ruleProposal,
             placement: { ...draft.ruleProposal.placement, filePath },
+        },
+    };
+}
+
+/**
+ * The same draft with an in-file position.
+ *
+ * @param draft - Draft to place.
+ * @param position - Position the draft names inside its file.
+ * @returns The draft naming that position.
+ */
+function positioned(
+    draft: Extract<FixOutcome, { outcome: 'propose_rule' }>,
+    position: PlacementPosition | undefined,
+): Extract<FixOutcome, { outcome: 'propose_rule' }> {
+    return {
+        ...draft,
+        ruleProposal: {
+            ...draft.ruleProposal,
+            placement: { ...draft.ruleProposal.placement, position },
         },
     };
 }
@@ -1961,6 +1983,88 @@ describe('AgentRuntime', () => {
             // there, the judgement moves on to the evidence.
             expect(runtime.validateTerminalOutcome(draft)).toMatchObject({
                 errorKind: 'candidate_visual_confirmation_required',
+            });
+        } finally {
+            rmSync(checkout, { recursive: true, force: true });
+        }
+    });
+
+    it('returns a draft whose position the file cannot take, with the reason', async () => {
+        const checkout = mkdtempSync(join(tmpdir(), 'agent-runtime-position-'));
+        try {
+            mkdirSync(join(checkout, 'BaseFilter', 'sections'), { recursive: true });
+            writeFileSync(
+                join(checkout, 'BaseFilter', 'sections', 'foreign.txt'),
+                ['!+ NOT_PLATFORM(ext_safari)', 'first.example##.a', 'last.example##.z', ''].join(
+                    '\n',
+                ),
+            );
+            const runtime = await AgentRuntime.create(
+                { ...runtimeOptions(), filtersPath: checkout, issueAttachmentArtifactIds: [] },
+                {
+                    createBaseRegistry: async () => registryWithScreenshotAnalysis(),
+                    ...verifiedPreparedVisionSeams(),
+                },
+            );
+            await fetchRuntimeIssue(runtime);
+            await boardCurrentPreparedVision(runtime);
+            const draft = draftOutcome();
+
+            expect(
+                runtime.validateTerminalOutcome(
+                    positioned(draft, { kind: 'before_line', line: 2 }),
+                ),
+            ).toMatchObject({
+                errorKind: 'candidate_placement_not_insertable',
+                retryable: true,
+                error: expect.stringContaining('!+ NOT_PLATFORM(ext_safari)'),
+                position: { kind: 'before_line', line: 2 },
+            });
+            expect(
+                runtime.validateTerminalOutcome(
+                    positioned(draft, { kind: 'before_line', line: 99 }),
+                ),
+            ).toMatchObject({
+                errorKind: 'candidate_placement_not_insertable',
+                retryable: true,
+                error: expect.stringContaining('3 lines'),
+                position: { kind: 'before_line', line: 99 },
+            });
+            expect(
+                runtime.validateTerminalOutcome(positioned(draft, { kind: 'sorted' })),
+            ).toMatchObject({
+                errorKind: 'candidate_placement_not_insertable',
+                position: { kind: 'sorted' },
+            });
+        } finally {
+            rmSync(checkout, { recursive: true, force: true });
+        }
+    });
+
+    it('returns a draft that needs a new line but names no position', async () => {
+        const checkout = mkdtempSync(join(tmpdir(), 'agent-runtime-no-position-'));
+        try {
+            mkdirSync(join(checkout, 'BaseFilter', 'sections'), { recursive: true });
+            writeFileSync(
+                join(checkout, 'BaseFilter', 'sections', 'foreign.txt'),
+                ['first.example##.a', 'last.example##.z', ''].join('\n'),
+            );
+            const runtime = await AgentRuntime.create(
+                { ...runtimeOptions(), filtersPath: checkout, issueAttachmentArtifactIds: [] },
+                {
+                    createBaseRegistry: async () => registryWithScreenshotAnalysis(),
+                    ...verifiedPreparedVisionSeams(),
+                },
+            );
+            await fetchRuntimeIssue(runtime);
+            await boardCurrentPreparedVision(runtime);
+
+            expect(
+                runtime.validateTerminalOutcome(positioned(draftOutcome(), undefined)),
+            ).toMatchObject({
+                errorKind: 'candidate_placement_not_insertable',
+                retryable: true,
+                position: null,
             });
         } finally {
             rmSync(checkout, { recursive: true, force: true });

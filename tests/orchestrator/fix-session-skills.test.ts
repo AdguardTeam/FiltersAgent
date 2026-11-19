@@ -115,6 +115,27 @@ function search(index: number): ScriptedReply {
 }
 
 /**
+ * One scripted file outline read through `search_rules`.
+ *
+ * @returns The scripted reply.
+ */
+function searchOutline(): ScriptedReply {
+    return toolCall(ToolName.SearchRules, { filePath: 'BaseFilter/sections/foreign.txt' });
+}
+
+/**
+ * One scripted file window read through `search_rules`.
+ *
+ * @returns The scripted reply.
+ */
+function searchWindow(): ScriptedReply {
+    return toolCall(ToolName.SearchRules, {
+        filePath: 'BaseFilter/sections/foreign.txt',
+        line: 10,
+    });
+}
+
+/**
  * The last message of one recorded request: the tool result the model just received.
  *
  * @param request - The recorded request.
@@ -250,5 +271,35 @@ describe('fix session skills read and the enumeration backstop', () => {
             expect(lastMessageOf(request)).not.toContain(ENUMERATION_NOTICE_KEY);
         }
         expect(streaks).toEqual([]);
+    });
+
+    it('does not count outline and window reads toward a search streak', async () => {
+        const { result, requests, streaks } = await runSkillsSession([
+            ...Array.from({ length: ENUMERATION_STREAK_LIMIT - 1 }, (_, index) => search(index)),
+            searchWindow(),
+            searchOutline(),
+            search(100),
+            toolCall(ToolName.FinishFix, ANALYSIS_ONLY_PAYLOAD),
+        ]);
+
+        expect(result.terminalSource).toBe(FixTerminalSource.ModelFinishFix);
+        // The two reads neither count nor reset: the next match query is the twelfth counted
+        // search of the streak.
+        expect(lastMessageOf(requests[ENUMERATION_STREAK_LIMIT])).not.toContain(
+            ENUMERATION_NOTICE_KEY,
+        );
+        expect(lastMessageOf(requests[ENUMERATION_STREAK_LIMIT + 1])).not.toContain(
+            ENUMERATION_NOTICE_KEY,
+        );
+        expect(lastMessageOf(requests[ENUMERATION_STREAK_LIMIT + 2])).toContain(
+            ENUMERATION_NOTICE_KEY,
+        );
+        expect(streaks).toEqual([
+            {
+                phase: ENUMERATION_STREAK_PHASE,
+                tool: ToolName.SearchRules,
+                consecutiveCalls: ENUMERATION_STREAK_LIMIT,
+            },
+        ]);
     });
 });

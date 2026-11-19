@@ -20,7 +20,8 @@
  * The two roles are kept apart on purpose. `stabilize_page`'s catalog guidance is what PREVENTS
  * this misuse, by saying what the target parameter is for and where batch selector tests belong.
  * This module is only the backstop for whatever enumerates next, which is why it names no tool and
- * treats every tool alike.
+ * counts every enumerating call alike; a read that cannot enumerate opts out through
+ * `countsTowardStreak`.
  *
  * "Every tool" has to mean every tool the session dispatches, so the fix session's tool adapter is
  * where registry results pass through it, and `withEnumerationBackstop` wraps the one tool that
@@ -42,6 +43,9 @@ import type { SessionToolResult, SessionToolSpec } from '../pi/session-tool-type
  * (`search_rules`). Twelve clears the legitimate band with margin, so an honest investigation never
  * meets this notice, and it still leaves most of such a streak's turns for the model to change
  * course and finish the run.
+ *
+ * Only enumerating calls count: a file outline or window read is not another variant of a search
+ * and leaves the streak untouched, neither extending nor resetting it.
  *
  * Deliberately not configurable: one mechanism with one bound, not a knob to tune per run.
  */
@@ -88,6 +92,16 @@ export interface ToolEnumerationBackstopOptions {
      * shows the loop was caught without a line per call for the rest of the streak.
      */
     onStreak: (streak: ToolEnumerationStreak) => void;
+
+    /**
+     * Decide whether one dispatched call belongs to the enumeration this backstop counts.
+     *
+     * A tool can carry both enumerating and non-enumerating calls — `search_rules` answers a file
+     * outline or window as well as a match query — and a read is neither one more variant nor a
+     * fresh start. Returning false leaves the current streak untouched: it is not counted and it
+     * does not reset a match-query streak.
+     */
+    countsTowardStreak?: (toolName: string, args: unknown) => boolean;
 }
 
 /**
@@ -98,18 +112,24 @@ export interface ToolEnumerationBackstop {
      * Count one dispatched tool call and hand back the notice the model should see with its result.
      *
      * @param toolName - The tool that was just dispatched.
+     * @param args - The call's raw arguments, for a predicate that only counts one kind of call.
      * @returns Nothing below the bound; at and above it, the notice.
      */
-    count: (toolName: string) => string | undefined;
+    count: (toolName: string, args?: unknown) => string | undefined;
 
     /**
      * Count one dispatched tool call and hand back what the model should see.
      *
      * @param toolName - The tool that was just dispatched.
      * @param result - The result the model would otherwise receive, unchanged.
+     * @param args - The call's raw arguments, for a predicate that only counts one kind of call.
      * @returns The same result below the bound; at and above it, the result plus the notice.
      */
-    observe: (toolName: string, result: Record<string, unknown>) => Record<string, unknown>;
+    observe: (
+        toolName: string,
+        result: Record<string, unknown>,
+        args?: unknown,
+    ) => Record<string, unknown>;
 }
 
 /**
@@ -151,7 +171,10 @@ export function createToolEnumerationBackstop(
     let streakTool: string | undefined;
     let consecutiveCalls = 0;
 
-    const count = (toolName: string): string | undefined => {
+    const count = (toolName: string, args?: unknown): string | undefined => {
+        if (!(options.countsTowardStreak?.(toolName, args) ?? true)) {
+            return undefined;
+        }
         if (toolName === streakTool) {
             consecutiveCalls += 1;
         } else {
@@ -171,8 +194,12 @@ export function createToolEnumerationBackstop(
 
     return {
         count,
-        observe: (toolName: string, result: Record<string, unknown>): Record<string, unknown> => {
-            const notice = count(toolName);
+        observe: (
+            toolName: string,
+            result: Record<string, unknown>,
+            args?: unknown,
+        ): Record<string, unknown> => {
+            const notice = count(toolName, args);
             return notice === undefined ? result : { ...result, [ENUMERATION_NOTICE_KEY]: notice };
         },
     };
@@ -213,14 +240,14 @@ export function withEnumerationBackstop(
             try {
                 result = await tool.execute(args, signal);
             } catch (error) {
-                const notice = backstop.count(tool.name);
+                const notice = backstop.count(tool.name, args);
                 if (notice === undefined) {
                     throw error;
                 }
                 const message = error instanceof Error ? error.message : String(error);
                 throw new Error(withNoticeText(message, notice), { cause: error });
             }
-            const notice = backstop.count(tool.name);
+            const notice = backstop.count(tool.name, args);
             return notice === undefined
                 ? result
                 : { ...result, content: withNoticeText(result.content, notice) };

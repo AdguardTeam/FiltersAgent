@@ -54,7 +54,6 @@ function placementMapFrom(paths: readonly string[]): PlacementMap {
         files: paths.map((relativePath) => ({
             filter: relativePath.slice(0, relativePath.indexOf('/')),
             relativePath,
-            sections: [{ name: 'default', startLine: 1, endLine: 1 }],
         })),
     };
 }

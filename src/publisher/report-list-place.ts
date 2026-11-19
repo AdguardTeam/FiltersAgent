@@ -1,21 +1,23 @@
 /**
- * The report's "place in the list" reading: the file an accepted rule goes into and, when the host
+ * The report's "place in the list" reading: the file an accepted rule goes into and, when the run
  * planned one, the place inside it.
  *
- * The run plans the exact edit — the domain list it extends, the sorted position, the site's own
- * block, the end of a section — so the comment names that place, not the file alone: a bare
- * "easylist/easylist_specific_hide.txt" for a rule the run placed between two specific lines of an
- * 8,800-rule sorted list leaves exactly that part for a maintainer to redo by hand. The place is a
- * permalink to the line at the commit the run analyzed, not a quote of the rule on it: that line
- * does not drift however the list moves on, and a neighbouring rule quoted whole can be a wall of
- * hundreds of domains with its selector at the far end.
+ * The run records the exact edit — the domain list it extends, the line the agent chose under its
+ * heading, the sorted position, the end of the file with the agent's reason — so the comment names
+ * that place, not the file alone: a bare "easylist/easylist_specific_hide.txt" for a rule the run
+ * placed between two specific lines of an 8,800-rule sorted list leaves exactly that part for a
+ * maintainer to redo by hand. The place is a permalink to the line at the commit the run analyzed,
+ * not a quote of the rule on it: that line does not drift however the list moves on, and a
+ * neighbouring rule quoted whole can be a wall of hundreds of domains with its selector at the far
+ * end.
  */
 import { GitHubFileView, gitHubFileUrl } from '../github/github-file-url';
+import type { InsertRepositoryEdit } from '../types/repository-edit';
 import type { CandidatePatch } from '../types/fix-run-result';
 import { PlacementBasis } from '../types/placement-basis';
 import { RepositoryEditKind } from '../types/repository-edit-kind';
 import type { RepositorySlug } from '../types/repository-slug';
-import { renderUntrustedRuleCodeSpan } from './untrusted-text';
+import { renderUntrustedRuleCodeSpan, renderUntrustedText } from './untrusted-text';
 
 /**
  * The analyzed revision of the repository the lists come from: what a list permalink points at.
@@ -55,6 +57,92 @@ function listFileUrl(source: ReportListSource, filePath: string, line?: number):
 }
 
 /**
+ * End one sentence without doubling terminal punctuation the text already carries.
+ *
+ * The end-of-file sentence ends however the agent's reason ends, so the renderer supplies the
+ * period itself and leaves a reason that already ends a sentence as written.
+ *
+ * @param text - The sentence without its closing punctuation.
+ * @returns The sentence with one terminal mark.
+ */
+function fullStop(text: string): string {
+    const end = text.trimEnd();
+    return /[.!?]$/u.test(end) ? end : `${end}.`;
+}
+
+/**
+ * The clause naming the line the rule lands before, when the edit records one.
+ *
+ * A sorted insert after the last rule and an append have no line to precede, so the clause stays
+ * out of the sentence rather than pointing at a line the file does not hold.
+ *
+ * @param edit - The insert edit recorded on the candidate patch.
+ * @param lineLink - Renders the link to one line of the file.
+ * @returns The clause, or undefined when the edit precedes no line.
+ */
+function beforeClause(
+    edit: InsertRepositoryEdit,
+    lineLink: (line: number) => string,
+): string | undefined {
+    if (edit.insertionPoint === undefined || edit.anchorRule === undefined) {
+        return undefined;
+    }
+    return `before ${lineLink(edit.insertionPoint + 1)}`;
+}
+
+/**
+ * The clauses naming where an insert lands, in reading order.
+ *
+ * One builder serves a place with and without a heading, so the heading, the platform condition and
+ * the line the rule lands before are read the same way whatever basis the edit records.
+ *
+ * @param place - The basis's own place wording, or undefined when the line alone names it.
+ * @param edit - The insert edit recorded on the candidate patch.
+ * @param lineLink - Renders the link to one line of the file.
+ * @returns The clauses of the sentence, empty when the edit names no place.
+ */
+function insertClauses(
+    place: string | undefined,
+    edit: InsertRepositoryEdit,
+    lineLink: (line: number) => string,
+): string[] {
+    // `section` is the legacy name earlier builds wrote; a locked result still parses with it and
+    // renders exactly like a heading new runs write.
+    const heading = edit.heading ?? edit.section;
+    const clauses: string[] = [];
+    if (heading !== undefined) {
+        clauses.push(`under the heading ${renderUntrustedRuleCodeSpan(heading)}`);
+    }
+    if (edit.condition !== undefined) {
+        clauses.push(`inside the condition ${renderUntrustedRuleCodeSpan(edit.condition)}`);
+    }
+    if (place !== undefined) {
+        clauses.push(place);
+    }
+    const before = beforeClause(edit, lineLink);
+    if (before !== undefined) {
+        clauses.push(before);
+    }
+    return clauses;
+}
+
+/**
+ * Join the clauses into one sentence, or nothing when they name no place.
+ *
+ * @param clauses - The clauses of the sentence, in reading order.
+ * @returns The sentence, capitalized and ending with a period, or the empty string.
+ */
+function sentence(clauses: readonly string[]): string {
+    const first = clauses[0];
+    if (first === undefined) {
+        return '';
+    }
+    const rest = clauses.slice(1);
+    const text = [first.charAt(0).toUpperCase() + first.slice(1), ...rest].join(', ');
+    return `${text}.`;
+}
+
+/**
  * Say where inside the file the planned edit lands, or nothing when the plan names no place.
  *
  * @param edit - The host-planned edit recorded on the candidate patch.
@@ -68,20 +156,26 @@ function placeInsideFile(edit: ReportRepositoryEdit, lineLink: (line: number) =>
     if (edit.kind !== RepositoryEditKind.Insert) {
         return '';
     }
-    // The planner records the anchor only when the insertion point is an existing line; past the
-    // end of the file there is no line to precede.
-    const before =
-        edit.anchorRule === undefined || edit.insertionPoint === undefined
-            ? ''
-            : `, before ${lineLink(edit.insertionPoint + 1)}`;
     switch (edit.basis) {
+        case PlacementBasis.ChosenLine:
+            if (edit.insertionPoint === undefined) {
+                return '';
+            }
+            return sentence(insertClauses(undefined, edit, lineLink));
         case PlacementBasis.SortedPosition:
-            return `At its sorted position among the existing rules${before}.`;
+            return sentence(
+                insertClauses('at its sorted position among the existing rules', edit, lineLink),
+            );
         case PlacementBasis.DomainBlock:
-            return `Next to the site's existing rules${before}.`;
+            return sentence(insertClauses("next to the site's existing rules", edit, lineLink));
         case PlacementBasis.TerminalSection:
-            return `At the end of the file's regular rules${before}.`;
+            return sentence(
+                insertClauses("at the end of the file's regular rules", edit, lineLink),
+            );
         case PlacementBasis.AppendEof:
+            if (edit.reason !== undefined) {
+                return fullStop(`At the end of the file: ${renderUntrustedText(edit.reason)}`);
+            }
             return edit.precedingComment === undefined
                 ? 'At the end of the file.'
                 : `At the end of the file, behind the comment line ${renderUntrustedRuleCodeSpan(edit.precedingComment)}.`;

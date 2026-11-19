@@ -18,7 +18,7 @@ import {
 } from '../environment/applied-rules';
 import type { IArtifactStore } from '../tracer/artifact-store';
 import { registeredParameters } from './registered-parameters';
-import { TOOL_GUIDANCE } from './tool-catalog';
+import { TOOL_GUIDANCE } from './tool-guidance';
 import { ToolName } from './tool-names';
 import type { ToolRegistry } from './tool-registry';
 

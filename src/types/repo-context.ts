@@ -23,29 +23,13 @@ export const SearchQuerySchema = v.object({
      * A scriptlet name to search for in scriptlet rules.
      */
     scriptlet: v.optional(v.pipe(v.string(), v.minLength(1))),
+
+    /**
+     * Repository-relative path of one list file; matches are limited to that file.
+     */
+    filePath: v.optional(v.pipe(v.string(), v.minLength(1))),
 });
 export type SearchQuery = v.InferOutput<typeof SearchQuerySchema>;
-
-/**
- * A section within a filter file, bounded by comment headers.
- */
-export const FilterSectionSchema = v.object({
-    /**
-     * Display name of the section, derived from its header comment.
-     */
-    name: v.pipe(v.string(), v.minLength(1)),
-
-    /**
-     * 1-based line number where the section's rules begin.
-     */
-    startLine: v.pipe(v.number(), v.integer(), v.minValue(1)),
-
-    /**
-     * 1-based line number of the last rule in the section (inclusive).
-     */
-    endLine: v.pipe(v.number(), v.integer(), v.minValue(1)),
-});
-export type FilterSection = v.InferOutput<typeof FilterSectionSchema>;
 
 /**
  * A filter file entry in the placement map.
@@ -60,11 +44,6 @@ export const FilterFileEntrySchema = v.object({
      * Path to the filter file, relative to the checkout root.
      */
     relativePath: v.pipe(v.string(), v.minLength(1)),
-
-    /**
-     * Sections detected in the file.
-     */
-    sections: v.array(FilterSectionSchema),
 });
 export type FilterFileEntry = v.InferOutput<typeof FilterFileEntrySchema>;
 
@@ -113,10 +92,5 @@ export const RuleMatchSchema = v.object({
      * Filter name the file belongs to.
      */
     filter: v.pipe(v.string(), v.minLength(1)),
-
-    /**
-     * Section name the rule falls within, if any.
-     */
-    section: v.optional(v.string()),
 });
 export type RuleMatch = v.InferOutput<typeof RuleMatchSchema>;

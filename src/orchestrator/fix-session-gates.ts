@@ -11,12 +11,8 @@ import type { ToolEnumerationBackstop } from './tool-enumeration-backstop';
 import type * as v from 'valibot';
 import type { ToolRegistry } from '../agent/tool-registry';
 import { adaptSessionTools, type AdaptedToolInput } from '../pi/session-tools';
-import {
-    FIX_TOOL_GUIDANCE,
-    FIX_TOOL_PARAMETER_SCHEMAS,
-    TOOL_GUIDANCE,
-    TOOL_PARAMETER_SCHEMAS,
-} from '../agent/tool-catalog';
+import { FIX_TOOL_GUIDANCE, TOOL_GUIDANCE } from '../agent/tool-guidance';
+import { FIX_TOOL_PARAMETER_SCHEMAS, TOOL_PARAMETER_SCHEMAS } from '../agent/tool-catalog';
 import {
     adaptRegistryTool,
     assertParametersMatchRegistry,
@@ -291,8 +287,8 @@ export function buildFixSessionTools(
             ...(options.enumerationBackstop === undefined
                 ? {}
                 : {
-                      deliver: (result: Record<string, unknown>) =>
-                          options.enumerationBackstop!.observe(name, result),
+                      deliver: (result: Record<string, unknown>, args: Record<string, unknown>) =>
+                          options.enumerationBackstop!.observe(name, result, args),
                   }),
             onDispatched: (result) => {
                 if (

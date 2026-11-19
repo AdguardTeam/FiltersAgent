@@ -1,19 +1,25 @@
 /**
- * The `search_rules` tool: the model's only view of the AdguardFilters checkout, together with the
- * rule-inventory compaction and byte caps that keep a domain-only query from spending the whole
- * model-facing response budget on one repository, and the page check a selector query runs against
- * the agent's open page.
+ * The `search_rules` tool: the model's only view of the AdguardFilters checkout. The compaction of
+ * the rule inventory, the outline and the window lives in `rule-search-compact.ts`; this module
+ * validates the call's shape, selects the form the model receives and runs the page check a
+ * selector query makes against the agent's open page.
  */
-import { searchRules } from '../repo/search';
-import { RuleKind, normalizeRule } from '../repo/rule-normalizer';
+import * as v from 'valibot';
+import { outlineListFile, readListFileWindow, searchRules } from '../repo/search';
 import { collectSharedHidingRules, type SharedHidingRule } from '../repo/shared-hiding-rules';
 import type { IArtifactStore } from '../tracer/artifact-store';
 import type { PlacementMap } from '../types/repo-context';
 import { registeredParameters } from './registered-parameters';
+import {
+    compactDomainRuleInventory,
+    compactListFileOutline,
+    compactListFileWindow,
+} from './rule-search-compact';
 import { checkSelectorOnPage, type ActivePage } from './rule-search-page-check';
+import { SEARCH_RULES_PARAMETERS, type SearchRulesArguments } from './tool-catalog';
+import { TOOL_GUIDANCE } from './tool-guidance';
 import { ToolName } from './tool-names';
 import type { ToolRegistry } from './tool-registry';
-import { truncateUtf8 } from './truncate-utf8';
 
 /**
  * Maximum exact-target repository matches returned in one model-visible search response.
@@ -21,147 +27,41 @@ import { truncateUtf8 } from './truncate-utf8';
 const MAX_AGENT_RULE_SEARCH_MATCHES = 20;
 
 /**
- * Maximum number of domain-inventory matches shown directly to the model.
- */
-const MAX_AGENT_DOMAIN_INVENTORY_MATCHES = 8;
-
-/**
- * Maximum UTF-8 bytes of an individual domain-inventory rule preview.
- */
-const MAX_DOMAIN_INVENTORY_RULE_PREVIEW_BYTES = 384;
-
-/**
- * Maximum UTF-8 bytes of a filter or section label echoed back with an inventory match.
+ * Whether one `search_rules` call is a file read rather than a target enumeration.
  *
- * These are repository-authored file titles and section headings, not rule text: a couple of words
- * in every real filter list. The cap only stops a malformed list header from displacing the match
- * facts the model actually chooses a follow-up query from.
- */
-const MAX_INVENTORY_LABEL_BYTES = 128;
-
-/**
- * Inventory families of repository rules as counted for the model-facing domain inventory.
+ * An outline or window read answers a different question from a match query, so it neither extends
+ * nor resets the enumeration streak: only target queries are counted by the backstop.
  *
- * The three actionable kinds map straight onto their rule kinds; everything else (comments, empty
- * lines, unparsable text) collapses into `other`.
+ * @param args - The raw call arguments, before validation.
+ * @returns Whether the call reads a file outline or window; false for a call the tool refuses.
  */
-const RuleInventoryKind = {
-    Cosmetic: RuleKind.Cosmetic,
-    Network: RuleKind.Network,
-    Scriptlet: RuleKind.Scriptlet,
-    Other: 'other',
-} as const;
-
-/**
- * Inventory family of one repository rule.
- */
-type RuleInventoryKind = (typeof RuleInventoryKind)[keyof typeof RuleInventoryKind];
-
-/**
- * Return the main syntactic family of one normalized filter rule for an inventory count.
- *
- * @param rule - Raw repository rule text.
- * @returns Stable inventory family name.
- */
-function ruleInventoryKind(rule: string): RuleInventoryKind {
-    const normalized = normalizeRule(rule);
-    if (
-        normalized.kind === RuleKind.Cosmetic ||
-        normalized.kind === RuleKind.Network ||
-        normalized.kind === RuleKind.Scriptlet
-    ) {
-        return normalized.kind;
-    }
-    return RuleInventoryKind.Other;
+export function isRuleSearchRead(args: unknown): boolean {
+    const call = v.safeParse(SEARCH_RULES_PARAMETERS, args);
+    return call.success && call.output.filePath !== undefined && !hasSearchTarget(call.output);
 }
 
 /**
- * Reduce one domain-inventory match to facts useful for choosing a focused follow-up query.
+ * Whether a `search_rules` call names something to match rules against.
  *
- * Domain-only results are not an exact rule-edit instruction. The complete rule remains in the
- * trace artifact, while this preview prevents one unusually long rule from consuming the model's
- * entire fixed response budget. The file path stays whole: it is what a draft names to place a rule
- * beside the site's existing ones.
- *
- * @param match - Full repository match.
- * @returns Compact representative inventory match.
+ * @param call - The validated call arguments.
+ * @returns Whether a target field is present.
  */
-function compactDomainInventoryMatch(
-    match: ReturnType<typeof searchRules>[number],
-): Record<string, unknown> {
-    const rulePreview = truncateUtf8(match.rule, MAX_DOMAIN_INVENTORY_RULE_PREVIEW_BYTES);
-    return {
-        rulePreview,
-        rulePreviewTruncated: rulePreview !== match.rule,
-        filePath: match.filePath,
-        filter: truncateUtf8(match.filter, MAX_INVENTORY_LABEL_BYTES),
-        section:
-            match.section === undefined
-                ? undefined
-                : truncateUtf8(match.section, MAX_INVENTORY_LABEL_BYTES),
-        line: match.line,
-        syntaxKind: ruleInventoryKind(match.rule),
-    };
-}
-
-/**
- * Produce the compact, grouped form of a domain-only rule inventory.
- *
- * The complete inventory remains in an artifact. This response intentionally offers a small
- * representative sample so the model can choose a focused selector, pattern, or scriptlet query.
- *
- * @param matches - All applicable repository matches for one domain.
- * @param effectiveDomain - Runner-bound domain used for the search.
- * @param artifactStore - Optional trace-backed store for the complete inventory.
- * @returns Bounded model-facing inventory response.
- */
-function compactDomainRuleInventory(
-    matches: ReturnType<typeof searchRules>,
-    effectiveDomain: string | undefined,
-    artifactStore: IArtifactStore | undefined,
-): Record<string, unknown> {
-    const grouped: Record<RuleInventoryKind, number> = {
-        [RuleInventoryKind.Cosmetic]: 0,
-        [RuleInventoryKind.Network]: 0,
-        [RuleInventoryKind.Scriptlet]: 0,
-        [RuleInventoryKind.Other]: 0,
-    };
-    for (const match of matches) {
-        grouped[ruleInventoryKind(match.rule)] += 1;
-    }
-    const fullInventory = {
-        effectiveDomain,
-        totalMatches: matches.length,
-        matches,
-    };
-    const artifactRef = artifactStore?.write(
-        JSON.stringify(fullInventory, null, 2),
-        'rule-search-inventory',
+function hasSearchTarget(call: SearchRulesArguments): boolean {
+    return (
+        call.domain !== undefined ||
+        call.selector !== undefined ||
+        call.urlPattern !== undefined ||
+        call.scriptlet !== undefined
     );
-    const topMatches = matches
-        .slice(0, MAX_AGENT_DOMAIN_INVENTORY_MATCHES)
-        .map(compactDomainInventoryMatch);
-    return {
-        effectiveDomain,
-        totalMatches: matches.length,
-        truncated: matches.length > topMatches.length,
-        groupedInventory: grouped,
-        topMatches,
-        ...(artifactRef
-            ? {
-                  artifactId: artifactRef.id,
-                  metaArtifact: {
-                      id: artifactRef.id,
-                      type: artifactRef.type,
-                      bytes: artifactRef.bytes,
-                  },
-                  metaHint:
-                      `Complete domain inventory is persisted. Use get_detail("${artifactRef.id}") ` +
-                      'with a key or limit only when a focused follow-up needs it.',
-              }
-            : {}),
-    };
 }
+
+/**
+ * The one message naming every accepted `search_rules` call shape.
+ */
+const SEARCH_RULES_CALL_SHAPES =
+    "search_rules takes one of three shapes: filePath alone for that file's outline, filePath " +
+    'with line for a window around that line, or a target field (domain, selector, urlPattern, ' +
+    'scriptlet) for matches, optionally with filePath to limit the matches to one list file.';
 
 /**
  * Everything the repository search tool needs to answer one model query.
@@ -227,32 +127,37 @@ export function registerRuleSearchTool(
             type: 'function',
             function: {
                 name: ToolName.SearchRules,
-                description:
-                    "Search this repository's filter lists for existing rules matching a domain, selector, URL " +
-                    'pattern, or scriptlet. After a compound modifier selector is rejected, ' +
-                    'search its stable base selector separately before retrying. When an ' +
-                    'applicable multi-domain base rule exists, use it or extend its domain list ' +
-                    'instead of changing only the candidate syntax. When search returns an ' +
-                    'exact standard base element-hiding rule, validate its domain-scoped ## ' +
-                    'candidate before attempting a modifier selector. The reported domain ' +
-                    'being absent from a matching shared rule is expected: treat it as an ' +
-                    'extend_domains candidate, not a reason to ignore that selector family. ' +
-                    'A domain-only search returns a grouped compact inventory; use one focused ' +
-                    'selector, URL pattern, or scriptlet query for exact matches.',
+                description: TOOL_GUIDANCE[ToolName.SearchRules]!,
                 parameters: registeredParameters(ToolName.SearchRules),
             },
         },
         handler: async (args) => {
-            const query = {
-                domain: typeof args.domain === 'string' ? args.domain : undefined,
-                selector: typeof args.selector === 'string' ? args.selector : undefined,
-                urlPattern: typeof args.urlPattern === 'string' ? args.urlPattern : undefined,
-                scriptlet: typeof args.scriptlet === 'string' ? args.scriptlet : undefined,
-            };
+            const parsed: SearchRulesArguments = v.parse(SEARCH_RULES_PARAMETERS, args);
+            const { filePath, line, domain, selector, urlPattern, scriptlet } = parsed;
+            const query = { domain, selector, urlPattern, scriptlet };
+            const hasTarget = hasSearchTarget(parsed);
+            if (line !== undefined && (filePath === undefined || hasTarget)) {
+                throw new Error(SEARCH_RULES_CALL_SHAPES);
+            }
+            if (filePath !== undefined && !hasTarget) {
+                if (line !== undefined) {
+                    return compactListFileWindow(
+                        readListFileWindow(map, checkoutPath, filePath, line),
+                    );
+                }
+                return compactListFileOutline(outlineListFile(map, checkoutPath, filePath));
+            }
+            if (!hasTarget) {
+                throw new Error(SEARCH_RULES_CALL_SHAPES);
+            }
             const effectiveDomain = query.selector
                 ? (trustedReportedDomain ?? query.domain)
                 : query.domain;
-            const effectiveQuery = effectiveDomain ? { ...query, domain: effectiveDomain } : query;
+            const effectiveQuery = {
+                ...query,
+                ...(effectiveDomain ? { domain: effectiveDomain } : {}),
+                ...(filePath === undefined ? {} : { filePath }),
+            };
             const allMatches = searchRules(effectiveQuery, map, checkoutPath);
             const isDomainOnlyQuery =
                 query.domain !== undefined &&

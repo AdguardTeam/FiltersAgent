@@ -345,10 +345,13 @@ pnpm benchmark:summarize -- tmp/model-series-a tmp/model-series-b \
 The CSV includes `agentCommit` with a dirty marker when applicable,
 `knowledgeBaseCommit` and `reporterEnvironment`, alongside each run's
 status, failure kind and measurements. For the rule comparison it has the
-agent's `agentRule` and `agentFilePath`, verified or carried for review,
-`agentEdit` for a verified rule only, and the maintainer's `humanFixCommit`,
-`humanRules` (a JSON array of `rule`, `repositoryEdit` and `replacedRule`),
-`humanRemovedRules` and `humanRulesError`.
+agent's `agentRule` and `agentFilePath`, verified or carried for review, and for
+a verified rule `agentEdit`, `agentBasis` (how the agent named the in-file
+place) and `agentHeading` (the heading the rule lands under, empty when none). A
+record written before the heading field was renamed fills `agentHeading` from its
+`section`. It also has the maintainer's `humanFixCommit`, `humanRules` (a JSON
+array of `rule`, `repositoryEdit` and `replacedRule`), `humanRemovedRules` and
+`humanRulesError`.
 
 A spreadsheet reads a cell that starts with `-`, `+`, `=` or `@` as a
 formula, and filter rules often start with `-`. Import the rule columns as

@@ -1,4 +1,6 @@
 import * as v from 'valibot';
+import { MAX_PLACEMENT_REASON_CHARACTERS } from './placement-basis';
+import { nonBlankSingleLineText } from './single-line-text';
 
 /**
  * How far the agent judges a candidate rule to reach beyond the reported symptom, as it tells the
@@ -103,14 +105,105 @@ export const DuplicateCheckResultSchema = v.object({
     matches: v.array(v.object({ rule: v.string(), filePath: v.string() })),
 });
 
-// Deliberately no `insertionPoint`: the agent names the file, and the in-file position is
-// host-planned at candidate build. Old artifacts that still carry the field parse fine - v.object
-// drops unknown keys.
+/**
+ * The kinds of in-file position an agent can name for a new rule.
+ */
+export const PlacementPositionKind = {
+    /**
+     * The rule becomes this 1-based line, and every existing line from it down moves one down.
+     */
+    BeforeLine: 'before_line',
+
+    /**
+     * The rule takes its sorted place among the existing rules of its kind.
+     */
+    Sorted: 'sorted',
+
+    /**
+     * The rule is appended at the end of the file, for the reason the agent states.
+     */
+    FileEnd: 'file_end',
+} as const;
+
+/**
+ * PlacementPositionKind value.
+ */
+export type PlacementPositionKind =
+    (typeof PlacementPositionKind)[keyof typeof PlacementPositionKind];
+
+/**
+ * The place inside the list file a new rule goes.
+ *
+ * The agent names it; the host only checks that the rule can go there and computes the edit, so no
+ * position is inferred from the file's shape on the model's behalf.
+ */
+export const PlacementPositionSchema = v.variant('kind', [
+    v.object({
+        /**
+         * The chosen-line discriminator.
+         */
+        kind: v.literal(PlacementPositionKind.BeforeLine),
+
+        /**
+         * 1-based line the rule becomes.
+         */
+        line: v.pipe(v.number(), v.integer(), v.minValue(1)),
+    }),
+    v.object({
+        /**
+         * The sorted-position discriminator.
+         */
+        kind: v.literal(PlacementPositionKind.Sorted),
+
+        /**
+         * 1-based line of an outline marker whose region the outline flags as sorted (`s`); absent
+         * for the leading region, which must be flagged the same way.
+         */
+        line: v.optional(v.pipe(v.number(), v.integer(), v.minValue(1))),
+    }),
+    v.object({
+        /**
+         * The end-of-file discriminator.
+         */
+        kind: v.literal(PlacementPositionKind.FileEnd),
+
+        /**
+         * Why the rule belongs at the end of the file.
+         */
+        reason: nonBlankSingleLineText(MAX_PLACEMENT_REASON_CHARACTERS),
+    }),
+]);
+
+/**
+ * The place inside the list file a new rule goes.
+ */
+export type PlacementPosition = v.InferOutput<typeof PlacementPositionSchema>;
+
+// The agent names the file and the position inside it; the host checks the position and computes
+// the edit. Old artifacts that still carry `insertionPoint` parse fine - v.object drops unknown
+// keys.
 export const PlacementResultSchema = v.object({
     filter: v.string(),
     filePath: v.string(),
     confidence: v.pipe(v.number(), v.minValue(0), v.maxValue(1)),
     alternatives: v.array(v.string()),
+    position: v.optional(
+        v.pipe(
+            PlacementPositionSchema,
+            v.description(
+                `Where in the file a new rule goes: ${PlacementPositionKind.BeforeLine} (the ` +
+                    `1-based line the rule becomes), ${PlacementPositionKind.Sorted} (its sorted ` +
+                    'place inside the region an outline marker flags as sorted - name that ' +
+                    "marker's line, or leave line out when the region before the first marker is " +
+                    `flagged), or ${PlacementPositionKind.FileEnd} (with the reason). The host ` +
+                    'never chooses another region or block. Required whenever the rule is a new ' +
+                    'line, unless the run instruction declares a comment for the rule kind: that ' +
+                    'placement appends the rule behind the comment and ignores the position. ' +
+                    'Ignored as well when the host adds the domain to an existing shared rule ' +
+                    'instead.',
+            ),
+        ),
+    ),
 });
 
 export const ProductCompatibilitySchema = v.object({

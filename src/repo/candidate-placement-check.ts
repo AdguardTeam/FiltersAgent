@@ -1,6 +1,7 @@
 import { placementRuleTypeOfRule } from './candidate-rule-type';
 import { planRepositoryEdit } from './repository-edit';
 import { declaredPlacementFor, type DeclaredPlacementSet } from '../types/declared-placement';
+import type { PlacementPosition } from '../types/rule-proposal';
 
 /**
  * The repository facts a placement check reads.
@@ -45,22 +46,25 @@ function namesOwnedPath(ownedPaths: ReadonlySet<string>, candidatePath: string):
 }
 
 /**
- * Check that a candidate can be inserted into the file the agent chose.
+ * Check that a candidate can be inserted into the file, at the place, the agent chose.
  *
- * The agent decides the file. This only answers whether the edit is possible there, so the terminal
- * gate can hand the reason back while the agent can still choose again; it never picks another
- * file. Where in the file the rule lands, and whether it joins an existing shared rule instead, the
- * repository edit planner decides when the patch is built.
+ * The agent decides the file and the position inside it. This only answers whether the edit is
+ * possible there, so the terminal gate can hand the reason back while the agent can still choose
+ * again; it never picks another file and never picks a position. Whether the rule joins an existing
+ * shared rule instead is the repository edit planner's decision when the patch is built, and that
+ * edit ignores the position.
  *
  * @param context - The checkout, its own list files, and the run's declared placements.
  * @param candidateRule - The single-domain candidate rule.
  * @param filePath - Repository-relative file the agent chose.
+ * @param position - The position the agent named inside that file, or undefined when it named none.
  * @returns Why the candidate cannot be inserted there, or undefined when it can.
  */
 export function candidatePlacementProblem(
     context: CandidatePlacementContext,
     candidateRule: string,
     filePath: string,
+    position: PlacementPosition | undefined,
 ): string | undefined {
     if (filePath.trim().length === 0) {
         return 'No file was chosen: name the repository list file the rule belongs in.';
@@ -83,6 +87,7 @@ export function candidatePlacementProblem(
             filePath,
             candidateRule,
             context.declaredPlacement,
+            position,
         );
     } catch (error) {
         return error instanceof Error ? error.message : String(error);

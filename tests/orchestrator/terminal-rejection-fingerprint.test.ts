@@ -35,6 +35,25 @@ function visionRejection(overrides: Record<string, unknown> = {}): FinishFixVali
     };
 }
 
+/**
+ * A placement rejection as the runtime emits it, with the position the draft named.
+ *
+ * @param position - The refused position, exactly as the refusal carries it.
+ * @returns The structured rejection.
+ */
+function placementRejection(position: unknown): FinishFixValidationRejection {
+    return {
+        error: 'The rule cannot go where the draft puts it.',
+        errorKind: 'candidate_placement_not_insertable',
+        retryable: true,
+        requiredAction: 'choose_insertable_placement',
+        requiredTool: 'finish_fix',
+        candidateRule: 'site.example##.ad',
+        filePath: 'BaseFilter/sections/specific.txt',
+        position,
+    };
+}
+
 describe('terminalRejectionFingerprint', () => {
     it('ignores prose, session identity and artifact ids', () => {
         // Contract: a model that relaunches a session and re-captures without inspecting is
@@ -91,5 +110,17 @@ describe('terminalRejectionFingerprint', () => {
         expect(terminalRejectionFingerprint(reordered)).toBe(
             terminalRejectionFingerprint(visionRejection()),
         );
+    });
+
+    it('tells apart placement refusals that differ only by the refused position', () => {
+        // The model changes its answer each time: no position, then a sorted position, then a
+        // chosen line. Those are different walls, and the streak must not seal the run.
+        const fingerprints = [
+            terminalRejectionFingerprint(placementRejection(null)),
+            terminalRejectionFingerprint(placementRejection({ kind: 'sorted' })),
+            terminalRejectionFingerprint(placementRejection({ kind: 'before_line', line: 4 })),
+        ];
+
+        expect(new Set(fingerprints).size).toBe(fingerprints.length);
     });
 });

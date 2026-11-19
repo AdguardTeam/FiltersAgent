@@ -16,7 +16,8 @@
  */
 import * as v from 'valibot';
 import { BrowserFallbackReason } from '../types/browser-fallback-reason';
-import { TOOL_GUIDANCE, TOOL_PARAMETER_SCHEMAS } from '../agent/tool-catalog';
+import { TOOL_GUIDANCE } from '../agent/tool-guidance';
+import { TOOL_PARAMETER_SCHEMAS } from '../agent/tool-catalog';
 import { ToolName } from '../agent/tool-names';
 import type { LlmConfig } from '../config/config';
 import { canonicalHttpOrigin } from '../browser/network-safety';

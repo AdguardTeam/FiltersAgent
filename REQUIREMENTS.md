@@ -170,23 +170,38 @@ A candidate is validated in the environment the run selected, across three filte
 
 ## 8. Rule placement
 
-The agent chooses the list file; the code only checks that the rule can be inserted there.
+The agent chooses the list file and the position in it; the code only checks that the rule can go there.
 
 - The agent names the list file in its draft (`ruleProposal.placement.filePath`) exactly as
   `search_rules` shows the path: the file that already holds the site's rules, otherwise the file
   that holds similar rules (the team's rules in 2.4, the `placement` topic of
   `lookup_rule_guidance`).
 - When the run instruction declares a placement for the rule's kind, the agent names that file.
+- The instruction can also state where inside a file a rule goes: prose such as "put a new rule
+  below the `!` separator under `! NOTE: Specific rules`" is part of the convention the agent
+  follows. The code does not parse that prose; it checks only the position the agent names.
 - `finish_fix` checks that the file is one of the repository's own lists, exists in the checkout,
   and matches the placement declared for that kind of rule. If not, the agent gets the reason and
   chooses again. The code never picks another file for the agent.
-- The code picks the position inside the file when it builds the patch: the sorted position in a
-  sorted file, otherwise the domain's block, the closing section, or the end of the file. When the
-  file already holds the same rule shared by other sites, the reported domain is added to it
-  instead of a new line. A shared rule that excludes a site, carries a rule modifier
-  (`[$path=…]`), already covers the reported domain through a parent domain or an entity, or
-  belongs to a group the file keeps for one project (its exact domain list also scopes another rule
-  of the file) is never extended. A declared placement file always gets a new line.
+- The agent names the position inside the file in its draft
+  (`ruleProposal.placement.position`): `before_line` (1-based), `sorted` with the line of an
+  outline marker whose region the outline flags as sorted (`s`), or without a line when the region
+  before the first marker is flagged the same way, or `file_end` with its reason. It reads the
+  file's outline and windows with `search_rules`, which takes `filePath` alone for the outline or
+  with `line` for a window.
+- `finish_fix` refuses a position that would break the file — `before_line` outside the file,
+  `before_line` directly under a `!+` platform hint, `sorted` naming no outline marker whose region
+  is flagged as sorted, `sorted` naming a region with no sorted run of the rule's kind, or a new
+  line with no position — and the agent gets the retryable reason and chooses again. A sorted rule
+  goes inside the region the agent named, never into one the outline flagged and the agent did not.
+  `file_end` with a reason is always accepted. When the file already holds the same rule shared by
+  other sites, the reported domain is added to it instead of a new line, and the position is
+  ignored. A declared `comment:` placement also ignores the position: the rule is appended behind
+  that comment. Without a declared comment, a new rule line needs a position. A shared rule that
+  excludes a site, carries a rule modifier (`[$path=…]`), already covers the reported domain
+  through a parent domain or an entity, or belongs to a group the file keeps for one project (its
+  exact domain list also scopes another rule of the file) is never extended: the rule gets a line
+  of its own at the position the agent named. A declared placement file always gets a new line.
 - A `search_rules` selector query made while a browser session has navigated to the page it was
   launched on also checks that page: it lists the element-hiding rules other sites share, in every
   list, that hide the same element, a wrapper of it or a part of it, each with the candidate that

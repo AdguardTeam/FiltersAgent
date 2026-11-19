@@ -33,7 +33,7 @@ import * as fixCore from '../../src/orchestrator/fix-core';
 import * as fixCoreContext from '../../src/orchestrator/fix-core-context';
 import type * as fixCoreInputs from '../../src/orchestrator/fix-core-inputs';
 import * as agenticRunEvidence from '../../src/orchestrator/agentic-run-evidence';
-import { candidatePatchVerificationRefusal } from '../../src/orchestrator/candidate-verdict';
+import { candidatePatchVerificationRefusal } from '../../src/orchestrator/candidate-verification-refusal';
 import {
     FixRunResultSchema,
     type CandidatePatch,

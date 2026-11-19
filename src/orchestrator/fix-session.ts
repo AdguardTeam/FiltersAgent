@@ -14,6 +14,7 @@ import {
     ENUMERATION_STREAK_PHASE,
     withEnumerationBackstop,
 } from './tool-enumeration-backstop';
+import { isRuleSearchRead } from '../agent/rule-search-tool';
 import { ToolName } from '../agent/tool-names';
 import type { ToolRegistry } from '../agent/tool-registry';
 import type { LlmConfig } from '../config/config';
@@ -222,6 +223,8 @@ export async function runFixSession(options: FixSessionOptions): Promise<FixSess
         .getToolNames()
         .includes(ToolName.SelectEnvironment);
     const enumerationBackstop = createToolEnumerationBackstop({
+        countsTowardStreak: (toolName, args) =>
+            toolName !== ToolName.SearchRules || !isRuleSearchRead(args),
         onStreak: (streak) => {
             logger.warn(
                 { tool: streak.tool, consecutiveCalls: streak.consecutiveCalls },

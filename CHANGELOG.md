@@ -22,6 +22,12 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Changed
 
+- Changed rule placement: the agent chooses where in the list file a new rule goes, from the
+  file's own outline and header read with `search_rules`, and the run instruction can state the
+  in-file placement convention. A sorted position names the line of an outline marker whose region
+  the outline flags as sorted, or leaves the line out for a sorted leading region, and the host
+  inserts only inside that region. The report names the heading, the platform condition and the
+  line, or gives the agent's reason for the end of the file.
 - Changed adding the reported domain to a shared rule to skip a rule the file
   keeps for one project, whose exact domain list another rule of the file
   repeats: the candidate gets a line of its own instead.
@@ -47,6 +53,9 @@ The format is based on [Keep a Changelog], and this project adheres to
 - Fixed a target text hint in a non-Latin script never matching the page when
   the agent scrolls to or interacts with an element: the hint is decoded as
   UTF-8 in the page.
+- Fixed a report that quotes a revision marker in its rule or list heading
+  being posted again on the next run: the marker is read only where the
+  comment opens.
 
 ## [1.2.0] - 2026-10-29
 

@@ -9,6 +9,7 @@ import {
 import { FixRunStatus } from '../../src/types/fix-run-result';
 import { formatIssues } from '../../src/pi/valibot-issues';
 import { PolicyDecisionKind } from '../../src/types/policy';
+import { MAX_PLACEMENT_REASON_CHARACTERS } from '../../src/types/placement-basis';
 import { DuplicateClass, RiskLevel, RuleType } from '../../src/types/rule-proposal';
 
 /**
@@ -127,6 +128,70 @@ describe('finish_fix advertisement', () => {
         expect(parsed.success).toBe(false);
         expect(formatIssues(parsed.issues ?? [])).toMatch(/^ruleProposal:/u);
         expect(v.safeParse(FixOutcomeParametersSchema, payload).success).toBe(false);
+    });
+
+    it('accepts each placement position kind in a propose_rule outcome', () => {
+        const positions = [
+            { kind: 'before_line', line: 12 },
+            { kind: 'sorted' },
+            { kind: 'sorted', line: 12 },
+            { kind: 'file_end', reason: 'No section keeps rules of this kind.' },
+        ];
+        for (const position of positions) {
+            const payload = {
+                ...ACCEPTED_OUTCOMES['proposeRule'],
+                ruleProposal: {
+                    ...RULE_PROPOSAL,
+                    placement: { ...RULE_PROPOSAL.placement, position },
+                },
+            };
+
+            expect(v.safeParse(FixOutcomeSchema, payload).success, position.kind).toBe(true);
+            expect(v.safeParse(FixOutcomeParametersSchema, payload).success, position.kind).toBe(
+                true,
+            );
+        }
+
+        expect(v.safeParse(FixOutcomeSchema, ACCEPTED_OUTCOMES['proposeRule']).success).toBe(true);
+    });
+
+    it('refuses a before_line or sorted line below 1 and an empty, multi-line or overlong file_end reason', () => {
+        const withPosition = (position: unknown) => ({
+            ...ACCEPTED_OUTCOMES['proposeRule'],
+            ruleProposal: {
+                ...RULE_PROPOSAL,
+                placement: { ...RULE_PROPOSAL.placement, position },
+            },
+        });
+        const refused = [
+            { kind: 'before_line', line: 0 },
+            { kind: 'sorted', line: 0 },
+            { kind: 'file_end', reason: '' },
+            { kind: 'file_end', reason: '   ' },
+            { kind: 'file_end', reason: '\t' },
+            { kind: 'file_end', reason: 'First line.\nSecond line.' },
+            { kind: 'file_end', reason: 'r'.repeat(MAX_PLACEMENT_REASON_CHARACTERS + 1) },
+        ];
+        for (const position of refused) {
+            expect(v.safeParse(FixOutcomeSchema, withPosition(position)).success).toBe(false);
+        }
+    });
+
+    it('keeps a file_end reason verbatim rather than trimming it', () => {
+        const withPosition = (position: unknown) => ({
+            ...ACCEPTED_OUTCOMES['proposeRule'],
+            ruleProposal: {
+                ...RULE_PROPOSAL,
+                placement: { ...RULE_PROPOSAL.placement, position },
+            },
+        });
+        const reason = 'No section keeps rules of this kind.  ';
+        const parsed = v.parse(FixOutcomeSchema, withPosition({ kind: 'file_end', reason }));
+
+        expect(parsed.outcome).toBe('propose_rule');
+        if (parsed.outcome === 'propose_rule') {
+            expect(parsed.ruleProposal.placement.position).toMatchObject({ reason });
+        }
     });
 
     it('drops a well-formed field of another outcome', () => {
