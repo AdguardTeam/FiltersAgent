@@ -1,14 +1,17 @@
 /**
- * The per-session browser tool registry of a production fix run, and the applied-rules log it
- * binds: which filtering engine can report the rules it applied in this session, and how that
- * report is opened as soon as the session launches.
+ * The tool registries of a production fix run — the base registry every session shares and the
+ * per-session browser registry — and the applied-rules log a session binds: which filtering engine
+ * can report the rules it applied in this session, and how that report is opened as soon as the
+ * session launches.
  *
- * Split from `agent-runtime.ts`, which builds one of these for every launched session and needs
- * nothing from it but the finished registry.
+ * Split from `agent-runtime.ts`, which builds the base registry once and a browser registry for
+ * every launched session, and needs nothing from them but the finished registries.
  */
 import type { RedirectOriginPolicy } from '../browser/redirect-origin-policy';
 import type { SiteAnalyzer } from '../analyzer/site-analyzer';
 import { createToolRegistry } from '../agent/tool-factory';
+import type { ActivePage } from '../agent/rule-search-page-check';
+import { normalizeTrustedReportedHostname } from '../repo/rule-normalizer';
 import type { ToolRegistry } from '../agent/tool-registry';
 import { openAdGuardFilteringLog } from '../browser/adguard-filtering-log';
 import type { BrowserSession } from '../browser/browser-session';
@@ -22,6 +25,9 @@ import type { SingleShotClient } from '../pi/single-shot-types';
 import type { TraceRecorder } from '../tracer/trace-recorder';
 import type { PlacementMap } from '../types/repo-context';
 import type { ReproProfile } from '../types/repro-profile';
+import { reportedDomainFromAllowedTargets } from './agent-runtime-candidate-context';
+import type { AgentRuntimeOptions } from './agent-runtime-options';
+import type { AgentRuntimeSessionState } from './agent-runtime-session-evidence';
 
 /**
  * Runtime-owned browser context supplied to an injectable browser registry factory.
@@ -235,4 +241,66 @@ export async function createProductionBrowserRegistry(
         },
         localIssueTools: { localIssue: input.issue },
     });
+}
+
+/**
+ * Create the base tool registry of a production fix run: the tools every session shares, bound to
+ * the run's checkout, issue, guidance and lint command.
+ *
+ * @param options - The run's runtime options.
+ * @param placementMap - The placement map the run already walked, so the checkout is walked once.
+ * @param activePage - The live session's page and domain, read when a `search_rules` selector query
+ *   checks the shared rules against it.
+ * @returns Registry holding the run's base tools.
+ */
+export async function createProductionBaseRegistry(
+    options: AgentRuntimeOptions,
+    placementMap: PlacementMap | undefined,
+    activePage: () => ActivePage | undefined,
+): Promise<ToolRegistry> {
+    return await createToolRegistry({
+        allowedIssueNumber: options.issue.number,
+        checkoutPath: options.filtersPath,
+        placementMap,
+        visionTools: {
+            artifactsDir: options.artifactsDir,
+            recorder: options.recorder,
+            vision: options.vision,
+            reporterSymptom: () => undefined,
+        },
+        localIssueTools: {
+            localIssue: options.issue,
+            reportedDomain: reportedDomainFromAllowedTargets(options.allowedTargetUrls),
+        },
+        knowledgeGuidance: options.knowledgeGuidanceSource,
+        activePage,
+        ...(options.declaredPlacement === undefined
+            ? {}
+            : { declaredPlacement: options.declaredPlacement }),
+        ...(options.repositoryLint === undefined ? {} : { repositoryLint: options.repositoryLint }),
+    });
+}
+
+/**
+ * The page a `search_rules` page check reads: the active session's, once it reached the page it was
+ * launched for.
+ *
+ * A session that has not navigated yet shows `about:blank`, and one that landed on another site
+ * shows a page its own domain does not scope; either would answer `no_element` for a page nobody
+ * checked. The candidates are scoped to the domain the session was launched on, which after a
+ * cross-site redirect is the destination the agent relaunched on.
+ *
+ * @param session - The runtime's live browser session, if any.
+ * @param state - The active session's state, if any.
+ * @returns The page and its domain, or undefined while no session has its page open.
+ */
+export function reportedSessionPage(
+    session: BrowserSession | undefined,
+    state: Pick<AgentRuntimeSessionState, 'navigationVerified' | 'targetUrl'> | undefined,
+): ActivePage | undefined {
+    if (session === undefined || session.isClosed || state?.navigationVerified !== true) {
+        return undefined;
+    }
+    const domain = normalizeTrustedReportedHostname(new URL(state.targetUrl).hostname);
+    return domain === undefined ? undefined : { page: session.getPage(), domain };
 }

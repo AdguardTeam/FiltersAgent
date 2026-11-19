@@ -20,13 +20,9 @@ import {
 } from 'node:path';
 import { placementRuleTypeOfRule } from './candidate-rule-type';
 import { declaredPlacementForTarget } from './declared-placement';
+import { selectExtensionCandidate } from './extension-target';
 import { filterFileLines } from './filter-file-lines';
-import {
-    extendRuleDomains,
-    isExtensibleFamilyKind,
-    ruleFamilySignature,
-    samePlacementFamily,
-} from './rule-family';
+import { extendRuleDomains, samePlacementFamily } from './rule-family';
 import { SINGLE_LINE_RULE_MESSAGE, isSingleLineRule, normalizeRule } from './rule-normalizer';
 import { describeSharedRuleExtension } from './shared-rule-extension';
 import { findSortedInsertion } from './sorted-insertion';
@@ -442,26 +438,6 @@ export interface RepositoryEditPlan {
 }
 
 /**
- * An existing shared rule eligible for deterministic extension.
- */
-interface ExtensionCandidate {
-    /**
-     * Checkout-relative path containing the exact shared rule.
-     */
-    filePath: string;
-
-    /**
-     * One-based source line number.
-     */
-    line: number;
-
-    /**
-     * Exact existing rule text.
-     */
-    rule: string;
-}
-
-/**
  * Convert an absolute checkout descendant to a portable repository-relative path.
  *
  * @param checkoutRoot - Canonical checkout root.
@@ -504,119 +480,6 @@ function resolveFilterPath(checkoutPath: string, filePath: string): string | und
         throw new Error(`Candidate target is not a regular file: ${filePath}`);
     }
     return target;
-}
-
-/**
- * Return the final DNS label used as a bounded locale affinity signal.
- *
- * This is deliberately not a public-suffix parser. Repository cosmetic scopes are host-like
- * strings, and the final label is used only to choose between semantically equivalent expressions
- * already present in the same trusted filter file.
- *
- * @param domain - Normalized cosmetic-rule domain scope.
- * @returns Lowercase final DNS label, or an empty string for a non-host scope.
- */
-function finalDomainLabel(domain: string): string {
-    const normalized = domain.toLowerCase().replace(/^~/u, '');
-    if (!/^[a-z0-9.-]+$/u.test(normalized)) {
-        return '';
-    }
-    return normalized.split('.').at(-1) ?? '';
-}
-
-/**
- * Choose one equivalent shared expression inside an already selected repository file.
- *
- * Every input has the same cosmetic syntax and selector, so extending any of them has identical
- * filtering semantics for the candidate domain. A same-final-label cohort keeps regional rules
- * together when possible; remaining ties use repository order for a reproducible edit.
- *
- * @param matches - Equivalent shared expressions from one repository file.
- * @param candidateDomain - Single domain being added to the shared expression.
- * @returns Preferred existing expression, or undefined when the file has no match.
- */
-function selectEquivalentFileMatch(
-    matches: readonly ExtensionCandidate[],
-    candidateDomain: string,
-): ExtensionCandidate | undefined {
-    const candidateLabel = finalDomainLabel(candidateDomain);
-    let preferred: ExtensionCandidate | undefined;
-    let preferredAllMatching = -1;
-    let preferredMatchingDomains = -1;
-    for (const match of matches) {
-        const domains = normalizeRule(match.rule).domains;
-        const matchingDomains = candidateLabel
-            ? domains.filter((domain) => finalDomainLabel(domain) === candidateLabel).length
-            : 0;
-        const allMatching = matchingDomains === domains.length ? 1 : 0;
-        if (
-            !preferred ||
-            allMatching > preferredAllMatching ||
-            (allMatching === preferredAllMatching && matchingDomains > preferredMatchingDomains)
-        ) {
-            preferred = match;
-            preferredAllMatching = allMatching;
-            preferredMatchingDomains = matchingDomains;
-        }
-    }
-    return preferred;
-}
-
-/**
- * Select the shared rule in the chosen file whose exact syntax and expression match the candidate.
- *
- * Only the file the agent chose is read. Which file a rule belongs in is the agent's decision, and
- * a shared rule of the same form in another file is no reason to move the edit there: searching
- * every filter tree and retargeting to a unique owner elsewhere, or refusing the candidate when
- * several files hold one, loses a vision-verified block whose agent picked the right file. Inside
- * the chosen file several equivalent expressions may carry the family; the reported domain's cohort
- * picks one.
- *
- * @param targetPath - Canonical chosen file.
- * @param filePath - Repository-relative chosen file.
- * @param candidateRule - Locked issue-scoped candidate rule.
- * @returns The extension target in the chosen file, or undefined when the file holds none.
- */
-function selectExtensionCandidate(
-    targetPath: string,
-    filePath: string,
-    candidateRule: string,
-): ExtensionCandidate | undefined {
-    const candidate = normalizeRule(candidateRule);
-    if (
-        !isExtensibleFamilyKind(candidate.kind) ||
-        candidate.isException ||
-        candidate.domains.length !== 1
-    ) {
-        return undefined;
-    }
-    const candidateDomain = candidate.domains[0];
-    const candidateSignature = ruleFamilySignature(candidateRule);
-    if (!candidateSignature) {
-        return undefined;
-    }
-    // A family member is a non-exception rule of the same kind whose expression matches the
-    // candidate's exactly once the domain scope is removed, already shared by at least two sites
-    // and not yet by the reported one.
-    const isFamilyMember = (rule: string): boolean => {
-        const existing = normalizeRule(rule);
-        return (
-            existing.kind === candidate.kind &&
-            !existing.isException &&
-            existing.domains.length >= 2 &&
-            !existing.domains.includes(candidateDomain) &&
-            ruleFamilySignature(rule) === candidateSignature
-        );
-    };
-    const matches: ExtensionCandidate[] = [];
-    readFileSync(targetPath, 'utf8')
-        .split(/\r?\n/)
-        .forEach((rule, index) => {
-            if (isFamilyMember(rule)) {
-                matches.push({ filePath, line: index + 1, rule });
-            }
-        });
-    return selectEquivalentFileMatch(matches, candidateDomain);
 }
 
 /**
@@ -880,7 +743,7 @@ export function planRepositoryEdit(
         );
     }
     const chosenPath = repositoryRelativePath(realpathSync(checkoutPath), targetPath);
-    const extension = selectExtensionCandidate(targetPath, chosenPath, candidateRule);
+    const extension = selectExtensionCandidate(targetPath, candidateRule);
     const replacementRule = extension
         ? extendRuleDomains(extension.rule, normalizeRule(candidateRule).domains[0])
         : undefined;

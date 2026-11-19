@@ -20,6 +20,7 @@ import {
 import type { PreparedFiltersCheckout } from '../../src/local/filters-preparer';
 import type { LocalRunRecord } from '../../src/local/run-output';
 import type { CandidatePatch } from '../../src/types/fix-run-result';
+import { createListCheckout } from './list-checkout-fixture';
 
 /**
  * Run Git in one test-owned repository.
@@ -347,6 +348,46 @@ describe('planRepositoryEdit', () => {
                 'nettg.pl#$#.banner { min-height: 0 !important; }',
             ),
         ).toEqual({ filePath, edit: { kind: 'insert', basis: 'append_eof' } });
+    });
+
+    it('does not extend a rule the list keeps for one project', () => {
+        const filePath = 'AnnoyancesFilter/Cookies/sections/cookies_specific.txt';
+        const checkout = createListCheckout({
+            [filePath]: ['one.example,two.example##.banner', 'one.example,two.example##.promo'],
+        });
+
+        expect(planRepositoryEdit(checkout, filePath, 'site.example##.banner')).toMatchObject({
+            filePath,
+            edit: { kind: 'insert' },
+        });
+    });
+
+    it('does not extend a shared rule that excludes a site or carries a rule modifier', () => {
+        const filePath = 'BaseFilter/sections/foreign.txt';
+        const checkout = createListCheckout({
+            [filePath]: [
+                'one.example,~two.example,three.example##.banner',
+                '[$path=/news]one.example,two.example##.promo',
+            ],
+        });
+
+        expect(planRepositoryEdit(checkout, filePath, 'site.example##.banner').edit.kind).toBe(
+            'insert',
+        );
+        expect(planRepositoryEdit(checkout, filePath, 'site.example##.promo').edit.kind).toBe(
+            'insert',
+        );
+    });
+
+    it('does not add a site to a shared rule that covers it through a parent domain', () => {
+        const filePath = 'BaseFilter/sections/foreign.txt';
+        const checkout = createListCheckout({
+            [filePath]: ['example.com,two.example##.banner'],
+        });
+
+        expect(planRepositoryEdit(checkout, filePath, 'shop.example.com##.banner').edit.kind).toBe(
+            'insert',
+        );
     });
 
     it('ignores matching selector groups outside the model-selected filter scope', () => {

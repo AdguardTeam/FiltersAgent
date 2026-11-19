@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import type { PlacementMap, SearchQuery, RuleMatch } from '../types/repo-context';
 import { RuleKind, normalizeRule, type NormalizedRule } from './rule-normalizer';
 import { matchesQuery } from './rule-matcher';
-import { domainScopeCovers, domainScopeSearchTerms, isEntityScope } from './domain-scope';
+import { domainScopeCovers, domainScopeSearchTerms, finalDomainLabel } from './domain-scope';
 
 /**
  * An intermediate search result: the public {@link RuleMatch} fields plus the normalized rule the
@@ -64,23 +64,6 @@ interface DomainAffinityRank {
      * Whether the rule is already shared by multiple domains and can be extended in place.
      */
     shared: number;
-}
-
-/**
- * Return the final DNS label used as a bounded locale-affinity signal.
- *
- * An entity scope (`shellshock.*`) stands for every public suffix at once, so it has no final label
- * to compare and contributes no locale signal either way.
- *
- * @param domain - Host-like cosmetic-rule domain scope.
- * @returns Lowercase final DNS label, or an empty string for unsupported scopes.
- */
-function finalDomainLabel(domain: string): string {
-    const normalized = domain.toLowerCase().replace(/^~/u, '');
-    if (isEntityScope(normalized) || !/^[a-z0-9.-]+$/u.test(normalized)) {
-        return '';
-    }
-    return normalized.split('.').at(-1) ?? '';
 }
 
 /**

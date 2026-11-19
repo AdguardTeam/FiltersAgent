@@ -119,6 +119,20 @@ const rows: Row[] = [
         replacement: 'b.example,reported.test,a.example##.widget',
         expected: { addedScope: 'reported.test', retainedScopes: ['a.example', 'b.example'] },
     },
+    {
+        name: 'refuses extending a rule that carries a modifier block',
+        candidate: 'reported.test##.promo',
+        original: '[$path=/news]one.example,two.example##.promo',
+        replacement: 'reported.test,[$path=/news]one.example,two.example##.promo',
+        expected: null,
+    },
+    {
+        name: 'refuses extending a rule that already covers the site through a parent domain',
+        candidate: 'shop.example.com##.widget',
+        original: 'example.com,b.example##.widget',
+        replacement: 'shop.example.com,example.com,b.example##.widget',
+        expected: null,
+    },
 ];
 
 describe('describeSharedRuleExtension', () => {

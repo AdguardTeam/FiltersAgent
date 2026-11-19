@@ -63,7 +63,9 @@ export interface NormalizedRule {
     urlPattern?: string;
 
     /**
-     * Sorted, lowercased modifiers for network rules (e.g. "domain=a|b", "script").
+     * Sorted, lowercased modifiers: a network rule's `$` list (e.g. "domain=a|b", "script"), or the
+     * `[$…]` block in front of a cosmetic or scriptlet rule (e.g. "path=/news"). Empty when the
+     * rule carries none.
      */
     modifiers: string[];
 
@@ -98,7 +100,7 @@ export interface NormalizedRule {
  * @param value - Runner-provided reported hostname.
  * @returns The normalized hostname, or undefined when the value is not a bare hostname.
  */
-function normalizeTrustedReportedHostname(value: string): string | undefined {
+export function normalizeTrustedReportedHostname(value: string): string | undefined {
     const input = value.trim().toLowerCase();
     if (input.length === 0) {
         return undefined;
@@ -281,6 +283,90 @@ function normalizeDomainList(raw: string, sep: string): string[] {
 }
 
 /**
+ * Opening of the modifier block a cosmetic or scriptlet rule may carry in front of its domain list
+ * (`[$path=/news]example.org##.ad`).
+ */
+const COSMETIC_MODIFIER_BLOCK_OPEN = '[$';
+
+/**
+ * Prefix of the modifier that scopes a rule to domains, in a network rule's `$` list and in a
+ * cosmetic rule's `[$…]` block alike.
+ */
+const DOMAIN_MODIFIER_PREFIX = 'domain=';
+
+/**
+ * The part of a cosmetic or scriptlet rule in front of its separator, split into its parts.
+ */
+interface CosmeticScope {
+    /**
+     * Sorted, lowercased modifiers of the `[$…]` block; empty without a block.
+     */
+    modifiers: string[];
+
+    /**
+     * Every domain the rule is scoped to: the domain list and the block's `domain=` modifier.
+     */
+    domains: string[];
+
+    /**
+     * Canonical spelling of the part: the normalized block, then the normalized domain list.
+     */
+    canonical: string;
+}
+
+/**
+ * Index of the `]` closing a modifier block, skipping a bracket escaped with a backslash.
+ *
+ * @param prefix - Trimmed text in front of the cosmetic separator, opening with the block.
+ * @returns Index of the closing bracket, or -1 when the block is not closed.
+ */
+function modifierBlockEnd(prefix: string): number {
+    for (let index = COSMETIC_MODIFIER_BLOCK_OPEN.length; index < prefix.length; index += 1) {
+        if (prefix[index] === '\\') {
+            index += 1;
+        } else if (prefix[index] === ']') {
+            return index;
+        }
+    }
+    return -1;
+}
+
+/**
+ * Split the text in front of a cosmetic separator into its modifier block and its domain list.
+ *
+ * A `domain=` modifier in the block scopes the rule exactly as the list does, so its domains join
+ * the list. An unclosed block is not a block: the text is read as a domain list, as before.
+ *
+ * @param raw - Text in front of the cosmetic separator.
+ * @returns The block's modifiers, every scoping domain and the canonical spelling.
+ */
+function parseCosmeticScope(raw: string): CosmeticScope {
+    const prefix = raw.trim();
+    const blockEnd = prefix.startsWith(COSMETIC_MODIFIER_BLOCK_OPEN)
+        ? modifierBlockEnd(prefix)
+        : -1;
+    if (blockEnd === -1) {
+        const domains = normalizeDomainList(prefix, ',');
+        return { modifiers: [], domains, canonical: domains.join(',') };
+    }
+    const modifiers = prefix
+        .slice(COSMETIC_MODIFIER_BLOCK_OPEN.length, blockEnd)
+        .split(/(?<!\\),/u)
+        .map(normalizeModifier)
+        .filter((modifier) => modifier.length > 0)
+        .sort();
+    const listed = normalizeDomainList(prefix.slice(blockEnd + 1), ',');
+    const fromModifiers = modifiers
+        .filter((modifier) => modifier.startsWith(DOMAIN_MODIFIER_PREFIX))
+        .flatMap((modifier) => modifier.slice(DOMAIN_MODIFIER_PREFIX.length).split('|'));
+    return {
+        modifiers,
+        domains: Array.from(new Set([...listed, ...fromModifiers])).sort(),
+        canonical: `${COSMETIC_MODIFIER_BLOCK_OPEN}${modifiers.join(',')}]${listed.join(',')}`,
+    };
+}
+
+/**
  * Normalize a single modifier (e.g. "domain=a|b" → "domain=a|b" sorted; "script" → "script").
  *
  * @param mod - A single modifier token from the `$`-separated list.
@@ -356,10 +442,10 @@ export function normalizeRule(line: string): NormalizedRule {
     const cosmetic = findCosmeticSeparator(raw);
     if (cosmetic) {
         const { sep, index } = cosmetic;
-        const domainsPart = raw.slice(0, index);
+        const scope = parseCosmeticScope(raw.slice(0, index));
+        const { modifiers, domains } = scope;
         const rawBody = raw.slice(index + sep.length).trim();
         const body = collapseWhitespace(rawBody);
-        const domains = normalizeDomainList(domainsPart, ',');
         const isException = sep.startsWith('#@');
         const syntaxKind = syntaxKindForCosmeticSeparator(sep, body);
         const isScriptlet = syntaxKind === RuleSyntaxKind.Scriptlet;
@@ -371,11 +457,11 @@ export function normalizeRule(line: string): NormalizedRule {
             const adGuardSeparator = isException ? '#@%#' : '#%#';
             const canonicalSeparator = isUboScriptletBody(body) ? sep : adGuardSeparator;
             return {
-                canonical: `${domains.join(',')}${canonicalSeparator}${body}`,
+                canonical: `${scope.canonical}${canonicalSeparator}${body}`,
                 kind: RuleKind.Scriptlet,
                 syntaxKind,
                 isException,
-                modifiers: [],
+                modifiers,
                 domains,
                 selector: body,
                 scriptletName: scriptletNameFromBody(body),
@@ -390,22 +476,22 @@ export function normalizeRule(line: string): NormalizedRule {
                 declarationIndex === -1 ? body : body.slice(0, declarationIndex),
             );
             return {
-                canonical: `${domains.join(',')}${sep}${body}`,
+                canonical: `${scope.canonical}${sep}${body}`,
                 kind: RuleKind.Cosmetic,
                 syntaxKind,
                 isException,
-                modifiers: [],
+                modifiers,
                 domains,
                 selector,
                 cssInjectionBody: rawBody,
             };
         }
         return {
-            canonical: `${domains.join(',')}${sep}${body}`,
+            canonical: `${scope.canonical}${sep}${body}`,
             kind: RuleKind.Cosmetic,
             syntaxKind,
             isException,
-            modifiers: [],
+            modifiers,
             domains,
             selector: body,
         };

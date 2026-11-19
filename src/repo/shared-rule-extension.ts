@@ -1,4 +1,5 @@
-import { isExtensibleFamilyKind, ruleFamilySignature } from './rule-family';
+import { domainListCovers } from './domain-scope';
+import { isExtensibleFamilyKind, isExtensibleSharedRule, ruleFamilySignature } from './rule-family';
 import { normalizeRule } from './rule-normalizer';
 
 /**
@@ -19,8 +20,9 @@ export interface SharedRuleExtension {
 /**
  * Decide whether a replacement line adds exactly one reported scope to an existing shared rule.
  *
- * This is the sole definition of the constrained-edit invariant: the original must be a rule at
- * least two other sites already share and the reported site does not, the rule expression must be
+ * This is the sole definition of the constrained-edit invariant: the original must be a rule the
+ * extension planner could extend — at least two other sites already share it, it excludes none,
+ * carries no `[$…]` block and does not yet cover the reported site — the rule expression must be
  * untouched, every prior domain must survive, and exactly the candidate's scope may appear. It also
  * refuses an exception on any of the three rules, because `##` and `#@#` share a syntax kind and an
  * unhide rule extended by a blocking candidate would invert what the reported site executes while
@@ -47,16 +49,13 @@ export function describeSharedRuleExtension(
     if (
         !isExtensibleFamilyKind(candidate.kind) ||
         candidate.isException ||
-        original.isException ||
         replacement.isException ||
         candidate.domains.length !== 1 ||
         addedScope.startsWith('~') ||
-        // The same two preconditions the extension planner selects a target under: a rule the
-        // reported site already carries is not extended by naming it again, and a rule fewer than
-        // two sites share is not shared at all.
-        original.domains.includes(addedScope) ||
-        original.domains.length < 2 ||
-        original.domains.some((domain) => domain.startsWith('~')) ||
+        // The preconditions the extension planner selects a target under: a rule the reported
+        // site is already covered by is not extended by naming it again.
+        !isExtensibleSharedRule(original) ||
+        domainListCovers(original.domains, addedScope) ||
         signature === undefined ||
         ruleFamilySignature(originalRule) !== signature ||
         ruleFamilySignature(replacementRule) !== signature ||

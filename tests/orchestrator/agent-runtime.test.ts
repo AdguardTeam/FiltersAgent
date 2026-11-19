@@ -90,6 +90,7 @@ import type { AdsEnvironmentPhaseObservationInput } from '../../src/validator/ph
 import type { PiRuntime } from '../../src/pi/runtime';
 import { testCoreConfig } from '../config/test-core-config';
 import { fakeInteractionSession } from '../environment/interaction-session-fixture';
+import { createListCheckout } from '../repo/list-checkout-fixture';
 const { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } = fs;
 const { describe, expect, it, vi } = vitest;
 
@@ -1862,6 +1863,68 @@ describe('AgentRuntime', () => {
             expect(matches[0]).toMatchObject({
                 rule: 'morizon.pl,prawo.pl,telepolis.pl##.banner',
                 filePath: 'BaseFilter/sections/foreign.txt',
+            });
+        } finally {
+            rmSync(checkout, { recursive: true, force: true });
+        }
+    });
+
+    it('checks a searched selector on the page the live session navigated to', async () => {
+        const checkout = createListCheckout({
+            'BaseFilter/sections/foreign.txt': ['morizon.pl,prawo.pl##.banner'],
+        });
+        // Every rule the probe compares hides the searched element: what reaches the page is the
+        // contract here, not native selector matching.
+        const page = {
+            context: () => {
+                throw new Error('a fake page has no browser context');
+            },
+            evaluate: async () => ({
+                status: 'checked',
+                elementCount: 1,
+                comparedElementCount: 1,
+                uncheckedCount: 0,
+                descendantsChecked: true,
+                matches: [{ index: 0, relation: 'same', levels: 0, elsewhere: 0 }],
+            }),
+        };
+        try {
+            const runtime = await createExtensionRuntime(
+                {
+                    ...runtimeOptions(),
+                    filtersPath: checkout,
+                    artifactsDir: checkout,
+                    issueAttachmentArtifactIds: [],
+                },
+                {
+                    ...launchReadBackDependencies(),
+                    createBrowserSession: async () =>
+                        ({
+                            ...fakePreparedSession(),
+                            isClosed: false,
+                            getPage: () => page,
+                        }) as unknown as BrowserSession,
+                    createBrowserRegistry: async () => completePageRegistry('current'),
+                },
+            );
+            await fetchRuntimeIssue(runtime);
+            const searchBanner = async (): Promise<Record<string, unknown>> =>
+                await runtime.registry.dispatch('search_rules', { selector: '.banner' });
+
+            expect((await searchBanner()).pageCheck).toMatchObject({ status: 'no_open_page' });
+            await runtime.registry.dispatch('launch_browser', {
+                extension: 'prepared',
+                targetUrl: 'https://nettg.pl/',
+                profile: browserProfile,
+                settings: { kind: 'agent_selected', filterIds: [2], stealthEnabled: false },
+            });
+            // Until it navigates, the session shows a blank page, not the reported one.
+            expect((await searchBanner()).pageCheck).toMatchObject({ status: 'no_open_page' });
+            await runtime.registry.dispatch('open_page', { url: 'https://nettg.pl/' });
+
+            expect((await searchBanner()).pageCheck).toMatchObject({
+                status: 'checked',
+                matches: [{ candidateRule: 'nettg.pl##.banner' }],
             });
         } finally {
             rmSync(checkout, { recursive: true, force: true });

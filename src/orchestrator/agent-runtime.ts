@@ -26,7 +26,6 @@ import {
     baselineSymptomAbsentRefusal,
 } from './baseline-symptom-absent-answer';
 import { ToolRegistry, type ToolDefinition } from '../agent/tool-registry';
-import { createToolRegistry } from '../agent/tool-factory';
 import type { FinishFixValidationRejection } from '../types/terminal-rejection';
 import { inspectFullPageVisualCapture } from '../analyzer/full-page-capture-inspection';
 import type { AdGuardExtensionSettingsProfile } from '../browser/adguard-extension-settings';
@@ -217,7 +216,6 @@ import {
     candidateLedgerKey,
     canonicalTargetUrl,
     remainingCandidateAttempts,
-    reportedDomainFromAllowedTargets,
     targetUrlMatchKey,
     type CandidateValidationOutcome,
     type CandidateValidationReference,
@@ -248,8 +246,10 @@ import {
     type PhaseApplicationModelRunnerFactory,
 } from './phase-application-flow-host';
 import {
+    createProductionBaseRegistry,
     createProductionBrowserRegistry,
     openSessionAppliedRulesLog,
+    reportedSessionPage,
     type AgentRuntimeBrowserContext,
 } from './session-browser-registry';
 import { recordingUnfilteredHosts, type AppliedRulesLog } from '../environment/applied-rules';
@@ -1134,28 +1134,23 @@ export class AgentRuntime {
             verbose: options.verbose ?? false,
         });
         let baseRegistry: ToolRegistry;
+        // search_rules checks a selector against the page of the runtime's live session, and the
+        // runtime is built from the base registry: the page is read only when the tool runs.
+        let runtime: AgentRuntime | undefined;
         if (dependencies.createBaseRegistry) {
             baseRegistry = await dependencies.createBaseRegistry();
         } else {
-            baseRegistry = await createToolRegistry({
-                allowedIssueNumber: options.issue.number,
-                checkoutPath: options.filtersPath,
-                placementMap: listCatalog.placementMap ?? undefined,
-                visionTools: {
-                    artifactsDir: options.artifactsDir,
-                    recorder: options.recorder,
-                    vision: options.vision,
-                    reporterSymptom: () => undefined,
-                },
-                localIssueTools: {
-                    localIssue: options.issue,
-                    reportedDomain: reportedDomainFromAllowedTargets(options.allowedTargetUrls),
-                },
-                knowledgeGuidance: options.knowledgeGuidanceSource,
-                ...(options.repositoryLint === undefined
-                    ? {}
-                    : { repositoryLint: options.repositoryLint }),
-            });
+            baseRegistry = await createProductionBaseRegistry(
+                options,
+                listCatalog.placementMap ?? undefined,
+                () =>
+                    reportedSessionPage(
+                        runtime?.browserSession,
+                        runtime?.activeSessionId === undefined
+                            ? undefined
+                            : runtime.sessionStates.get(runtime.activeSessionId),
+                    ),
+            );
         }
         const registry = new ToolRegistry();
         for (const definition of baseRegistry.getDefinitions()) {
@@ -1167,7 +1162,7 @@ export class AgentRuntime {
                 handler: async (args) => await baseRegistry.dispatch(name, args),
             });
         }
-        const runtime = new AgentRuntime(
+        runtime = new AgentRuntime(
             options,
             dependencies,
             baseRegistry,

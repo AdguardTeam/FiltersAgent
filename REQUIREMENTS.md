@@ -183,7 +183,19 @@ The agent chooses the list file; the code only checks that the rule can be inser
 - The code picks the position inside the file when it builds the patch: the sorted position in a
   sorted file, otherwise the domain's block, the closing section, or the end of the file. When the
   file already holds the same rule shared by other sites, the reported domain is added to it
-  instead of a new line.
+  instead of a new line. A shared rule that excludes a site, carries a rule modifier
+  (`[$path=…]`), already covers the reported domain through a parent domain or an entity, or
+  belongs to a group the file keeps for one project (its exact domain list also scopes another rule
+  of the file) is never extended. A declared placement file always gets a new line.
+- A `search_rules` selector query made while a browser session has navigated to the page it was
+  launched on also checks that page: it lists the element-hiding rules other sites share, in every
+  list, that hide the same element, a wrapper of it or a part of it, each with the candidate that
+  adds the session's domain to the rule and the files holding the rule. The agent validates that
+  candidate and names one of those files; the code then extends the rule as above. A file that
+  keeps the rule only in a project's group is listed with the group's lines instead of a line to
+  extend: the candidate gets its own line there, and the agent names the group in its summary so
+  the maintainer adds the site to every line of it. The check has
+  its own deadline, so a page that holds its main thread costs the page check, not the run.
 
 ## 9. Policy and risk
 

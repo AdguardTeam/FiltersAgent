@@ -1,6 +1,7 @@
 import type { IBrowserSession } from './browser-interfaces';
 import { createTrustedPageEvaluator } from './trusted-page-evaluator';
 import { TargetMatchedBy } from '../environment/safe-interaction';
+import { decodeProbeInputExpression, encodeProbeInput } from './page-probe-transport';
 
 /**
  * Page stability probing and target scrolling used before evidence capture.
@@ -464,11 +465,11 @@ function buildTargetScrollProbe(
     selector: string | undefined,
     textHint: string | undefined,
 ): string {
-    const encodedInput = Buffer.from(JSON.stringify({ selector, textHint })).toString('base64');
+    const encodedInput = encodeProbeInput({ selector, textHint });
     return `
 (function () {
     var marker = '__adguard_scroll_target_probe__';
-    var input = JSON.parse(atob('${encodedInput}'));
+    var input = ${decodeProbeInputExpression(encodedInput)};
     var match = null;
     var matchedBy;
     if (input.selector) {

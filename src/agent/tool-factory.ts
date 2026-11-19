@@ -4,6 +4,7 @@ import { ToolRegistry } from './tool-registry';
 import { ToolName } from './tool-names';
 import { registeredParameters } from './registered-parameters';
 import { registerRuleSearchTool } from './rule-search-tool';
+import type { ActivePage } from './rule-search-page-check';
 import { registerAnalyzeScreenshotTool, type VisionToolOptions } from './analyze-screenshot-tool';
 import { registerBrowserTools, type BrowserToolOptions } from './browser-tool-bindings';
 import { registerGetDetailTool } from './get-detail-tool';
@@ -14,6 +15,8 @@ import { runRepositoryLint, type RepositoryLintCommand } from '../rules/reposito
 import * as v from 'valibot';
 import { TraceArtifactStore, type IArtifactStore } from '../tracer/artifact-store';
 import type { PlacementMap } from '../types/repo-context';
+import { declaredPlacementFor, type DeclaredPlacementSet } from '../types/declared-placement';
+import { PlacementRuleType } from '../types/placement-rule-type';
 import {
     KnowledgeGuidanceSession,
     RULE_GUIDANCE_TOPICS,
@@ -32,7 +35,9 @@ export interface LocalIssueToolOptions {
     localIssue: RawIssue;
 
     /**
-     * Runner-bound reported hostname used to rank repository selector inventory offline.
+     * Runner-bound reported hostname that ranks a `search_rules` selector query's text matches
+     * against the reported site when no browser origin is bound. The page check scopes its
+     * candidates to the live session's own domain instead.
      */
     reportedDomain?: string;
 }
@@ -96,6 +101,21 @@ export interface ToolRegistryOptions {
      * over a candidate. Absent, no lint tool is offered.
      */
     repositoryLint?: RepositoryLintCommand;
+
+    /**
+     * The live session's page and the domain it was launched on, read at call time, and undefined
+     * while no session has navigated to its page. Supplied, a `search_rules` selector query also
+     * checks the checkout's shared hiding rules against that page; the fix runtime binds it into
+     * the run's base registry.
+     */
+    activePage?: () => ActivePage | undefined;
+
+    /**
+     * The placements the run's instruction declares. A `search_rules` page check reads the one for
+     * hiding rules: a declared file takes every candidate as a new line, so no match names a line
+     * it would extend.
+     */
+    declaredPlacement?: DeclaredPlacementSet;
 }
 
 /**
@@ -365,6 +385,11 @@ export async function createToolRegistry(options: ToolRegistryOptions): Promise<
             map,
             trustedReportedDomain,
             artifactStore: resolvedArtifactStore,
+            activePage: options.activePage,
+            declaredHidingFile: declaredPlacementFor(
+                options.declaredPlacement,
+                PlacementRuleType.Cosmetic,
+            )?.filePath,
         });
     }
 

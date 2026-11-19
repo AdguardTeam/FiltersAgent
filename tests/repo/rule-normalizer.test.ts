@@ -32,6 +32,19 @@ describe('normalizeRule', () => {
         expect(a.canonical).toBe('||ads.com^$domain=b.com|c.com,script');
     });
 
+    it('reads a cosmetic modifier block apart from the domains it scopes', () => {
+        const rule = normalizeRule(
+            '[$path=/news,domain=three.example]two.example,one.example##.ad',
+        );
+
+        // A domain read off the block's front would be no host at all.
+        expect(rule.domains).toEqual(['one.example', 'three.example', 'two.example']);
+        expect(rule.modifiers).toEqual(['domain=three.example', 'path=/news']);
+        expect(rule.canonical).toBe(
+            '[$domain=three.example,path=/news]one.example,two.example##.ad',
+        );
+    });
+
     it('detects a cosmetic rule and sorts domains (AC2 equivalence)', () => {
         const a = normalizeRule('example.com,sub.example.com##.ad-banner');
         const b = normalizeRule('sub.example.com,example.com##.ad-banner');

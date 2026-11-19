@@ -172,6 +172,36 @@ export function domainScopeCovers(scope: string, hostname: string): boolean {
 }
 
 /**
+ * Decide whether a rule's domain list already applies the rule to a hostname, through the hostname
+ * itself, a parent domain of it or an entity.
+ *
+ * @param domains - The rule's normalized domain list; excluded (`~`) entries never cover.
+ * @param hostname - Queried hostname.
+ * @returns Whether a positive entry of the list covers the hostname.
+ */
+export function domainListCovers(domains: readonly string[], hostname: string): boolean {
+    return domains.some((domain) => !domain.startsWith('~') && domainScopeCovers(domain, hostname));
+}
+
+/**
+ * Return the final DNS label used as a bounded locale-affinity signal.
+ *
+ * This is deliberately not a public-suffix parser: the label only ranks rules already matched. An
+ * entity scope (`shellshock.*`) stands for every public suffix at once, so it has no final label to
+ * compare and contributes no locale signal either way.
+ *
+ * @param domain - Host-like rule domain scope.
+ * @returns Lowercase final DNS label, or an empty string for unsupported scopes.
+ */
+export function finalDomainLabel(domain: string): string {
+    const normalized = domain.toLowerCase().replace(/^~/u, '');
+    if (isEntityScope(normalized) || !/^[a-z0-9.-]+$/u.test(normalized)) {
+        return '';
+    }
+    return normalized.split('.').at(-1) ?? '';
+}
+
+/**
  * Return a hostname and its meaningful parent hostnames.
  *
  * The final single-label suffix is excluded because matching every rule that mentions `com` or a

@@ -14,6 +14,23 @@ export function encodeProbeInput(input: Record<string, unknown>): string {
 }
 
 /**
+ * In-page expression decoding one {@link encodeProbeInput} payload back into its value.
+ *
+ * The payload is base64 of UTF-8 JSON, and `atob` alone yields one character per byte, which
+ * garbles every non-ASCII character: a Cyrillic text hint would never match the page's text. The
+ * bytes are decoded as UTF-8 before they are parsed.
+ *
+ * @param encodedInput - Base64 payload from {@link encodeProbeInput}.
+ * @returns A self-contained expression evaluating to the decoded input.
+ */
+export function decodeProbeInputExpression(encodedInput: string): string {
+    return (
+        `JSON.parse(new TextDecoder().decode(Uint8Array.from(atob('${encodedInput}'), ` +
+        'function (character) { return character.charCodeAt(0); })))'
+    );
+}
+
+/**
  * Read one bounded string from a probe result.
  *
  * @param value - Raw probe field.

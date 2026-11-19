@@ -98,6 +98,7 @@ export function evaluatePageScript(
     return runInNewContext(expression, {
         document,
         atob: (value: string) => Buffer.from(value, 'base64').toString('binary'),
+        TextDecoder,
         getComputedStyle: () => ({ visibility: 'visible', display: 'block', opacity: '1' }),
     });
 }

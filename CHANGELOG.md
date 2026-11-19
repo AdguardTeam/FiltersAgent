@@ -10,6 +10,22 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- Added a page check to `search_rules`: a selector query made while the
+  reported page is open lists the element-hiding rules other sites share, in
+  every list, that hide the same element, a wrapper or a part of it, each with
+  the candidate that adds the reported domain to the rule, so the agent extends
+  a shared rule written with another selector instead of proposing a rule for
+  one site. A rule a list keeps in a group repeating one site list is listed
+  with the lines of that group, which the agent names in its summary.
+
+### Changed
+
+- Changed adding the reported domain to a shared rule to skip a rule the file
+  keeps for one project, whose exact domain list another rule of the file
+  repeats: the candidate gets a line of its own instead.
+
 ### Fixed
 
 - Fixed `select_environment` refusing a call that gives its rationale and
@@ -23,6 +39,14 @@ The format is based on [Keep a Changelog], and this project adheres to
 - Fixed a reporter screenshot larger than 5 MB being refused before it
   reached the vision model: it is fitted to the provider's image limits like
   any other image.
+- Fixed adding the reported domain to a shared rule that excludes a site or
+  carries a `[$…]` modifier, which broke the rule or the patch: such a rule is
+  no longer extended.
+- Fixed adding the reported domain to a shared rule that already covers the
+  site through a parent domain or an entity, which listed the site twice.
+- Fixed a target text hint in a non-Latin script never matching the page when
+  the agent scrolls to or interacts with an element: the hint is decoded as
+  UTF-8 in the page.
 
 ## [1.2.0] - 2026-10-29
 

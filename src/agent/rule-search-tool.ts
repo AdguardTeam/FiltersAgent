@@ -1,13 +1,16 @@
 /**
  * The `search_rules` tool: the model's only view of the AdguardFilters checkout, together with the
  * rule-inventory compaction and byte caps that keep a domain-only query from spending the whole
- * model-facing response budget on one repository.
+ * model-facing response budget on one repository, and the page check a selector query runs against
+ * the agent's open page.
  */
 import { searchRules } from '../repo/search';
 import { RuleKind, normalizeRule } from '../repo/rule-normalizer';
+import { collectSharedHidingRules, type SharedHidingRule } from '../repo/shared-hiding-rules';
 import type { IArtifactStore } from '../tracer/artifact-store';
 import type { PlacementMap } from '../types/repo-context';
 import { registeredParameters } from './registered-parameters';
+import { checkSelectorOnPage, type ActivePage } from './rule-search-page-check';
 import { ToolName } from './tool-names';
 import type { ToolRegistry } from './tool-registry';
 import { truncateUtf8 } from './truncate-utf8';
@@ -175,15 +178,30 @@ export interface RuleSearchToolOptions {
     map: PlacementMap;
 
     /**
-     * Runner-bound reported hostname, used to rank a selector query against the reported site.
-     * Undefined when no trusted hostname is bound to the run.
+     * Runner-bound reported hostname, used to rank a selector query's text matches against the
+     * reported site. Undefined when no trusted hostname is bound to the run. The page check scopes
+     * its candidates to the live session's own domain instead.
      */
     trustedReportedDomain: string | undefined;
 
     /**
-     * Store the complete domain inventory is persisted to; undefined when the run has none.
+     * Store a truncated answer is persisted to in full — a domain inventory or a page check's match
+     * list; undefined when the run has none.
      */
     artifactStore: IArtifactStore | undefined;
+
+    /**
+     * The live session's page and the domain it was launched on, read at call time, and undefined
+     * while no session has navigated to its page. Supplied, a selector query also checks the
+     * checkout's shared hiding rules against that page.
+     */
+    activePage?: () => ActivePage | undefined;
+
+    /**
+     * File the run's instruction declares for hiding rules, where every hiding candidate goes as a
+     * new line; undefined when it declares none.
+     */
+    declaredHidingFile?: string;
 }
 
 /**
@@ -196,7 +214,14 @@ export function registerRuleSearchTool(
     registry: ToolRegistry,
     options: RuleSearchToolOptions,
 ): void {
-    const { checkoutPath, map, trustedReportedDomain, artifactStore } = options;
+    const { checkoutPath, map, trustedReportedDomain, artifactStore, activePage } = options;
+    // The checkout stays pinned for the whole run, so its shared rules are collected once, at the
+    // first page check.
+    let sharedRules: SharedHidingRule[] | undefined;
+    const sharedRulesOnce = (): SharedHidingRule[] => {
+        sharedRules ??= collectSharedHidingRules(map, checkoutPath);
+        return sharedRules;
+    };
     registry.register({
         definition: {
             type: 'function',
@@ -238,11 +263,21 @@ export function registerRuleSearchTool(
                 return compactDomainRuleInventory(allMatches, effectiveDomain, artifactStore);
             }
             const matches = allMatches.slice(0, MAX_AGENT_RULE_SEARCH_MATCHES);
+            const pageCheck =
+                query.selector !== undefined && activePage !== undefined
+                    ? await checkSelectorOnPage(query.selector, {
+                          activePage,
+                          sharedRules: sharedRulesOnce,
+                          declaredFile: options.declaredHidingFile,
+                          artifactStore,
+                      })
+                    : undefined;
             return {
                 effectiveDomain,
                 totalMatches: allMatches.length,
                 truncated: allMatches.length > matches.length,
                 matches,
+                ...(pageCheck === undefined ? {} : { pageCheck }),
             };
         },
     });

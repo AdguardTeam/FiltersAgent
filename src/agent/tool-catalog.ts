@@ -99,7 +99,27 @@ export const TOOL_GUIDANCE: Readonly<Record<string, string>> = {
         'reaches the run result and the log; it changes nothing about the current turn, so continue ' +
         'the investigation afterwards. Do not use it to report ads, evidence, or terminal decisions.',
     [ToolName.SearchRules]:
-        "Searches this repository's filter lists by domain, selector, URL pattern, or scriptlet. A domain-only query is a compact grouped inventory: follow it with a focused selector, URL pattern, or scriptlet query for exact matches. Search the stable base of a compound modifier selector and validate an exact existing base element-hiding rule as a domain-scoped ## candidate before the modifier. A reported domain absent from a matching shared rule is an expected extend_domains candidate, not a reason to ignore it. Every match carries the repository path of its list file: a draft names one of those paths as the file its rule goes into.",
+        "Searches this repository's filter lists by domain, selector, URL pattern, or scriptlet. A domain-only query is a compact grouped inventory: follow it with a focused selector, URL pattern, or scriptlet query for exact matches. Search the stable base of a compound modifier selector and validate an exact existing base element-hiding rule as a domain-scoped ## candidate before the modifier. A reported domain absent from a matching shared rule is an expected extend_domains candidate, not a reason to ignore it. Every match carries the repository path of its list file: a draft names one of those paths as the file its rule goes into. " +
+        'A selector query made while a browser session has the reported page open also checks ' +
+        'that page: `pageCheck` lists the element-hiding rules other sites share, in every list, ' +
+        'that hide the element the selector matches (`same`), a wrapper of it (`ancestor`, ' +
+        '`levels` up) or a part of it (`descendant`), the same element first. Each match gives ' +
+        "`candidateRule`, that rule scoped to the session's domain, and the `lists` holding the " +
+        'rule, each with the `line` the domain would join. Validate `candidateRule` with ' +
+        'apply_rule; the host adds the domain to that shared rule only when your draft names one ' +
+        "of that match's `lists` that gives a `line`; any other file gets the candidate as a new " +
+        'line. A list giving `groupLines` instead keeps the rule in a group: the rules on those ' +
+        'lines repeat one site list, and a maintainer adds a new site to every one of them. The ' +
+        'host still writes your candidate as a line of its own there, so name the file and those ' +
+        "lines in your final answer's `summary` for the maintainer. With " +
+        '`declaredFile` the instruction fixes the file, and every candidate goes there as a new ' +
+        'line. `elsewhereOnPage` counts the other elements on the page the rule would also hide. ' +
+        'The comparison is partial when `comparedElementCount` is below `elementCount` (only the ' +
+        'first elements were compared), when `uncheckedSelectors` is above 0 (rules the browser ' +
+        'cannot evaluate, such as extended syntax, were skipped) or when `descendantsChecked` is ' +
+        'false (rules hiding a part of the element were not compared): an empty `matches` then ' +
+        'does not mean that no shared rule hides the element. A `pageCheck.status` other than ' +
+        '`checked` says why no rule was compared.',
     [ToolName.LintRule]:
         "Runs the repository's own lint command over one candidate rule, which checks it against " +
         "the repository's own policy (excluded rules, platforms, modifiers). Pass the rule and " +

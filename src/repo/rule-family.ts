@@ -1,4 +1,9 @@
-import { RuleKind, findCosmeticSeparator, normalizeRule } from './rule-normalizer';
+import {
+    RuleKind,
+    findCosmeticSeparator,
+    normalizeRule,
+    type NormalizedRule,
+} from './rule-normalizer';
 
 /**
  * Rule kinds whose shared multi-domain lines can be extended by one more reported scope.
@@ -9,7 +14,7 @@ import { RuleKind, findCosmeticSeparator, normalizeRule } from './rule-normalize
  * only cosmetic lines leaves the agent hiding CMP banners per site exactly where maintainers extend
  * such lines, so every one of these kinds is extensible.
  */
-const EXTENSIBLE_FAMILY_KINDS: ReadonlySet<RuleKind> = new Set<RuleKind>([
+const EXTENSIBLE_FAMILY_KINDS: ReadonlySet<RuleKind> = new Set([
     RuleKind.Cosmetic,
     RuleKind.Scriptlet,
     RuleKind.Network,
@@ -23,6 +28,33 @@ const EXTENSIBLE_FAMILY_KINDS: ReadonlySet<RuleKind> = new Set<RuleKind>([
  */
 export function isExtensibleFamilyKind(kind: RuleKind): boolean {
     return EXTENSIBLE_FAMILY_KINDS.has(kind);
+}
+
+/**
+ * Fewest sites an existing rule must list to count as shared by several of them.
+ */
+export const MIN_SHARED_RULE_DOMAINS = 2;
+
+/**
+ * Whether an existing rule is a shared rule the reported domain may be added to.
+ *
+ * It blocks rather than allows, lists at least two sites and excludes none: the constrained-edit
+ * invariant (`describeSharedRuleExtension`) refuses an exception and an excluded domain on the line
+ * it extends. A cosmetic or scriptlet rule with a `[$…]` modifier block is refused as well: the
+ * block has to stay at the front of the line, where an extension puts the added domain. Whether the
+ * rule already covers the reported domain, and whether its file keeps it for one project, are the
+ * caller's checks.
+ *
+ * @param existing - Normalized existing rule.
+ * @returns Whether one more domain may be added to the rule.
+ */
+export function isExtensibleSharedRule(existing: NormalizedRule): boolean {
+    return (
+        !existing.isException &&
+        existing.domains.length >= MIN_SHARED_RULE_DOMAINS &&
+        !existing.domains.some((domain) => domain.startsWith('~')) &&
+        (existing.kind === RuleKind.Network || existing.modifiers.length === 0)
+    );
 }
 
 /**
@@ -56,7 +88,17 @@ export function samePlacementFamily(candidateKind: RuleKind, existingKind: RuleK
  * @returns Scope-free signature, or undefined when the rule cannot form a family.
  */
 export function ruleFamilySignature(rule: string): string | undefined {
-    const normalized = normalizeRule(rule);
+    return normalizedFamilySignature(normalizeRule(rule));
+}
+
+/**
+ * Identity of a rule family for a rule already normalized, so a caller that holds the normalized
+ * rule does not parse the line again.
+ *
+ * @param normalized - Normalized filter rule.
+ * @returns Scope-free signature, or undefined when the rule cannot form a family.
+ */
+export function normalizedFamilySignature(normalized: NormalizedRule): string | undefined {
     if (normalized.kind === RuleKind.Cosmetic || normalized.kind === RuleKind.Scriptlet) {
         if (!normalized.syntaxKind || !normalized.selector) {
             return undefined;

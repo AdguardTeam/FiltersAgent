@@ -412,7 +412,10 @@ least 98% of adjacent lines in ascending order, in a run of at least 20 rules �
 sorted place, by the whole rule text or, for hiding rules, by the rule with its leading site list
 removed, the way EasyList's `FOP.py` sorts them. Otherwise the rule joins the site's existing rules
 when it has any, and goes at the end when it does not. When the chosen list already holds the same
-rule for other sites, the site is added to that rule instead of a new line.
+rule for other sites, the site is added to that rule instead of a new line. A shared rule is never
+extended when it excludes a site (`~site`), carries a `[$…]` modifier, already covers the site
+through a parent domain or an entity, or belongs to a group the list keeps for one project — its
+exact site list also scopes another rule of the same list. The rule then gets a line of its own.
 
 A repository that wants to say where its rules go declares it in its instruction, and may use one
 line per rule kind:
@@ -435,7 +438,8 @@ written and the position is read from the file exactly as above, so a sorted lis
 insert.
 
 A declaration settles the file for the kind it governs: a rule of that kind placed anywhere else is
-returned to the agent. Keep the file in your repository — no edit can be proposed for a declared file
+returned to the agent, and the declared file always gets a new line, never a site added to a shared
+rule. Keep the file in your repository — no edit can be proposed for a declared file
 that is not in the checkout. Each kind is declared once: a kind repeated, a second line
 naming no kind, an unknown kind, an absolute path, or a placeholder other than those two fails the
 run at start, naming the instruction.

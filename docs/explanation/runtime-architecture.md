@@ -490,6 +490,21 @@ mismatched ownership, manifest, or visibility state. There is no cleanup CLI.
 - `src/browser/page-state-probe.ts`, `src/browser/page-state-budget.ts` — the bounded
   `inspect_page_state` probe: sections are admitted round-robin against a byte ceiling so no
   section starves another. What it replaced is recorded in `REQUIREMENTS.md` §6.2.
+- `src/agent/rule-search-page-check.ts`, `src/browser/shared-rule-page-probe.ts`,
+  `src/repo/shared-hiding-rules.ts` — the page check of a `search_rules` selector query. The
+  element-hiding rules every list shares with two or more sites, none excluded and no rule
+  modifier, are collected once per run, each rule a file keeps for one project with the lines of
+  its group. A fixed probe compares their selectors
+  natively with the elements the searched selector matches in the top document of the active
+  session's page — the element itself, its wrappers up to three levels, its contents — in the
+  isolated world where the browser offers one. Only a session that navigated to the page it was
+  launched on is read, and its domain scopes the candidates. The probe applies no rule, so a match
+  is a lead the agent validates with `apply_rule`; a selector the browser cannot parse (extended
+  syntax) is counted, not matched. `search_rules` is a base tool that no tool deadline covers, so
+  the check runs the probe under its own and answers `probe_failed` past it. The planner's choice
+  of a line (`src/repo/extension-target.ts`) names the line each match extends, so the answer and
+  the patch agree; a declared placement file names none, and a file holding the rule only in a
+  project's group names the group's lines instead, since the planner extends no grouped rule.
 - `src/pi/` — `runtime.ts` (registers both model roles on the configured API and supplies their
   handles), `session-runner.ts` (`runAgentSession`, the agent loop), `session-tools.ts` (tool
   adaptation, gate refusals, result truncation), `terminal-tool.ts` (the schema-validated tool a

@@ -27,7 +27,12 @@ import type { IBrowserSession } from './browser-interfaces';
 import { attachInteractionPageEventRecorders } from './interaction-page-events';
 import { stabilizePageForCapture } from './page-stability';
 import { isSameSiteUrl } from './site-identity';
-import { encodeProbeInput, factNumber, factString } from './page-probe-transport';
+import {
+    decodeProbeInputExpression,
+    encodeProbeInput,
+    factNumber,
+    factString,
+} from './page-probe-transport';
 import { createTrustedPageEvaluator } from './trusted-page-evaluator';
 
 /**
@@ -60,7 +65,7 @@ function buildResolveProbe(
     return `
 (function () {
     var marker = '__adguard_interaction_resolve_probe__';
-    var input = JSON.parse(atob('${encodedInput}'));
+    var input = ${decodeProbeInputExpression(encodedInput)};
     var bounded = function (value, max) {
         return String(value === null || value === undefined ? '' : value).slice(0, max);
     };
@@ -180,7 +185,7 @@ function buildStateProbe(nonce: string): string {
     return `
 (function () {
     var marker = '__adguard_interaction_state_probe__';
-    var input = JSON.parse(atob('${encodedInput}'));
+    var input = ${decodeProbeInputExpression(encodedInput)};
     var target = input.nonce
         ? document.querySelector('[${INTERACTION_TARGET_ATTRIBUTE}="' + input.nonce + '"]')
         : null;
@@ -225,7 +230,7 @@ function buildReleaseProbe(nonce: string): string {
     return `
 (function () {
     var marker = '__adguard_interaction_release_probe__';
-    var input = JSON.parse(atob('${encodedInput}'));
+    var input = ${decodeProbeInputExpression(encodedInput)};
     var marked = document.querySelectorAll('[${INTERACTION_TARGET_ATTRIBUTE}="' + input.nonce + '"]');
     for (var index = 0; index < marked.length; index++) {
         marked[index].removeAttribute('${INTERACTION_TARGET_ATTRIBUTE}');
