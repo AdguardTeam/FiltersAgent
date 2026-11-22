@@ -137,10 +137,12 @@ const PRODUCTION_SINGLE_ISSUE_DEPENDENCIES: DefaultSingleIssueDependencies = {
  * Attach the explicitly resolved GitHub token to every preparation command, without mutating the
  * process environment.
  *
- * The container action holds the run's token only as an action input (`INPUT_GITHUBTOKEN`), never
- * as a `GITHUB_TOKEN` environment variable, so the preparer's subprocesses would run git
- * anonymously inside the container. The wrapper carries the token on the command itself; the
- * subprocess builder derives the host-scoped credential from it for git alone.
+ * The container action takes the run's token as an action input (`INPUT_GITHUBTOKEN` or
+ * `INPUT_GITHUBUSERTOKEN`), and an input never lands in a token variable of its process
+ * environment: only a workflow that exports `GITHUB_TOKEN` in `env:` sets one. Without it the
+ * preparer's subprocesses would run git anonymously inside the container. The wrapper carries the
+ * token on the command itself; the subprocess builder derives the host-scoped credential from it
+ * for git alone.
  *
  * @param token - The request's resolved GitHub token, or `undefined` when the run holds none.
  * @param dependencies - The caller-supplied preparation seams, or `undefined` for the defaults.

@@ -4,6 +4,10 @@ import {
     isLikelyHumanSolutionComment,
     selectPromptSafeReporterComments,
 } from '../../src/github/prompt-safety';
+import {
+    renderReportRevisionMarker,
+    RevisionCommentKind,
+} from '../../src/publisher/report-publisher';
 
 describe('isLikelyHumanSolutionComment', () => {
     it.each([
@@ -48,6 +52,36 @@ describe('selectPromptSafeReporterComments', () => {
 
         expect(selectPromptSafeReporterComments(comments, 'reporter')).toEqual([comments[0]]);
         expect(comments).toHaveLength(4);
+    });
+
+    it("drops the run's own report and notice, whatever account posted them", () => {
+        const marker = { schemaVersion: 1 as const, revisionDigest: 'a'.repeat(64) };
+        const comments = [
+            {
+                author: 'agent-account',
+                body: `${renderReportRevisionMarker(marker)}\nThe problem was not reproduced.`,
+                createdAt: 'one',
+                authorAssociation: 'COLLABORATOR',
+            },
+            {
+                author: 'agent-account',
+                body: `${renderReportRevisionMarker(marker, RevisionCommentKind.Notice)}\nThe run could not investigate the issue.`,
+                createdAt: 'two',
+                authorAssociation: 'COLLABORATOR',
+            },
+            {
+                author: 'maintainer',
+                body: 'Please test another browser.',
+                createdAt: 'three',
+                authorAssociation: 'MEMBER',
+            },
+        ];
+
+        expect(
+            selectPromptSafeReporterComments(comments, 'reporter', {
+                trustedRoles: ['COLLABORATOR', 'MEMBER'],
+            }),
+        ).toEqual([comments[2]]);
     });
 
     it('fails closed when the immutable reporter identity is unavailable', () => {

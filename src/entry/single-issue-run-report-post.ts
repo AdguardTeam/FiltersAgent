@@ -22,7 +22,10 @@ import {
     publishedRuleScreenshots,
     renderHostedReportScreenshots,
 } from '../publisher/report-screenshots';
-import type { ReportTemplateValues } from '../publisher/report-template';
+import {
+    reportTemplateShowsScreenshots,
+    type ReportTemplateValues,
+} from '../publisher/report-template';
 import type { FixRunResult } from '../types/fix-run-result';
 import type { RepositorySlug } from '../types/repository-slug';
 import { publishGuardedReport } from './single-issue-publication-gate';
@@ -191,7 +194,8 @@ export async function postSealedRunReport(
             revisionDigest: report.revisionDigest,
             reportAuthorLogin: await resolveReportAuthorLogin(client, logger),
             body: renderFullReport(template, values, filtersCommit),
-            ...(screenshots === undefined
+            // A template without the screenshots placeholder shows no pair, so none is hosted.
+            ...(screenshots === undefined || !reportTemplateShowsScreenshots(template)
                 ? {}
                 : {
                       finalizeBody: async () =>
@@ -205,7 +209,7 @@ export async function postSealedRunReport(
                                           owner: slug.owner,
                                           repo: slug.repo,
                                           issueNumber: request.issueNumber,
-                                          branch: request.screenshotsBranch,
+                                          target: request.screenshots,
                                           before: readFileSync(screenshots.before),
                                           after: readFileSync(screenshots.after),
                                       },

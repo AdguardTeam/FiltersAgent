@@ -12,7 +12,6 @@
  */
 
 import {
-    GITHUB_TOKEN_VAR,
     LLM_API_KEY_VAR,
     LLM_BASE_URL_VAR,
     LLM_CONTEXT_WINDOW_TOKENS_VAR,
@@ -35,6 +34,7 @@ import {
     optionalEnvValue,
     REPOSITORY_PATH_VAR,
 } from '../config/repository-identity';
+import { GITHUB_TOKEN_VAR, GITHUB_USER_TOKEN_VAR } from '../config/run-token';
 import type { AgentRunInputSources } from '../entry/entry-inputs';
 import { BrowserExtensionExecutorName } from '../environment/executor-name';
 import { AgentActionInputName } from './action-input-names';
@@ -44,11 +44,13 @@ import { GITHUB_WORKSPACE_VAR, workspaceArtifactsDefault } from './container-con
  * Which entry environment variable each environment-channel input feeds, keyed by the input-name
  * vocabulary above. The sources-channel inputs are absent on purpose: they travel in
  * `AgentRunInputSources`, not in the environment, and only `checkoutPath` carries a runner fallback
- * here. The variable names themselves come from `config/config.ts`, the one place each is spelled.
+ * here. The variable names themselves come from `config/config.ts` and `config/run-token.ts`, the
+ * one place each is spelled.
  */
 const AGENT_ACTION_INPUT_ENV_VAR: Partial<Record<AgentActionInputName, string>> = {
     [AgentActionInputName.checkoutPath]: REPOSITORY_PATH_VAR,
     [AgentActionInputName.githubToken]: GITHUB_TOKEN_VAR,
+    [AgentActionInputName.githubUserToken]: GITHUB_USER_TOKEN_VAR,
     [AgentActionInputName.llmBaseUrl]: LLM_BASE_URL_VAR,
     [AgentActionInputName.llmApi]: LLM_API_VAR,
     [AgentActionInputName.llmApiKey]: LLM_API_KEY_VAR,

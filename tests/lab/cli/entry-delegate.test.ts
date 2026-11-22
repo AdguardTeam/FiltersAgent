@@ -33,6 +33,7 @@ import type { FixRunResult } from '../../../src/types/fix-run-result';
 import { RuleType } from '../../../src/types/rule-proposal';
 import { TEST_PROVIDER_ENV } from '../../config/test-core-config';
 import { ConfigError } from '../../../src/config/config-error';
+import { ScreenshotsStorage } from '../../../src/publisher/report-screenshots';
 import { DefaultSingleIssueFailure } from '../../../src/entry/single-issue-run-types';
 import { ENTRY_RESULT_FILE_NAME } from '../../../src/entry/entry-run';
 
@@ -262,7 +263,10 @@ describe('createLabFixEntryDelegate', () => {
         expect(delegate.inputs.slug).toBeNull();
         expect(delegate.inputs.comments).toEqual({
             enabled: false,
-            screenshotsBranch: 'filters-agent-screenshots',
+            screenshots: {
+                storage: ScreenshotsStorage.Branch,
+                branch: 'filters-agent-screenshots',
+            },
         });
         expect(delegate.inputs.config.llm).toMatchObject({
             baseUrl: TEST_PROVIDER_ENV.LLM_BASE_URL,
@@ -316,7 +320,10 @@ describe('createLabFixEntryDelegate', () => {
         expect(delegate.inputs.comments).toEqual({
             enabled: true,
             token: 'read-token',
-            screenshotsBranch: 'filters-agent-screenshots',
+            screenshots: {
+                storage: ScreenshotsStorage.Branch,
+                branch: 'filters-agent-screenshots',
+            },
         });
         expect(delegate.inputs.model).toBe('deepseek-v4-flash');
         expect(delegate.inputs.artifactsDir).toBe(paths.cycleDir);
@@ -375,7 +382,10 @@ describe('createLabFixEntryDelegate', () => {
             issueSnapshotPath: paths.issueFile,
             token: undefined,
             commentsEnabled: false,
-            screenshotsBranch: 'filters-agent-screenshots',
+            screenshots: {
+                storage: ScreenshotsStorage.Branch,
+                branch: 'filters-agent-screenshots',
+            },
             artifactsDir: paths.cycleDir,
         });
 
@@ -411,7 +421,10 @@ describe('createLabFixEntryDelegate', () => {
             issueSnapshotPath: paths.issueFile,
             token: undefined,
             commentsEnabled: false,
-            screenshotsBranch: 'filters-agent-screenshots',
+            screenshots: {
+                storage: ScreenshotsStorage.Branch,
+                branch: 'filters-agent-screenshots',
+            },
             artifactsDir: paths.cycleDir,
         });
 
@@ -444,7 +457,10 @@ describe('createLabFixEntryDelegate', () => {
             issueSnapshotPath: paths.issueFile,
             token: undefined,
             commentsEnabled: false,
-            screenshotsBranch: 'filters-agent-screenshots',
+            screenshots: {
+                storage: ScreenshotsStorage.Branch,
+                branch: 'filters-agent-screenshots',
+            },
             artifactsDir: paths.cycleDir,
         });
 
@@ -492,7 +508,10 @@ describe('createLabFixEntryDelegate', () => {
                 issueSnapshotPath: paths.issueFile,
                 token: undefined,
                 commentsEnabled: false,
-                screenshotsBranch: 'filters-agent-screenshots',
+                screenshots: {
+                    storage: ScreenshotsStorage.Branch,
+                    branch: 'filters-agent-screenshots',
+                },
                 artifactsDir: paths.cycleDir,
             });
 
@@ -532,7 +551,10 @@ describe('createLabFixEntryDelegate', () => {
             issueSnapshotPath: paths.issueFile,
             token: undefined,
             commentsEnabled: false,
-            screenshotsBranch: 'filters-agent-screenshots',
+            screenshots: {
+                storage: ScreenshotsStorage.Branch,
+                branch: 'filters-agent-screenshots',
+            },
             artifactsDir: paths.cycleDir,
         });
 
@@ -575,7 +597,10 @@ describe('createLabFixEntryDelegate', () => {
             issueNumber: 4,
             token: 'read-token',
             commentsEnabled: false,
-            screenshotsBranch: 'filters-agent-screenshots',
+            screenshots: {
+                storage: ScreenshotsStorage.Branch,
+                branch: 'filters-agent-screenshots',
+            },
             artifactsDir: paths.cycleDir,
         });
 
@@ -624,7 +649,10 @@ describe('createLabBacklogEntryInputs', () => {
         expect(inputs.comments).toEqual({
             enabled: true,
             token: 'read-token',
-            screenshotsBranch: 'filters-agent-screenshots',
+            screenshots: {
+                storage: ScreenshotsStorage.Branch,
+                branch: 'filters-agent-screenshots',
+            },
         });
         expect(inputs.artifactsDir).toBe(paths.cycleDir);
         expect(inputs.model).toBe('deepseek-v4-flash');
@@ -659,7 +687,10 @@ describe('createLabBacklogEntryInputs', () => {
         expect(inputs.comments).toEqual({
             enabled: false,
             token: 'read-token',
-            screenshotsBranch: 'filters-agent-screenshots',
+            screenshots: {
+                storage: ScreenshotsStorage.Branch,
+                branch: 'filters-agent-screenshots',
+            },
         });
     });
 

@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { ConfigError } from '../../src/config/config-error';
+import { resolveRunToken } from '../../src/config/run-token';
 import { resolveAgentRunInputs } from '../../src/entry/entry-inputs-resolution';
+import { ScreenshotsStorage } from '../../src/publisher/report-screenshots';
+import { captureFailure } from '../capture-failure';
 
 /**
  * The four mandatory LLM environment variables a real load carries, spelled once so every scenario
@@ -28,21 +31,6 @@ function rawEnv(
     return { ...LLM_ENV, ...overrides };
 }
 
-/**
- * Run one resolver call and return the thrown error.
- *
- * @param run - The resolver call expected to fail.
- * @returns The single thrown error.
- */
-function captureFailure(run: () => unknown): Error {
-    try {
-        run();
-    } catch (error) {
-        return error as Error;
-    }
-    throw new Error('Expected the resolver call to fail.');
-}
-
 describe('resolveAgentRunInputs', () => {
     it('resolves a single-issue run from a repository flag, an issue number, and a token', () => {
         const inputs = resolveAgentRunInputs(rawEnv({ GITHUB_TOKEN: 'test-token' }), {
@@ -56,7 +44,10 @@ describe('resolveAgentRunInputs', () => {
         expect(inputs.comments).toEqual({
             enabled: true,
             token: 'test-token',
-            screenshotsBranch: 'filters-agent-screenshots',
+            screenshots: {
+                storage: ScreenshotsStorage.Branch,
+                branch: 'filters-agent-screenshots',
+            },
         });
         expect(inputs.artifactsDir).toBe('/tmp/runs/issue-12');
         expect(inputs.config.llm.model).toBe('deepseek-v4-flash');
@@ -134,8 +125,32 @@ describe('resolveAgentRunInputs', () => {
         expect(inputs.comments).toEqual({
             enabled: false,
             token: 'test-token',
-            screenshotsBranch: 'filters-agent-screenshots',
+            screenshots: {
+                storage: ScreenshotsStorage.Branch,
+                branch: 'filters-agent-screenshots',
+            },
         });
+    });
+
+    it('resolves the user token and the attachments storage from GITHUB_USER_TOKEN alone', () => {
+        const inputs = resolveAgentRunInputs(rawEnv({ GITHUB_USER_TOKEN: 'user-token' }), {
+            repository: 'example/list',
+            issueNumber: 12,
+        });
+
+        expect(inputs.comments.token).toBe('user-token');
+        expect(inputs.comments.enabled).toBe(true);
+        expect(inputs.comments.screenshots).toEqual({ storage: ScreenshotsStorage.Attachments });
+    });
+
+    it('keeps the attachments storage when the screenshots branch is blank', () => {
+        const inputs = resolveAgentRunInputs(rawEnv({ GITHUB_USER_TOKEN: 'user-token' }), {
+            repository: 'example/list',
+            issueNumber: 12,
+            screenshotsBranch: '  ',
+        });
+
+        expect(inputs.comments.screenshots).toEqual({ storage: ScreenshotsStorage.Attachments });
     });
 
     it('lifts the repository identity and the read token for a snapshot-sourced issue', () => {
@@ -147,7 +162,10 @@ describe('resolveAgentRunInputs', () => {
         expect(inputs.slug).toBeNull();
         expect(inputs.comments).toEqual({
             enabled: false,
-            screenshotsBranch: 'filters-agent-screenshots',
+            screenshots: {
+                storage: ScreenshotsStorage.Branch,
+                branch: 'filters-agent-screenshots',
+            },
         });
         expect(inputs.issueSnapshotPath).toBe('fixtures/issue.json');
     });
@@ -248,6 +266,40 @@ describe('resolveAgentRunInputs', () => {
         expect(failure.message).toContain('llm.baseUrl');
         expect(failure.message).toContain('Repository identity');
         expect(failure.message).toContain('GITHUB_TOKEN');
+        expect(failure.message).toContain('GITHUB_USER_TOKEN');
+    });
+
+    it.each([
+        {
+            name: 'a live issue',
+            sources: { repository: 'example/list', issueNumber: 4 },
+        },
+        {
+            name: 'a snapshot-sourced issue',
+            sources: { issueNumber: 4, issueSnapshotPath: 'fixtures/issue.json' },
+        },
+    ])('fails naming both token variables when both are set: $name', ({ sources }) => {
+        const env = rawEnv({ GITHUB_TOKEN: 'actions-token', GITHUB_USER_TOKEN: 'user-token' });
+        const failure = captureFailure(() => resolveAgentRunInputs(env, sources));
+
+        expect(failure).toBeInstanceOf(ConfigError);
+        expect(failure.message).toBe(resolveRunToken(env).problem);
+    });
+
+    it('fails naming the inputs when a screenshots branch is named with GITHUB_USER_TOKEN', () => {
+        const failure = captureFailure(() =>
+            resolveAgentRunInputs(rawEnv({ GITHUB_USER_TOKEN: 'user-token' }), {
+                repository: 'example/list',
+                issueNumber: 4,
+                screenshotsBranch: 'agent-screenshots',
+            }),
+        );
+
+        expect(failure).toBeInstanceOf(ConfigError);
+        expect(failure.message).toContain('screenshotsBranch');
+        expect(failure.message).toContain('githubUserToken');
+        expect(failure.message).toContain('githubToken');
+        expect(failure.message).toContain('agent-screenshots');
     });
 
     it('lifts a malformed repository slug into the combined failure with its neighbors', () => {

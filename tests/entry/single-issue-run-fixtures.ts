@@ -2,6 +2,7 @@
  * The faked workspace, issue, intake and GitHub seams the single-issue run suites share.
  */
 
+import { ScreenshotsStorage } from '../../src/publisher/report-screenshots';
 import { vi } from 'vitest';
 import type { Octokit } from '@octokit/rest';
 import * as v from 'valibot';
@@ -195,6 +196,13 @@ export interface PreparedWorkspaceOptions {
      */
     lsRemoteFailure?: ScriptedCommandFailure;
 }
+
+/**
+ * Request fields the tests pass unchanged; a new field every request needs is added here once.
+ */
+export const REQUEST_DEFAULTS = {
+    screenshots: { storage: ScreenshotsStorage.Branch, branch: 'filters-agent-screenshots' },
+} as const;
 
 /**
  * Prepare one faked filters workspace.

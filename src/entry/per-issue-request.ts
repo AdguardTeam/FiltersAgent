@@ -31,7 +31,7 @@ export function perIssueRequest(
             : {}),
         token: inputs.comments.token,
         commentsEnabled: inputs.comments.enabled,
-        screenshotsBranch: inputs.comments.screenshotsBranch,
+        screenshots: inputs.comments.screenshots,
         ...(inputs.model !== undefined ? { model: inputs.model } : {}),
         ...(inputs.executors !== undefined ? { executors: inputs.executors } : {}),
         ...(inputs.instructionPath !== undefined

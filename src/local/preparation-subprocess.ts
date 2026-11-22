@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { resolveRunToken } from '../config/run-token';
 import { gitHttpAuthEnvironment } from './git-http-auth';
 
 /**
@@ -79,8 +80,8 @@ export interface PreparationSubprocessCommand {
     timeoutMs?: number;
 
     /**
-     * Whether the executable that is git alone may receive the GitHub credential derived from
-     * GITHUB_TOKEN; defaults to true so host calls keep today's behavior.
+     * Whether the executable that is git alone may receive the GitHub credential derived from the
+     * run's token variable; defaults to true so host calls keep today's behavior.
      *
      * Model-driven preparation passes false to keep the derived credential out of every
      * model-invoked command: the preparation environment must hold neither the LLM key nor any
@@ -90,7 +91,7 @@ export interface PreparationSubprocessCommand {
 
     /**
      * The caller-supplied host-scoped token, used only for git when `allowGitCredential` is not
-     * false; absent falls back to a `GITHUB_TOKEN` present in the source environment.
+     * false; absent falls back to the run's token variable present in the source environment.
      *
      * The container action keeps the resolved token in an action input, not in its environment;
      * attaching it here lets `ls-remote`/`fetch` authenticate without mutating `process.env`.
@@ -155,19 +156,22 @@ export interface PreparationSubprocessResult {
  *
  * API keys, GitHub credentials, provider secrets, proxy credentials, and arbitrary caller variables
  * are deliberately omitted as variables. Git commands are the one exception, and only in derived
- * form and only when {@link allowGitCredential} is on: when the parent holds `GITHUB_TOKEN` — or
- * the caller supplies an explicit token — git receives a credential scoped to github.com through
- * `GIT_CONFIG_*` — anonymous clones from a shared runner IP trip GitHub's secondary rate limit and
- * fail with "could not read Username", while the raw token still never reaches any child. Git also
- * receives a non-interactive prompt policy.
+ * form and only when {@link allowGitCredential} is on: when the parent holds the run's token
+ * variable — or the caller supplies an explicit token — git receives a credential scoped to
+ * github.com through `GIT_CONFIG_*` — anonymous clones from a shared runner IP trip GitHub's
+ * secondary rate limit and fail with "could not read Username", while the raw token still never
+ * reaches any child. Git also receives a non-interactive prompt policy. With both token variables
+ * set the resolver answers with no token, so the fallback yields no credential and git runs
+ * anonymously; a run that goes through input resolution has already failed by then, while a lab git
+ * path that never resolves a token simply runs without one.
  *
  * @param source - Parent environment from which safe execution paths may be copied.
  * @param overrides - Optional command-specific values subject to the same allowlist.
  * @param executable - Executable about to be spawned; only git earns the GitHub credential.
  * @param allowGitCredential - Whether the derived git credential is allowed at all; defaults to
  *   true (host behavior), and model-driven preparation passes false.
- * @param gitCredentialToken - Explicit host-scoped token used in place of a `GITHUB_TOKEN` from the
- *   combined environment; absent keeps the environment-derived behavior.
+ * @param gitCredentialToken - Explicit host-scoped token used in place of the run's token variable
+ *   from the combined environment; absent keeps the environment-derived behavior.
  * @returns A fresh allowlisted subprocess environment without API credentials.
  */
 export function buildPreparationSubprocessEnvironment(
@@ -187,7 +191,7 @@ export function buildPreparationSubprocessEnvironment(
             environment[key] = value;
         }
     }
-    const githubToken = (gitCredentialToken ?? combined.GITHUB_TOKEN)?.trim();
+    const githubToken = (gitCredentialToken ?? resolveRunToken(combined).token)?.trim();
     if (allowGitCredential && executable === GIT_EXECUTABLE && githubToken) {
         Object.assign(environment, gitHttpAuthEnvironment(githubToken));
     }

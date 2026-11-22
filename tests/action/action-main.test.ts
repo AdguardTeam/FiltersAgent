@@ -11,6 +11,7 @@ import {
     type AgentEntryResult,
 } from '../../src/entry/entry-run';
 import { AgentRunMode, type AgentRunInputs } from '../../src/entry/entry-inputs';
+import { ScreenshotsStorage } from '../../src/publisher/report-screenshots';
 import {
     DefaultSingleIssueFailure,
     DefaultSingleIssueResultKind,
@@ -232,7 +233,10 @@ describe('runFiltersAgentAction', () => {
         expect(capturedInputs?.comments).toEqual({
             enabled: true,
             token: INPUT_GITHUB_TOKEN,
-            screenshotsBranch: 'filters-agent-screenshots',
+            screenshots: {
+                storage: ScreenshotsStorage.Branch,
+                branch: 'filters-agent-screenshots',
+            },
         });
         expect(capturedInputs?.artifactsDir).toBe(ARTIFACTS_DIR);
         expect(capturedInputs?.slug).toEqual({ owner: 'AdguardTeam', repo: 'filters-agent-demo' });

@@ -383,8 +383,8 @@ export function createLabBacklogEntryInputs(
         trustedRoles: command.flags.trustedRoles,
         maxRevisionsPerWindow: command.flags.maxRevisionsPerWindow,
         revisionWindowMs: command.flags.revisionWindowMs,
-        // Without this mapping, comments were enabled whenever GITHUB_TOKEN was set (the backlog
-        // reader requires it) with no CLI way to disable them: a run against a checkout
+        // Without this mapping, comments were enabled whenever a GitHub token was set (the backlog
+        // reader requires one) with no CLI way to disable them: a run against a checkout
         // of the real upstream tracker had no way to avoid posting real reports there.
         instructionPath: command.flags.instructionPath,
         lintCommand: command.flags.lintCommand,

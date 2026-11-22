@@ -23,7 +23,9 @@ on:
 # The report comment posts from the workflow token. `contents: write` lets the run commit the
 # before and after screenshots of a verified rule to a branch of this repository (the
 # `screenshotsBranch` input, `filters-agent-screenshots` by default), which the comment shows them
-# from; with `contents: read` the comment posts without them.
+# from; with `contents: read` the comment posts without them. A run that gets a user account's
+# token through `githubUserToken` attaches them to the comment instead, and `contents: read` is
+# then enough.
 permissions:
     contents: write
     issues: write
@@ -65,7 +67,9 @@ jobs:
               uses: AdguardTeam/FiltersAgent@v1
               with:
                   # Mandatory in every run: the action only serves GitHub-read modes, and the report
-                  # comment posts through this token (the issues: write permission above).
+                  # comment posts through this token (the issues: write permission above). To
+                  # attach the screenshots to the comment, pass a user account's token from a
+                  # secret as `githubUserToken` in place of this input.
                   githubToken: ${{ github.token }}
                   # Only the API key is a secret; the endpoint and model slugs are plain values.
                   # Replace them with your provider's — shown here for an OpenRouter-compatible

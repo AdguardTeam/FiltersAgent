@@ -57,4 +57,21 @@ describe('redactDiagnosticText', () => {
             'https://openrouter.example/v1',
         ]);
     });
+
+    it('collects the user token and its git basic-auth form', () => {
+        const withUserToken = diagnosticSecretsFromEnvironment({ GITHUB_USER_TOKEN: 'user-token' });
+        expect(withUserToken).toContain('user-token');
+        expect(withUserToken).toContain(
+            Buffer.from('x-access-token:user-token').toString('base64'),
+        );
+
+        const withBoth = diagnosticSecretsFromEnvironment({
+            GITHUB_TOKEN: 'actions-token',
+            GITHUB_USER_TOKEN: 'user-token',
+        });
+        for (const token of ['actions-token', 'user-token']) {
+            expect(withBoth).toContain(token);
+            expect(withBoth).toContain(Buffer.from(`x-access-token:${token}`).toString('base64'));
+        }
+    });
 });

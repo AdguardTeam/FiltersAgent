@@ -1,21 +1,29 @@
 /**
- * Before and after screenshots of the report comment.
+ * Before and after screenshots of the report comment, hosted in the storage the run's token input
+ * names.
  *
- * GitHub has no API to attach an image to a comment, so the verified candidate's two viewport
- * captures are committed to a dedicated branch of the repository the action runs in, through the
- * workflow token, and the comment links them by the commit they landed in. Each issue keeps one
- * pair of paths on the branch: a later run overwrites the files, while an earlier comment still
- * shows its own images because its links name the earlier commit.
+ * The branch storage commits the verified candidate's two viewport captures to a dedicated branch
+ * of the repository the action runs in and links them by the commit they landed in: each issue
+ * keeps one pair of paths on the branch, so a later run overwrites the files while an earlier
+ * comment still shows its own images because its links name the earlier commit. Writing that branch
+ * needs the `contents: write` permission; a workflow granting only `contents: read` still gets its
+ * report, posted without the images, and the run log names the missing permission.
  *
- * Writing the branch needs the `contents: write` permission. A workflow that grants only `contents:
- * read` still gets its report: the comment then posts without the images and the run log names the
- * missing permission.
+ * The attachments storage uploads the same pair through a user account's token and links the
+ * addresses GitHub answers; nothing is written to the repository. Any upload failure yields the
+ * report without images and one warning naming the status: the endpoint reports a token it does not
+ * accept in more than one way, and a report without images is worth more than a failed run.
  */
 
 import type { Octokit } from '@octokit/rest';
+import * as v from 'valibot';
 import { GitHubFileView, gitHubFileUrl } from '../github/github-file-url';
 import type { Logger } from '../logger/logger';
 import type { FixRunResult, VerifiedCandidateScreenshotPaths } from '../types/fix-run-result';
+import {
+    describeAttachmentUploadFailure,
+    uploadReportScreenshotAttachments,
+} from './report-screenshot-attachments';
 
 /**
  * Branch of the analyzed repository that receives the screenshots when the workflow names none.
@@ -24,6 +32,41 @@ import type { FixRunResult, VerifiedCandidateScreenshotPaths } from '../types/fi
  * prunes the whole set.
  */
 export const DEFAULT_REPORT_SCREENSHOTS_BRANCH = 'filters-agent-screenshots';
+
+/**
+ * Where a run hosts the report's before and after screenshots: the storage follows the token input
+ * the run took its token from, never a guess about what the token can do.
+ */
+export const ScreenshotsStorage = {
+    /**
+     * Committed to the screenshots branch and linked by the commit that holds them.
+     */
+    Branch: 'branch',
+
+    /**
+     * Uploaded as attachments of the report comment.
+     */
+    Attachments: 'attachments',
+} as const;
+
+/**
+ * ScreenshotsStorage value.
+ */
+export type ScreenshotsStorage = (typeof ScreenshotsStorage)[keyof typeof ScreenshotsStorage];
+
+/**
+ * Where one run's screenshots go, as the comment policy carries it: the branch storage names its
+ * branch, the attachments storage needs nothing more, so a branch never travels with attachments.
+ */
+export const ScreenshotsTargetSchema = v.variant('storage', [
+    v.strictObject({ storage: v.literal(ScreenshotsStorage.Branch), branch: v.string() }),
+    v.strictObject({ storage: v.literal(ScreenshotsStorage.Attachments) }),
+]);
+
+/**
+ * Where one run's screenshots go.
+ */
+export type ScreenshotsTarget = v.InferOutput<typeof ScreenshotsTargetSchema>;
 
 /**
  * The screenshot pair the report shows under "Without and with the rule", when it shows one.
@@ -83,9 +126,9 @@ interface HttpFailure {
 }
 
 /**
- * Inputs of one screenshot upload.
+ * The screenshot pair of one report and the issue it belongs to.
  */
-export interface HostReportScreenshotsInput {
+export interface ReportScreenshotsPair {
     /**
      * Owner of the repository the report is posted to.
      */
@@ -102,11 +145,6 @@ export interface HostReportScreenshotsInput {
     issueNumber: number;
 
     /**
-     * Branch the pair is committed to.
-     */
-    branch: string;
-
-    /**
      * PNG of the page without the rule.
      */
     before: Buffer;
@@ -115,6 +153,16 @@ export interface HostReportScreenshotsInput {
      * PNG of the page with the rule.
      */
     after: Buffer;
+}
+
+/**
+ * Inputs of one screenshot hosting: the pair and where it goes.
+ */
+export interface HostReportScreenshotsInput extends ReportScreenshotsPair {
+    /**
+     * Where the pair is hosted; the target alone decides, never the token.
+     */
+    target: ScreenshotsTarget;
 }
 
 /**
@@ -188,13 +236,15 @@ async function readBranchHead(
  *
  * @param octokit - Authenticated GitHub API client.
  * @param input - Target repository and issue and the two PNGs.
+ * @param branch - Branch the pair is committed to.
  * @returns Addresses of both images, pinned to the commit that holds them.
  */
 export async function hostReportScreenshots(
     octokit: Octokit,
-    input: HostReportScreenshotsInput,
+    input: ReportScreenshotsPair,
+    branch: string,
 ): Promise<HostedReportScreenshots> {
-    const { owner, repo, branch } = input;
+    const { owner, repo } = input;
     const directory = `issues/${String(input.issueNumber)}`;
     const beforePath = `${directory}/before.png`;
     const afterPath = `${directory}/after.png`;
@@ -286,33 +336,81 @@ export function renderReportScreenshots(hosted: HostedReportScreenshots): string
 }
 
 /**
- * Host the screenshots and render the report's screenshots fill.
- *
- * A token without `contents: write` is a workflow choice, not a failure: the report then posts
- * without the images, and the warning names the permission to grant. Every other failure
- * propagates, so a comment never links an image that did not upload.
+ * Host the pair on the screenshots branch and render the fill; a refused write keeps the report.
  *
  * @param octokit - Authenticated GitHub API client.
  * @param input - Target repository and issue and the two PNGs.
+ * @param branch - Branch the pair is committed to.
  * @param logger - Run logger.
  * @returns The screenshots fill, or the empty string when the token cannot write the branch.
  */
-export async function renderHostedReportScreenshots(
+async function hostBranchScreenshots(
     octokit: Octokit,
-    input: HostReportScreenshotsInput,
+    input: ReportScreenshotsPair,
+    branch: string,
     logger: Logger,
 ): Promise<string> {
     try {
-        return renderReportScreenshots(await hostReportScreenshots(octokit, input));
+        return renderReportScreenshots(await hostReportScreenshots(octokit, input, branch));
     } catch (error) {
         if ((error as HttpFailure).status === PERMISSION_REFUSAL_STATUS) {
             logger.warn(
-                { issueNumber: input.issueNumber, branch: input.branch },
+                { issueNumber: input.issueNumber, branch },
                 'the report posts without screenshots: grant the workflow `contents: write` to ' +
                     'host them',
             );
             return '';
         }
         throw error;
+    }
+}
+
+/**
+ * Upload the pair as attachments and render the fill; any failure keeps the report.
+ *
+ * @param octokit - Authenticated GitHub API client.
+ * @param input - Target repository and issue and the two PNGs.
+ * @param logger - Run logger.
+ * @returns The screenshots fill, or the empty string when either upload failed.
+ */
+async function hostAttachmentScreenshots(
+    octokit: Octokit,
+    input: ReportScreenshotsPair,
+    logger: Logger,
+): Promise<string> {
+    try {
+        return renderReportScreenshots(await uploadReportScreenshotAttachments(octokit, input));
+    } catch (error) {
+        const warning = describeAttachmentUploadFailure(error);
+        logger.warn({ issueNumber: input.issueNumber, ...warning.fields }, warning.message);
+        return '';
+    }
+}
+
+/**
+ * Host the screenshots in the request's storage and render the report's screenshots fill.
+ *
+ * The branch storage tolerates a token without `contents: write` — a workflow choice, not a
+ * failure, so the report posts without the images and the warning names the permission to grant —
+ * and propagates every other failure. The attachments storage tolerates every upload failure: the
+ * report posts without the images and one warning names the request that failed, its status and,
+ * when the status says the token was not accepted, what the token needs. In either storage a
+ * comment never links an image that did not upload.
+ *
+ * @param octokit - Authenticated GitHub API client.
+ * @param input - Target repository and issue, the target, and the two PNGs.
+ * @param logger - Run logger.
+ * @returns The screenshots fill, or the empty string when the pair could not be hosted.
+ */
+export async function renderHostedReportScreenshots(
+    octokit: Octokit,
+    input: HostReportScreenshotsInput,
+    logger: Logger,
+): Promise<string> {
+    switch (input.target.storage) {
+        case ScreenshotsStorage.Branch:
+            return await hostBranchScreenshots(octokit, input, input.target.branch, logger);
+        case ScreenshotsStorage.Attachments:
+            return await hostAttachmentScreenshots(octokit, input, logger);
     }
 }

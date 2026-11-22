@@ -7,6 +7,7 @@ import {
 } from '../../src/config/config';
 import { LlmApi } from '../../src/config/llm-api';
 import { ReasoningEffort } from '../../src/config/reasoning-effort';
+import { resolveRunToken } from '../../src/config/run-token';
 
 const validEnv = {
     GITHUB_TOKEN: 'ghp_test',
@@ -34,6 +35,40 @@ describe('loadConfig', () => {
             owner: 'example',
             repo: 'filters',
         });
+    });
+
+    it('reads the GitHub token from GITHUB_USER_TOKEN when it is the one set', () => {
+        expect(
+            loadGithubReadConfig({
+                GITHUB_USER_TOKEN: 'user-token',
+                GITHUB_REPO_OWNER: 'example',
+                GITHUB_REPO_NAME: 'filters',
+            }),
+        ).toEqual({
+            token: 'user-token',
+            owner: 'example',
+            repo: 'filters',
+        });
+    });
+
+    it('names both token variables beside the other problems when both are set', () => {
+        const env = {
+            GITHUB_TOKEN: 'actions-token',
+            GITHUB_USER_TOKEN: 'user-token',
+        };
+
+        try {
+            loadGithubReadConfig(env);
+            expect.unreachable('should have thrown');
+        } catch (err) {
+            expect(err).toBeInstanceOf(ConfigError);
+            const message = (err as Error).message;
+            expect(message).toContain(resolveRunToken(env).problem);
+            expect(message).toContain('GITHUB_REPO_OWNER');
+            expect(message).toContain('GITHUB_REPO_NAME');
+            expect(message).toContain('GITHUB_REPOSITORY');
+            expect(message).toContain('REPOSITORY_PATH');
+        }
     });
 
     it('requires only the GitHub token for GitHub-only read configuration', () => {
@@ -224,7 +259,10 @@ describe('loadConfig', () => {
             expect.unreachable('should have thrown');
         } catch (err) {
             expect(err).toBeInstanceOf(ConfigError);
-            expect((err as Error).message).toContain('github.token');
+            const message = (err as Error).message;
+            expect(message).toContain('github.token');
+            expect(message).toContain('GITHUB_TOKEN');
+            expect(message).toContain('GITHUB_USER_TOKEN');
         }
     });
 

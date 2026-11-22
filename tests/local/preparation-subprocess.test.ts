@@ -61,6 +61,34 @@ describe('buildPreparationSubprocessEnvironment', () => {
         ).not.toHaveProperty('GIT_CONFIG_COUNT');
     });
 
+    it('gives git a credential derived from GITHUB_USER_TOKEN and passes the variable to no child', () => {
+        const parent = { PATH: '/usr/bin', GITHUB_USER_TOKEN: 'user-secret' };
+        const expectedCredential = Buffer.from('x-access-token:user-secret').toString('base64');
+
+        const gitEnvironment = buildPreparationSubprocessEnvironment(parent, {}, 'git');
+        expect(gitEnvironment).toMatchObject({
+            GIT_CONFIG_COUNT: '1',
+            GIT_CONFIG_KEY_0: 'http.https://github.com/.extraheader',
+            GIT_CONFIG_VALUE_0: `AUTHORIZATION: basic ${expectedCredential}`,
+        });
+        expect(gitEnvironment).not.toHaveProperty('GITHUB_USER_TOKEN');
+
+        const packageManagerEnvironment = buildPreparationSubprocessEnvironment(parent, {}, 'pnpm');
+        expect(packageManagerEnvironment).not.toHaveProperty('GITHUB_USER_TOKEN');
+    });
+
+    it('gives git no credential when both token variables are set', () => {
+        const environment = buildPreparationSubprocessEnvironment(
+            { PATH: '/usr/bin', GITHUB_TOKEN: 'actions-secret', GITHUB_USER_TOKEN: 'user-secret' },
+            {},
+            'git',
+        );
+
+        expect(environment).not.toHaveProperty('GIT_CONFIG_COUNT');
+        expect(environment).not.toHaveProperty('GITHUB_TOKEN');
+        expect(environment).not.toHaveProperty('GITHUB_USER_TOKEN');
+    });
+
     it('applies the sanitized environment to the actual spawned process and overrides', async () => {
         const result = await runPreparationSubprocess(
             {

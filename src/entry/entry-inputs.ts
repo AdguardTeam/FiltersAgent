@@ -9,6 +9,7 @@
 
 import * as v from 'valibot';
 import type { CoreConfig } from '../config/config';
+import { ScreenshotsTargetSchema } from '../publisher/report-screenshots';
 import { TRUSTED_ROLE_VALUES } from '../queue/queue-inputs';
 import type { RepositorySlug } from '../types/repository-slug';
 
@@ -111,7 +112,8 @@ export interface AgentRunInputSources {
 
     /**
      * Branch the report's before and after screenshots are committed to; absent or blank falls back
-     * to `DEFAULT_REPORT_SCREENSHOTS_BRANCH`.
+     * to `DEFAULT_REPORT_SCREENSHOTS_BRANCH`. Naming a branch together with `GITHUB_USER_TOKEN` is
+     * a configuration error: that token attaches the screenshots to the comment instead.
      */
     screenshotsBranch?: string | undefined;
 
@@ -190,7 +192,7 @@ const BacklogModeSchema = v.strictObject({
 const CommentPolicySchema = v.strictObject({
     enabled: v.boolean(),
     token: v.optional(v.string()),
-    screenshotsBranch: v.string(),
+    screenshots: ScreenshotsTargetSchema,
 });
 
 /**
@@ -306,26 +308,11 @@ export interface AgentRunQueueOverrides {
 }
 
 /**
- * Report-comment policy: enabled or disabled, carrying the token when one was configured so GitHub
- * reads have it even while posting stays off.
+ * Report-comment policy: whether report comments are posted, the configured GitHub token — present
+ * even while posting is off, since GitHub reads may still need it — and where the report's before
+ * and after screenshots are hosted.
  */
-export interface AgentRunCommentPolicy {
-    /**
-     * Whether report comments are posted for this run.
-     */
-    enabled: boolean;
-
-    /**
-     * The configured GitHub token, when one exists — present even while `enabled` is false, since
-     * GitHub reads may still need it.
-     */
-    token?: string;
-
-    /**
-     * Branch the report's before and after screenshots are committed to.
-     */
-    screenshotsBranch: string;
-}
+export type AgentRunCommentPolicy = v.InferOutput<typeof CommentPolicySchema>;
 
 /**
  * The complete validated inputs one entry dispatches on, as `resolveAgentRunInputs` builds them: a

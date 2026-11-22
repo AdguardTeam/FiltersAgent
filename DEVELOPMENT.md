@@ -105,7 +105,10 @@ complete `.env` and what each value must be.
 KnowledgeBase commits or browser builds differ across the compared runs.
 
 Set `GITHUB_TOKEN` only for commands that read a live GitHub issue; a run from
-an exported issue file does not need it.
+an exported issue file does not need it. `GITHUB_USER_TOKEN` takes its place
+when the token belongs to a user account: reports then carry their screenshots
+as comment attachments instead of commits to a branch. Setting both variables
+fails the run.
 
 Executable entry points read the environment once and pass it to pure loaders
 such as `loadConfig()` in `src/config/config.ts`. The loaders take the
@@ -351,9 +354,9 @@ investigation directory: every LLM turn and tool call in order. Add
 
 ### Run the backlog without posting
 
-`backlog` posts its reports as issue comments whenever `GITHUB_TOKEN` is set,
-on whichever repository the identity resolves to. Pass `--no-comment` to keep
-the reports local:
+`backlog` posts its reports as issue comments whenever `GITHUB_TOKEN` or
+`GITHUB_USER_TOKEN` is set, on whichever repository the identity resolves to.
+Pass `--no-comment` to keep the reports local:
 
 ```bash
 pnpm start -- backlog --repository AdguardTeam/AdguardFilters \
@@ -452,7 +455,8 @@ You ran `pnpm start -- --help`. Use `pnpm start --help`, or
 A required environment variable is missing or malformed. Agent runs require
 `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL` and the token limits;
 `LLM_VISION_MODEL` follows the effective reasoning model, including overrides.
-Commands that read GitHub also require `GITHUB_TOKEN` and a repository identity.
+Commands that read GitHub also require `GITHUB_TOKEN` or `GITHUB_USER_TOKEN`
+and a repository identity.
 The error message names every missing or invalid variable.
 
 ### `repo` commands fail with "REPOSITORY_PATH is required"
@@ -480,7 +484,8 @@ check `ADGUARD_LICENSE_KEY`.
 
 ### GitHub API returns 401
 
-`GITHUB_TOKEN` is missing, expired, or lacks read access to the repository.
+The token in `GITHUB_TOKEN` or `GITHUB_USER_TOKEN` is missing, expired, or
+lacks read access to the repository.
 Regenerate the token with at least public repository read access.
 
 ## Additional Resources

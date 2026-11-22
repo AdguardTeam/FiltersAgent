@@ -81,8 +81,8 @@ cp .env.example .env
 
 Fill in the provider settings in `.env`; `LLM_API` selects the API and
 `LLM_VISION_MODEL` defaults to the effective reasoning model, including
-overrides. Set `GITHUB_TOKEN` for commands that read GitHub issues. The stealth
-Chromium build downloads on the first run.
+overrides. Set `GITHUB_TOKEN` or `GITHUB_USER_TOKEN` for commands that read
+GitHub issues. The stealth Chromium build downloads on the first run.
 
 ## Quick start
 

@@ -11,6 +11,7 @@ import {
     type RepositorySlug,
 } from './repository-identity';
 import { ReasoningEffort } from './reasoning-effort';
+import { resolveRunToken, RUN_TOKEN_RULE_MESSAGE } from './run-token';
 import {
     boundedIntegerSchema,
     MAX_REQUEST_MAX_ATTEMPTS,
@@ -84,13 +85,6 @@ export const LLM_REQUEST_MAX_ATTEMPTS_VAR = 'LLM_REQUEST_MAX_ATTEMPTS';
  * Environment variable carrying the per-request stall timeout in milliseconds.
  */
 export const LLM_REQUEST_TIMEOUT_MS_VAR = 'LLM_REQUEST_TIMEOUT_MS';
-
-/**
- * Environment variable carrying the GitHub API token every GitHub-reading seam authenticates with,
- * report comments included. The one place this name is spelled; the action's `githubToken` input
- * binding imports it instead of respelling it.
- */
-export const GITHUB_TOKEN_VAR = 'GITHUB_TOKEN';
 
 /**
  * Two attempts absorb one transient failure. Defaulted only here; providerMaxRetries maps this
@@ -232,7 +226,7 @@ const CoreConfigSchema = v.object({
  * resolved repository identity, never from a stored default.
  */
 const GithubReadConfigSchema = v.object({
-    token: v.pipe(v.string(), v.minLength(1)),
+    token: v.pipe(v.string(RUN_TOKEN_RULE_MESSAGE), v.minLength(1)),
     owner: v.pipe(v.string(), v.minLength(1)),
     repo: v.pipe(v.string(), v.minLength(1)),
 });
@@ -385,20 +379,21 @@ function formatConfigIssues(issues: readonly v.BaseIssue<unknown>[]): string {
 }
 
 /**
- * Build the raw GitHub section for one loader from the token and the resolved repository identity.
- * Values stay raw and may be `undefined`; Valibot reports them alongside the identity failure, so
- * one failed load names every independent problem.
+ * Build the raw GitHub section for one loader from the resolved run token and the repository
+ * identity. Values stay raw and may be `undefined`; Valibot reports them beside the identity
+ * failure, so one failed load names every independent problem. The `token` key is kept even when
+ * the token is absent, so the schema's own rule message is the one reported.
  *
- * @param env - Environment source supplied by the caller.
+ * @param token - The run token the resolver took from the environment, or `undefined`.
  * @param identity - The resolved repository identity, or `null` while unresolved.
  * @returns The raw, unvalidated GitHub section.
  */
 function buildRawGithubConfig(
-    env: Record<string, string | undefined>,
+    token: string | undefined,
     identity: RepositorySlug | null,
 ): Record<string, unknown> {
     return {
-        token: env.GITHUB_TOKEN,
+        token,
         owner: identity?.owner,
         repo: identity?.repo,
     };
@@ -443,21 +438,21 @@ function resolveIdentityOrProblem(
 }
 
 /**
- * Render the combined config error when the identity and schema slices failed together. Called for
- * failed parses only, so the joined message is never empty.
+ * Render the combined config error when the pre-parse problems and the schema slices failed
+ * together. Called for failed parses only, so the joined message is never empty.
  *
- * @param identityProblem - The identity message, or `null` when the identity resolved.
+ * @param preParseProblems - The identity and run-token messages that precede the schema issues;
+ *   absent ones are skipped.
  * @param issues - The schema validation issues of the failed parse.
  * @returns The full problem description.
  */
 function combinedProblems(
-    identityProblem: string | null,
+    preParseProblems: readonly (string | undefined)[],
     issues: readonly v.BaseIssue<unknown>[],
 ): string {
-    const problems: string[] = [];
-    if (identityProblem !== null) {
-        problems.push(identityProblem);
-    }
+    const problems: string[] = preParseProblems.filter(
+        (problem): problem is string => problem !== undefined,
+    );
     if (issues.length > 0) {
         problems.push(`Invalid configuration:\n${formatConfigIssues(issues)}`);
     }
@@ -494,15 +489,14 @@ export function loadGithubReadConfig(
     identitySources: RepositoryIdentitySources = {},
 ): GithubReadConfig {
     const identity = resolveIdentityOrProblem(env, identitySources);
+    const runToken = resolveRunToken(env);
+    const preParseProblems = [identity.problem, runToken.problem];
     const raw = {
-        github: buildRawGithubConfig(env, identity.slug ?? null),
+        github: buildRawGithubConfig(runToken.token, identity.slug ?? null),
     };
     const result = v.safeParse(GithubReadContainerSchema, raw);
     if (!result.success) {
-        throw new ConfigError(combinedProblems(identity.problem ?? null, result.issues));
-    }
-    if (identity.problem !== undefined) {
-        throw new ConfigError(identity.problem);
+        throw new ConfigError(combinedProblems(preParseProblems, result.issues));
     }
     return result.output.github;
 }
@@ -522,17 +516,16 @@ export function loadConfig(
     identitySources: RepositoryIdentitySources = {},
 ): AppConfig {
     const identity = resolveIdentityOrProblem(env, identitySources);
+    const runToken = resolveRunToken(env);
+    const preParseProblems = [identity.problem, runToken.problem];
     const raw = {
         ...buildRawCoreConfig(env),
-        github: buildRawGithubConfig(env, identity.slug ?? null),
+        github: buildRawGithubConfig(runToken.token, identity.slug ?? null),
     };
 
     const result = v.safeParse(AppConfigSchema, raw);
     if (!result.success) {
-        throw new ConfigError(combinedProblems(identity.problem ?? null, result.issues));
-    }
-    if (identity.problem !== undefined) {
-        throw new ConfigError(identity.problem);
+        throw new ConfigError(combinedProblems(preParseProblems, result.issues));
     }
     return result.output;
 }

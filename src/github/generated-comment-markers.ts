@@ -58,6 +58,17 @@ export const GeneratedCommentMarkerPrefix = {
      * Opener of the marker that records the upstream synchronization cursor state.
      */
     UpstreamSyncState: '<!-- adguard-filters-agent:upstream-sync-state ',
+
+    /**
+     * Opener of the revision marker a posted report carries. The run can post under a user account
+     * with a maintainer's association, so the author alone does not mark a report as generated.
+     */
+    RevisionReport: '<!-- adguard-filters-agent:report ',
+
+    /**
+     * Opener of the revision marker a forced run's notice carries.
+     */
+    RevisionNotice: '<!-- adguard-filters-agent:notice ',
 } as const;
 
 export const GENERATED_COMMENT_MARKER_PREFIX_VALUES = Object.values(GeneratedCommentMarkerPrefix);

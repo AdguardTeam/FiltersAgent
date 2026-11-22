@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { ConfigError } from '../../src/config/config-error';
 import { AgentRunMode } from '../../src/entry/entry-inputs';
 import { renderReportRevisionMarker } from '../../src/publisher/report-publisher';
+import { ScreenshotsStorage, type ScreenshotsTarget } from '../../src/publisher/report-screenshots';
 import {
     AgentEntryExitCode,
     AgentEntryStatus,
@@ -204,14 +205,20 @@ function singleIssueInputs(): {
     config: CoreConfig;
     slug: { owner: string; repo: string };
     mode: { kind: typeof AgentRunMode.SingleIssue; issueNumber: number };
-    comments: { enabled: false; screenshotsBranch: string };
+    comments: { enabled: false; screenshots: ScreenshotsTarget };
     artifactsDir: string;
 } {
     return {
         config: testCoreConfig(),
         slug: { owner: 'example', repo: 'list' },
         mode: { kind: AgentRunMode.SingleIssue, issueNumber: 4 },
-        comments: { enabled: false, screenshotsBranch: 'filters-agent-screenshots' },
+        comments: {
+            enabled: false,
+            screenshots: {
+                storage: ScreenshotsStorage.Branch,
+                branch: 'filters-agent-screenshots',
+            },
+        },
         artifactsDir: join(scratchDir('entry-run-single-'), 'out'),
     };
 }
@@ -226,7 +233,11 @@ function backlogInputs(limit: number): {
     config: CoreConfig;
     slug: { owner: string; repo: string };
     mode: { kind: typeof AgentRunMode.Backlog; limit: number };
-    comments: { enabled: true; token: string; screenshotsBranch: string };
+    comments: {
+        enabled: true;
+        token: string;
+        screenshots: ScreenshotsTarget;
+    };
     artifactsDir: string;
 } {
     return {
@@ -236,7 +247,10 @@ function backlogInputs(limit: number): {
         comments: {
             enabled: true,
             token: 'test-token',
-            screenshotsBranch: 'filters-agent-screenshots',
+            screenshots: {
+                storage: ScreenshotsStorage.Branch,
+                branch: 'filters-agent-screenshots',
+            },
         },
         artifactsDir: join(scratchDir('entry-run-backlog-'), 'out'),
     };
@@ -268,7 +282,13 @@ describe('runFiltersAgentEntry', () => {
                     config: testCoreConfig(),
                     slug: { owner: 'example', repo: 'list' },
                     mode: { kind: AgentRunMode.Backlog, limit: 2 },
-                    comments: { enabled: false, screenshotsBranch: 'filters-agent-screenshots' },
+                    comments: {
+                        enabled: false,
+                        screenshots: {
+                            storage: ScreenshotsStorage.Branch,
+                            branch: 'filters-agent-screenshots',
+                        },
+                    },
                 } as never,
                 { runIssue: seam.runIssue, backlogIssueReader: reader },
             );
@@ -298,7 +318,7 @@ describe('runFiltersAgentEntry', () => {
             comments: {
                 enabled: true,
                 token: 'test-token',
-                screenshotsBranch: 'filters-agent-screenshots',
+                screenshots: { storage: ScreenshotsStorage.Attachments },
             },
             model: 'deepseek-v4-flash',
             executors: ['browser-extension', 'adguard-desktop'],
@@ -318,7 +338,7 @@ describe('runFiltersAgentEntry', () => {
             issueNumber: 4,
             token: 'test-token',
             commentsEnabled: true,
-            screenshotsBranch: 'filters-agent-screenshots',
+            screenshots: { storage: ScreenshotsStorage.Attachments },
             model: 'deepseek-v4-flash',
             executors: ['browser-extension', 'adguard-desktop'],
             instructionPath: 'tmp/instructions/run.md',
@@ -429,7 +449,10 @@ describe('runFiltersAgentEntry', () => {
         expect(seam.requests[0]).toMatchObject({
             slug: { owner: 'example', repo: 'list' },
             commentsEnabled: true,
-            screenshotsBranch: 'filters-agent-screenshots',
+            screenshots: {
+                storage: ScreenshotsStorage.Branch,
+                branch: 'filters-agent-screenshots',
+            },
             token: 'test-token',
             artifactsDir: join(inputs.artifactsDir, 'issue-7'),
         });

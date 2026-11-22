@@ -91,12 +91,12 @@ basis values above are what the recorded insert edit carries and what this secti
 
 ## Posting
 
-Posting is off by default. It runs only when the repository variable
-`PUBLISH_PROPOSED_COMMENTS` is `true`, and only for a run that wrote a publishable
-comment. The upstream issue is read again and the guard re-run right before posting: the
-render may be minutes old, and a maintainer can act in between. In practice an issue gets
-one comment: the pilot account is an AdguardTeam member, so its own comment counts as
-maintainer engagement (`maintainer_engaged`) and silences later runs.
+A run posts its comment whenever it has a token (the `githubToken` or the
+`githubUserToken` input) and the workflow does not set `noComment`. The issue is read again
+and the guard re-run right before posting: the render may be minutes old, and a maintainer
+can act in between. One text of an issue gets one report: the run finds its earlier report
+by the hidden marker and its own login. Its own comments never count as a maintainer on the
+issue, whichever account posts them.
 
 ## Worked example: patch_proposed, same-product verification
 
@@ -177,15 +177,21 @@ reviews before anything is merged.</sub>
 
 A publishable comment carries two own-browser viewport captures of the candidate: the page
 without the rule and the page with it. They sit in a collapsed `<details>` block titled
-"Without and with the rule", as a two-column table, right before the footer, which stays the
-last element.
+"Without and with the rule", as a two-column table, under the `Screenshots` heading. In the
+built-in template the link to the artifacts follows it, and the footer stays the last element.
 
-GitHub has no API to attach images to a comment, so the images are committed to a dedicated
-branch of the repository the comment is posted to — `filters-agent-screenshots` unless the
-workflow's `screenshotsBranch` input names another — at `issues/<issue>/before.png` and
-`issues/<issue>/after.png`, and linked by the commit that holds them. Writing the branch needs
-the `contents: write` permission; without it the comment posts without the block. A run whose
-generation holds no such captures posts the comment without the block.
+Where the images live follows the token input of the run. With `githubToken` they are committed
+to a dedicated branch of the repository the comment is posted to — `filters-agent-screenshots`
+unless the workflow's `screenshotsBranch` input names another — at `issues/<issue>/before.png`
+and `issues/<issue>/after.png`, and linked by the commit that holds them. Writing the branch
+needs the `contents: write` permission. With `githubUserToken` they are uploaded as attachments
+and linked by their `https://github.com/user-attachments/assets/…` addresses; nothing is
+committed.
+
+A comment posts without the block when the run's generation holds no such captures, when the
+report template has no `{{screenshots}}` placeholder, when an attachment upload fails, and when
+the token may not write the branch (`contents: read`). Any other failure of the branch write
+stops the report from posting.
 
 ## Other outcome classes
 

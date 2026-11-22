@@ -14,6 +14,7 @@ import { createBlockerModuleRunIssue } from '../../src/proxy-blocker/blocker-mod
 import { BrowserMode } from '../../src/types/browser-mode';
 import { EffectiveMode, FixRunStatus, VerificationStatus } from '../../src/types/fix-run-result';
 import type { FixRunResult } from '../../src/types/fix-run-result';
+import { ScreenshotsStorage } from '../../src/publisher/report-screenshots';
 import { testCoreConfig } from '../config/test-core-config';
 
 const EXECUTOR = 'demo_proxy';
@@ -52,7 +53,7 @@ function requestFixture(issueNumber: number, artifactsDir: string): DefaultSingl
         slug: { owner: 'AdguardTeam', repo: 'AdguardFilters' },
         issueNumber,
         commentsEnabled: true,
-        screenshotsBranch: 'filters-agent-screenshots',
+        screenshots: { storage: ScreenshotsStorage.Branch, branch: 'filters-agent-screenshots' },
         token: 'read-token',
         executors: [EXECUTOR],
         artifactsDir,

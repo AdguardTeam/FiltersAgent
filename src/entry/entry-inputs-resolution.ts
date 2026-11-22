@@ -8,11 +8,10 @@
  * `entry-inputs.ts`; this module owns only turning flags and environment into them.
  */
 
-import { GITHUB_TOKEN_VAR, type CoreConfig, loadCoreConfig } from '../config/config';
+import { type CoreConfig, loadCoreConfig } from '../config/config';
 import { ConfigError } from '../config/config-error';
 import { buildActionsRunUrl } from '../config/publisher-config';
 import { parseNameList } from '../github/github-name-list';
-import { DEFAULT_REPORT_SCREENSHOTS_BRANCH } from '../publisher/report-screenshots';
 import {
     optionalEnvValue,
     REPOSITORY_PATH_VAR,
@@ -22,9 +21,9 @@ import {
 } from '../config/repository-identity';
 import { TRUSTED_ROLE_VALUES } from '../queue/queue-inputs';
 import type { RepositorySlug } from '../types/repository-slug';
+import { resolveCommentPolicy } from './comment-policy-resolution';
 import {
     AgentRunMode,
-    type AgentRunCommentPolicy,
     type AgentRunInputSources,
     type AgentRunInputs,
     type AgentRunQueueOverrides,
@@ -127,46 +126,6 @@ function nameUnknownExecutorMessage(
         `${EXECUTORS_FLAG} names an executor this run never registered: ${unknownNames.join(', ')}. ` +
         `Registered executors: ${knownExecutorNames.length > 0 ? knownExecutorNames.join(', ') : '(none)'}.`
     );
-}
-
-/**
- * Render the message fired when a GitHub seam has to read but no token configured.
- *
- * Names the `GITHUB_TOKEN` environment variable every face genuinely reads (the action's
- * `githubToken` input lands there too) rather than a `--no-comment` flag, which no face of the
- * entry has.
- *
- * @param reason - What reads through GitHub.
- * @returns The message naming the variable and how it is shared with report comments.
- */
-function nameMissingReadTokenMessage(reason: string): string {
-    return (
-        `${GITHUB_TOKEN_VAR} is required: ${reason}. Set ${GITHUB_TOKEN_VAR}; the same token ` +
-        'enables report comments unless comments are disabled for the run.'
-    );
-}
-
-/**
- * Derive the report-comment policy for one run. A token alone enables comments; the flag alone
- * turns publishing off without demanding a token; a token with the flag keeps posting off and is
- * accepted — the token still travels for GitHub reads.
- *
- * @param env - Environment source supplied by the caller.
- * @param noComment - Whether publishing is disabled.
- * @param screenshotsBranch - Branch named for the screenshots, or undefined for the default.
- * @returns The comment policy.
- */
-function resolveCommentPolicy(
-    env: Readonly<Record<string, string | undefined>>,
-    noComment: boolean,
-    screenshotsBranch: string | undefined,
-): AgentRunCommentPolicy {
-    const token = optionalEnvValue(env[GITHUB_TOKEN_VAR]);
-    return {
-        enabled: !noComment && token !== undefined,
-        ...(token !== undefined ? { token } : {}),
-        screenshotsBranch: screenshotsBranch?.trim() || DEFAULT_REPORT_SCREENSHOTS_BRANCH,
-    };
 }
 
 /**
@@ -405,21 +364,19 @@ export function resolveAgentRunInputs(
         problems.push(backlogWallClockBudgetMsBound);
     }
 
-    const comments = resolveCommentPolicy(
-        env,
-        sources.noComment === true,
-        sources.screenshotsBranch,
-    );
     const readsGitHubIssue = backlogRequested || (issueNumber !== undefined && !snapshotGiven);
-    if (readsGitHubIssue && comments.token === undefined) {
-        problems.push(
-            nameMissingReadTokenMessage(
-                backlogRequested
-                    ? 'the backlog reader lists open issues through GitHub'
-                    : 'issue acquisition resolves through the GitHub fetch seam (no exported snapshot was given)',
-            ),
-        );
-    }
+    const githubReadReason = !readsGitHubIssue
+        ? undefined
+        : backlogRequested
+          ? 'the backlog reader lists open issues through GitHub'
+          : 'issue acquisition resolves through the GitHub fetch seam (no exported snapshot was given)';
+    const commentPolicy = resolveCommentPolicy(env, {
+        noComment: sources.noComment === true,
+        screenshotsBranch: sources.screenshotsBranch,
+        githubReadReason,
+    });
+    problems.push(...commentPolicy.problems);
+    const comments = commentPolicy.comments;
 
     if (problems.length > 0) {
         throw new ConfigError(problems.join('\n'));

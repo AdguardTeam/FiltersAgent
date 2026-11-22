@@ -1,3 +1,4 @@
+import { runTokenValues } from '../../src/config/run-token';
 import { gitHttpBasicCredential } from '../../src/local/git-http-auth';
 
 /**
@@ -29,9 +30,10 @@ export function diagnosticSecretsFromEnvironment(
     env: Record<string, string | undefined>,
 ): Array<string | undefined> {
     return [
-        env.GITHUB_TOKEN,
-        // Git sends the token base64-encoded inside a basic-auth header; mask that form too.
-        env.GITHUB_TOKEN ? gitHttpBasicCredential(env.GITHUB_TOKEN) : undefined,
+        // Every token the environment holds, its variable unread here: a conflicting environment
+        // still carries two secrets the resolver never returns. Git sends each one base64-encoded
+        // inside a basic-auth header, so that form is masked too.
+        ...runTokenValues(env).flatMap((token) => [token, gitHttpBasicCredential(token)]),
         env.LLM_API_KEY,
         env.ADGUARD_LICENSE_KEY,
         env.LLM_BASE_URL,

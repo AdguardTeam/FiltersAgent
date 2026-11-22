@@ -1,10 +1,13 @@
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { AgentActionInputName } from '../../src/action/action-input-names';
 import { mapAgentRunSources } from '../../src/action/action-input-binding';
 import { ConfigError } from '../../src/config/config-error';
 import { LlmApi } from '../../src/config/llm-api';
 import { ReasoningEffort } from '../../src/config/reasoning-effort';
 import { AgentRunMode } from '../../src/entry/entry-inputs';
+import { ScreenshotsStorage } from '../../src/publisher/report-screenshots';
+import { captureFailure } from '../capture-failure';
 import { resolveAgentRunInputs } from '../../src/entry/entry-inputs-resolution';
 import { BrowserExtensionExecutorName } from '../../src/environment/executor-name';
 
@@ -45,6 +48,7 @@ const INPUT_EXECUTORS = 'adguard-extension';
 const INPUT_INSTRUCTION_PATH = 'docs/run-instruction.md';
 const INPUT_MODEL_OVERRIDE = 'reasoning-model-b';
 const INPUT_GITHUB_TOKEN = 'gh-token-123';
+const INPUT_GITHUB_USER_TOKEN = 'gh-user-token-456';
 const INPUT_LIMIT = '25';
 
 /**
@@ -112,7 +116,10 @@ describe('mapAgentRunSources with the real entry resolver', () => {
         expect(inputs.comments).toEqual({
             enabled: true,
             token: INPUT_GITHUB_TOKEN,
-            screenshotsBranch: 'filters-agent-screenshots',
+            screenshots: {
+                storage: ScreenshotsStorage.Branch,
+                branch: 'filters-agent-screenshots',
+            },
         });
         expect(inputs.slug).toEqual({ owner: 'AdguardTeam', repo: 'filters-agent-demo' });
         expect(inputs.checkoutPath).toBe(INPUT_CHECKOUT_DIR);
@@ -247,10 +254,16 @@ describe('mapAgentRunSources with the real entry resolver', () => {
         const { inputs } = boundAndResolved(
             runnerEnv({ INPUT_SCREENSHOTSBRANCH: 'agent-screenshots' }),
         );
-        expect(inputs.comments.screenshotsBranch).toBe('agent-screenshots');
+        expect(inputs.comments.screenshots).toEqual({
+            storage: ScreenshotsStorage.Branch,
+            branch: 'agent-screenshots',
+        });
 
         const unset = boundAndResolved(runnerEnv({ INPUT_SCREENSHOTSBRANCH: '  ' }));
-        expect(unset.inputs.comments.screenshotsBranch).toBe('filters-agent-screenshots');
+        expect(unset.inputs.comments.screenshots).toEqual({
+            storage: ScreenshotsStorage.Branch,
+            branch: 'filters-agent-screenshots',
+        });
     });
 
     it('carries the request attempt bound into the validated configuration, defaulted when unset', () => {
@@ -272,33 +285,27 @@ describe('mapAgentRunSources with the real entry resolver', () => {
     });
 
     it('fails the combined ConfigError naming every dropped mandatory input', () => {
-        let failure: unknown;
-        try {
+        const failure = captureFailure(() =>
             boundAndResolved(
                 runnerEnv({ INPUT_LLMAPIKEY: undefined, INPUT_GITHUBTOKEN: undefined }),
-            );
-        } catch (error) {
-            failure = error;
-        }
+            ),
+        );
 
         expect(failure).toBeInstanceOf(ConfigError);
-        const message = (failure as Error).message;
+        const message = failure.message;
         expect(message).toContain('llm.apiKey');
         expect(message).toContain('GITHUB_TOKEN');
     });
 
     it('fails the combined ConfigError naming a missing run mode next to an LLM input', () => {
-        let failure: unknown;
-        try {
+        const failure = captureFailure(() =>
             boundAndResolved(
                 runnerEnv({ INPUT_ISSUENUMBER: undefined, INPUT_LLMMODEL: undefined }),
-            );
-        } catch (error) {
-            failure = error;
-        }
+            ),
+        );
 
         expect(failure).toBeInstanceOf(ConfigError);
-        const message = (failure as Error).message;
+        const message = failure.message;
         expect(message).toContain('Run mode is required');
         expect(message).toContain('llm.model');
     });
@@ -355,16 +362,73 @@ describe('mapAgentRunSources with the real entry resolver', () => {
         expect(mapAgentRunSources(runnerEnv()).blockerModulePaths).toEqual([]);
     });
 
-    it('fails named at the binding when the runner workspace is missing', () => {
-        let failure: unknown;
-        try {
-            mapAgentRunSources(runnerEnv({ GITHUB_WORKSPACE: undefined }));
-        } catch (error) {
-            failure = error;
-        }
+    it('carries githubUserToken into the run token and the attachments storage', () => {
+        const { inputs } = boundAndResolved(
+            runnerEnv({
+                INPUT_GITHUBTOKEN: undefined,
+                INPUT_GITHUBUSERTOKEN: INPUT_GITHUB_USER_TOKEN,
+            }),
+        );
+
+        expect(inputs.comments.token).toBe(INPUT_GITHUB_USER_TOKEN);
+        expect(inputs.comments.screenshots).toEqual({ storage: ScreenshotsStorage.Attachments });
+    });
+
+    it.each([
+        {
+            name: 'both token inputs',
+            env: {
+                INPUT_GITHUBTOKEN: INPUT_GITHUB_TOKEN,
+                INPUT_GITHUBUSERTOKEN: INPUT_GITHUB_USER_TOKEN,
+            },
+            expected: [AgentActionInputName.githubToken, AgentActionInputName.githubUserToken],
+        },
+        {
+            name: 'githubUserToken with screenshotsBranch',
+            env: {
+                INPUT_GITHUBTOKEN: undefined,
+                INPUT_GITHUBUSERTOKEN: INPUT_GITHUB_USER_TOKEN,
+                INPUT_SCREENSHOTSBRANCH: 'agent-screenshots',
+            },
+            expected: [
+                AgentActionInputName.githubUserToken,
+                AgentActionInputName.screenshotsBranch,
+            ],
+        },
+    ])('fails naming the inputs when the workflow passes $name', ({ env, expected }) => {
+        const failure = captureFailure(() => boundAndResolved(runnerEnv(env)));
 
         expect(failure).toBeInstanceOf(ConfigError);
-        const message = (failure as Error).message;
+        const message = failure.message;
+        for (const inputName of expected) {
+            expect(message).toContain(inputName);
+        }
+    });
+
+    it('fails when the workflow environment exports GITHUB_TOKEN beside githubUserToken', () => {
+        const failure = captureFailure(() =>
+            boundAndResolved(
+                runnerEnv({
+                    GITHUB_TOKEN: 'ambient-actions-token',
+                    INPUT_GITHUBTOKEN: undefined,
+                    INPUT_GITHUBUSERTOKEN: INPUT_GITHUB_USER_TOKEN,
+                }),
+            ),
+        );
+
+        expect(failure).toBeInstanceOf(ConfigError);
+        const message = failure.message;
+        expect(message).toContain('GITHUB_TOKEN');
+        expect(message).toContain('GITHUB_USER_TOKEN');
+    });
+
+    it('fails named at the binding when the runner workspace is missing', () => {
+        const failure = captureFailure(() =>
+            mapAgentRunSources(runnerEnv({ GITHUB_WORKSPACE: undefined })),
+        );
+
+        expect(failure).toBeInstanceOf(ConfigError);
+        const message = failure.message;
         expect(message).toContain('GITHUB_WORKSPACE is required');
     });
 });

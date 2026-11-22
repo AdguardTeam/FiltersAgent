@@ -19,6 +19,10 @@ The format is based on [Keep a Changelog], and this project adheres to
   a shared rule written with another selector instead of proposing a rule for
   one site. A rule a list keeps in a group repeating one site list is listed
   with the lines of that group, which the agent names in its summary.
+- Added the `githubUserToken` input and the `GITHUB_USER_TOKEN` variable: the
+  run works under a user account and attaches the screenshots of the report to
+  the comment instead of committing them to a branch. Setting it together with
+  `githubToken` or `screenshotsBranch` fails the run at start.
 
 ### Changed
 
@@ -31,6 +35,8 @@ The format is based on [Keep a Changelog], and this project adheres to
 - Changed adding the reported domain to a shared rule to skip a rule the file
   keeps for one project, whose exact domain list another rule of the file
   repeats: the candidate gets a line of its own instead.
+- Changed a report whose template has no `{{screenshots}}` placeholder to host
+  no screenshots: nothing is committed to the screenshots branch for it.
 
 ### Fixed
 
@@ -40,6 +46,11 @@ The format is based on [Keep a Changelog], and this project adheres to
 - Fixed a tool call refused for its arguments naming the wrong field: the
   refusal lists every missing or unknown field by its real path, for every
   tool.
+- Fixed a second report on an unchanged issue when the first one was posted
+  under a user account and proposed no rule: the run no longer reads its own
+  report or notice as a maintainer's comment.
+- Fixed a rate-limited identity check being taken for the workflow token: the
+  run stops instead of looking for its earlier reports under the wrong login.
 - Fixed a second question about a reporter screenshot getting the answer to
   the first one: every question goes to the vision model.
 - Fixed a reporter screenshot larger than 5 MB being refused before it

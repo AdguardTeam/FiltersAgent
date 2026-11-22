@@ -124,8 +124,9 @@ inputs:
     screenshotsBranch:
         description: >-
             Branch the before and after screenshots of a verified rule are committed to, so the
-            report comment can show them; defaults to filters-agent-screenshots. Needs the
-            `contents: write` permission; without it the report posts without screenshots.
+            report comment can show them; defaults to filters-agent-screenshots. Applies with
+            githubToken only: githubUserToken attaches the screenshots to the comment instead. Needs
+            the `contents: write` permission; without it the report posts without screenshots.
         required: false
     lintCommand:
         description: >-
@@ -140,9 +141,19 @@ inputs:
         required: false
     githubToken:
         description: >-
-            GitHub API token the run reads issues with; in practice mandatory in every run,
-            since the action only serves GitHub-read modes — a missing token fails the job named,
-            even together with noComment.
+            GitHub API token the run reads issues with. One of githubToken and githubUserToken is
+            in practice mandatory in every run, since the action only serves GitHub-read modes — a
+            run without either fails the job named, even together with noComment. Pass exactly one
+            of the two; with this one the report's screenshots go to screenshotsBranch.
+        required: false
+    githubUserToken:
+        description: >-
+            The token of a user account with write access to the repository, passed in place of
+            githubToken. The whole run works under that account — issue reads, the report comment
+            and the git credential — and the screenshots of a verified rule are attached to the
+            report comment instead of committed to a branch. Setting it together with githubToken
+            or screenshotsBranch fails the run at start, and so does a GITHUB_TOKEN the workflow
+            exports in its env:.
         required: false
     llmBaseUrl:
         description: >-

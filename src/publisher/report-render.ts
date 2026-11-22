@@ -40,7 +40,7 @@ import {
     type BlockingPolicyVerdict,
 } from './report-labels';
 import { renderVersionUpdateHint } from './report-version-decision';
-import type { ReportTemplateValues } from './report-template';
+import { REPORT_COMMENT_SOURCE_LABEL, type ReportTemplateValues } from './report-template';
 import {
     composeListPlace,
     type ReportListSource,
@@ -49,14 +49,6 @@ import {
 import { composeRepositoryLint } from './report-repository-lint';
 import type { RepositoryLintNote } from '../types/repository-lint';
 import { renderUntrustedRuleCodeSpan, renderUntrustedText } from './untrusted-text';
-
-/**
- * Label identifying the report comment in template-render errors.
- *
- * A stable label, not the prompt-document defaults: a comment body that fails to render must be
- * traceable to the publisher without looking like a prompt failure.
- */
-const REPORT_COMMENT_SOURCE_LABEL = 'report comment template';
 
 /**
  * Render the host-authored clause naming the provider's HTTP failure status.

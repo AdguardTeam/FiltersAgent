@@ -39,8 +39,9 @@ variables already exported in the shell take precedence.
 | `repo search` | Search rules in the `REPOSITORY_PATH` checkout by `--domain`, `--selector`, `--url-pattern` or `--scriptlet` |
 | `repo map` | Generate `placement-map.json` from the `REPOSITORY_PATH` checkout |
 
-`backlog` posts its reports as issue comments whenever `GITHUB_TOKEN` is set;
-pass `--no-comment` to keep them in the output directory only.
+`backlog` posts its reports as issue comments whenever `GITHUB_TOKEN` or
+`GITHUB_USER_TOKEN` is set; pass `--no-comment` to keep them in the output
+directory only.
 `backlog` takes `--executors` and `--blocker-module` with the same meaning as
 `fix issue`.
 
@@ -111,6 +112,7 @@ and Sonnet 5.5 reject this with HTTP 400; Haiku 5.5 accepts it.
 | `LLM_REQUEST_MAX_ATTEMPTS` | No | `2` | Total attempts for transient LLM failures (1–3). After an HTTP 429 rate limit, an agent-loop retry waits 60 s and a second one 120 s; a vision or intake call first spends its quick transport retries, then waits the same way |
 | `LLM_PRICING_FILE` | No | — | JSON price file runs are priced from; without it the cost is not computed ([format](../guides/benchmark.md#count-the-cost)) |
 | `GITHUB_TOKEN` | For GitHub reads and comments | — | GitHub token scoped to the repository operation |
+| `GITHUB_USER_TOKEN` | In place of `GITHUB_TOKEN` | — | Token of a user account. Reports carry their screenshots as attachments instead of commits to a branch. Setting both variables fails the run |
 | `GITHUB_REPO_OWNER`, `GITHUB_REPO_NAME` | No | — | Repository identity, set together |
 | `REPOSITORY_PATH` | For `repo` commands | — | Path of a local filters repository checkout |
 | `ADGUARD_LICENSE_KEY` | With the AdGuard CLI module | — | AdGuard licence the CLI is activated with for each run |

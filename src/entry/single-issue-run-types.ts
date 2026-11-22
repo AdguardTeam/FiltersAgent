@@ -12,6 +12,7 @@ import type { FiltersPreparationDependencies } from '../local/filters-preparer';
 import type { VerifiedIssueRevision } from '../local/issue-revision';
 import type { Logger } from '../logger/logger';
 import type { ReportPublishResult } from '../publisher/report-publisher';
+import type { ScreenshotsTarget } from '../publisher/report-screenshots';
 import type { TrustedRole } from '../queue/queue-inputs';
 import type { RepositorySlug } from '../types/repository-slug';
 import type {
@@ -134,9 +135,9 @@ export interface DefaultSingleIssueRequest {
     commentsEnabled: boolean;
 
     /**
-     * Branch the report's before and after screenshots are committed to.
+     * Where the report's before and after screenshots are hosted.
      */
-    screenshotsBranch: string;
+    screenshots: ScreenshotsTarget;
 
     /**
      * Reasoning-model override.

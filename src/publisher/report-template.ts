@@ -10,6 +10,7 @@
  */
 
 import { extractInstructionSection } from '../knowledge/instruction-preparation';
+import { extractPlaceholders } from '../prompts/template';
 
 /**
  * Keywords binding a Markdown `##` heading to the report-template role, checked case-insensitively
@@ -77,6 +78,30 @@ export type ReportTemplateFill = keyof typeof REPORT_TEMPLATE_FILL;
  * value possibly the empty string.
  */
 export type ReportTemplateValues = Record<ReportTemplateFill, string>;
+
+/**
+ * What a placeholder error calls the report template, so the message names the instruction section
+ * rather than a prompt.
+ */
+export const REPORT_COMMENT_SOURCE_LABEL = 'report comment template';
+
+/**
+ * The fill that shows the report's before and after screenshots.
+ */
+const SCREENSHOTS_FILL: ReportTemplateFill = 'screenshots';
+
+/**
+ * Tell whether a report template shows the screenshots.
+ *
+ * A custom template may leave the placeholder out. Hosting the pair for such a report would leave
+ * two images behind that no comment links — and an uploaded attachment cannot be deleted.
+ *
+ * @param template - Resolved report template.
+ * @returns True when the template carries the screenshots placeholder.
+ */
+export function reportTemplateShowsScreenshots(template: string): boolean {
+    return extractPlaceholders(template, REPORT_COMMENT_SOURCE_LABEL).includes(SCREENSHOTS_FILL);
+}
 
 /**
  * The built-in fallback template: content-equivalent to well-formed instruction templates —

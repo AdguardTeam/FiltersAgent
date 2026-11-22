@@ -96,7 +96,8 @@ export const AgentActionInputName = {
     force: 'force',
 
     /**
-     * The `screenshotsBranch` input naming the branch the report's screenshots are committed to.
+     * The `screenshotsBranch` input naming the branch the report's screenshots are committed to;
+     * applies with the `githubToken` input only.
      */
     screenshotsBranch: 'screenshotsBranch',
 
@@ -113,8 +114,17 @@ export const AgentActionInputName = {
 
     /**
      * The `githubToken` input; lands in the `GITHUB_TOKEN` environment variable the resolver reads.
+     * Exactly one of the two token inputs belongs in a run; with this one the report's screenshots
+     * go to `screenshotsBranch`.
      */
     githubToken: 'githubToken',
+
+    /**
+     * The `githubUserToken` input; lands in the `GITHUB_USER_TOKEN` environment variable the
+     * resolver reads. A user account's token, passed in place of `githubToken`: the whole run works
+     * under that account and the report's screenshots are attached to the comment.
+     */
+    githubUserToken: 'githubUserToken',
 
     /**
      * The `llmBaseUrl` input; lands in the `LLM_BASE_URL` environment variable `loadCoreConfig`

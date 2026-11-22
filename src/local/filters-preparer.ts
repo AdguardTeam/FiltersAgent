@@ -27,8 +27,9 @@ export interface FiltersCommand {
 
     /**
      * The explicit host-scoped GitHub token a runner wrapper attaches; the command runner uses it
-     * only for git commands in place of a `GITHUB_TOKEN` from the subprocess source environment.
-     * The token travels only through this field and must never be logged or serialized.
+     * only for git commands in place of the run's token variable (`GITHUB_TOKEN` or
+     * `GITHUB_USER_TOKEN`) from the subprocess source environment. The token travels only through
+     * this field and must never be logged or serialized.
      */
     gitCredentialToken?: string;
 }

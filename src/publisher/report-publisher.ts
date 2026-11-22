@@ -21,6 +21,7 @@
 
 import * as v from 'valibot';
 import type { Octokit } from '@octokit/rest';
+import { GeneratedCommentMarkerPrefix } from '../github/generated-comment-markers';
 
 /**
  * What a revision-marked comment is, spelled as the name of its hidden marker.
@@ -49,9 +50,21 @@ export type RevisionCommentKind = (typeof RevisionCommentKind)[keyof typeof Revi
  * The reserved `adguard-filters-agent:<name>` marker namespace is covered by
  * `AGENT_CONTROL_MARKER_PATTERN` (`src/github/agent-control-markers.ts`), which stamps all such
  * markers out of untrusted upstream Markdown before it reaches the repository — so a reporter can
- * never forge one, and these markers need no registry entry of their own.
+ * never forge one.
  */
 const REVISION_MARKER_NAMESPACE = 'adguard-filters-agent:';
+
+/**
+ * Opener of the hidden revision marker of each comment kind, as written.
+ *
+ * The openers live in the generated-marker vocabulary, so the filters that keep generated comments
+ * out of an issue revision and out of the prompt drop a report or a notice by its marker: the run
+ * can post under a user account, whose comments no author check tells from a maintainer's.
+ */
+const REVISION_MARKER_PREFIX: Record<RevisionCommentKind, GeneratedCommentMarkerPrefix> = {
+    [RevisionCommentKind.Report]: GeneratedCommentMarkerPrefix.RevisionReport,
+    [RevisionCommentKind.Notice]: GeneratedCommentMarkerPrefix.RevisionNotice,
+};
 
 /**
  * Prefix of the hidden revision marker opening a comment of one kind.
@@ -60,7 +73,7 @@ const REVISION_MARKER_NAMESPACE = 'adguard-filters-agent:';
  * @returns The marker's opening text, up to its payload.
  */
 function revisionMarkerPrefix(kind: RevisionCommentKind): string {
-    return `<!-- ${REVISION_MARKER_NAMESPACE}${kind} `;
+    return REVISION_MARKER_PREFIX[kind];
 }
 
 /**

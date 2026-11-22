@@ -80,11 +80,12 @@ When it runs against an issue, `filters-agent`:
    accessed, or the report could not be processed — with the link to the run, whatever your
    report template; the reason stays in the artifact. The notice is not the report: label the issue again or rerun the workflow to
    retry. For a verified
-   rule the report shows the page without and with the rule. GitHub has no API to attach an image
-   to a comment, so the run commits the images to a branch of your repository, named by the
-   `screenshotsBranch` input (`filters-agent-screenshots` by default), which is why the example
-   workflow grants `contents: write`. With `contents: read` the report posts without the images
-   and the run log says which permission is missing.
+   rule the report shows the page without and with the rule. With `githubToken` the run commits
+   the images to a branch of your repository, named by the `screenshotsBranch` input
+   (`filters-agent-screenshots` by default), which is why the example workflow grants
+   `contents: write`. With `contents: read` the report posts without the images and the run log
+   says which permission is missing. To attach the images to the comment instead, see
+   [Attach the screenshots to the comment](#attach-the-screenshots-to-the-comment).
    The full run — report, traces, screenshots — is uploaded as a workflow artifact; find it on the workflow run's Summary page. Preparation steps in an instruction run inside the action image, which provides `curl`, `jq`, `node`, `git` and `unzip`.
 
 Releases are tagged `vX.Y.Z`, and `v1` follows the latest 1.x release; the example uses `@v1`.
@@ -496,6 +497,48 @@ linter installed into the workspace, as above, runs there; a tool installed on t
 the workspace does not. The command gets none of the run's secrets: its environment holds only a
 minimal set such as `PATH`, `HOME`, the locale and the temporary-directory variables.
 
+### Attach the screenshots to the comment
+
+GitHub attaches an image to a comment for a user account only, never for the workflow token. To
+get the screenshots as attachments instead of commits to a branch, run the agent under a user
+account:
+
+1. Create a user account for the agent and give it write access to your filters repository and
+   to nothing else. The run uses the account's token for every GitHub call and as its git
+   credential. Unlike the workflow token, that token does not expire with the job and reaches
+   everything the account can reach.
+2. Create a classic personal access token for that account and store it as a repository
+   secret. For a public repository the `public_repo` scope is enough; a private repository
+   needs the `repo` scope. A fine-grained token has not been tried.
+3. In the workflow, pass the secret as `githubUserToken` in place of `githubToken`:
+
+    ```yaml
+    with:
+        githubUserToken: ${{ secrets.FILTERS_AGENT_USER_TOKEN }}
+    ```
+
+4. Remove `githubToken` and `screenshotsBranch` from the step. Either one beside
+   `githubUserToken` fails the run at start, and so does a `GITHUB_TOKEN` the workflow exports in
+   an `env:` block.
+5. Lower `contents: write` to `contents: read` in the workflow's `permissions`: the run no longer
+   writes to the repository.
+
+After the switch:
+
+- Reports are posted by that account, not by `github-actions[bot]`.
+- The run recognizes its own reports by their author, so reports posted before the switch are no
+  longer its own. A rerun on an issue whose current text already has an earlier report posts a
+  second one. Runs on new issues are not affected.
+- Comments posted with a user account's token start workflows that run on `issue_comment`;
+  comments posted with the workflow token do not. Check the workflows of your repository that
+  run on that event.
+- Attachments of a public repository are public, like the files on the branch.
+- Earlier reports still link into the screenshots branch. Keep the branch while those reports
+  matter: deleting it removes their images.
+- If an upload fails, the report posts without the images. The run log carries a warning that
+  names the failed request and its HTTP status, when the failure has one. For a 401, 403 or 404
+  the warning also says what the token needs.
+
 ### What the report can say
 
 A `## Report template` section in your instruction replaces the built-in comment, and it is filled
@@ -517,7 +560,7 @@ template can carry a heading for a case that rarely happens.
 | `{{policyRationale}}` | The reasons of the policy decision: which rule of your filter policy (in the instruction or a document it links) allowed a rule or ruled it out. Empty when the run carries no policy decision. |
 | `{{listPlace}}` | The file the rule goes into, and where inside it: the heading and platform condition when the run recorded them, the line the rule goes before or extends, or the agent's reason for the end of the file. The file and line are links to the file at the commit the run analyzed. |
 | `{{missingInformation}}` | What the report would need to be actionable, when something is missing. |
-| `{{screenshots}}` | The page without and with the verified rule, side by side. Empty when no rule was verified, and when the workflow lacks `contents: write` (see the example workflow). |
+| `{{screenshots}}` | The page without and with the verified rule, side by side. Empty when no rule was verified; with `githubToken`, when the workflow lacks `contents: write` (see the example workflow); with `githubUserToken`, when the upload of the attachments failed. A template without this placeholder hosts no screenshots. |
 | `{{artifactsLink}}` | Link to the workflow run holding the full evidence. |
 
 Every report ends with a footer line outside the template: the filters commit the run analyzed,

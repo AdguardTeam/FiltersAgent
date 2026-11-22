@@ -10,6 +10,7 @@ describe('buildBrowserSubprocessEnvironment', () => {
             LANG: 'C.UTF-8',
             DISPLAY: ':99',
             GITHUB_TOKEN: 'github-secret',
+            GITHUB_USER_TOKEN: 'github-user-secret',
             GITHUB_EVENT_PATH: '/runner/event.json',
             LLM_API_KEY: 'llm-secret',
             OPENROUTER_API_KEY: 'legacy-secret',
@@ -24,6 +25,7 @@ describe('buildBrowserSubprocessEnvironment', () => {
             DISPLAY: ':99',
         });
         expect(environment).not.toHaveProperty('GITHUB_TOKEN');
+        expect(environment).not.toHaveProperty('GITHUB_USER_TOKEN');
         expect(environment).not.toHaveProperty('GITHUB_EVENT_PATH');
         expect(environment).not.toHaveProperty('LLM_API_KEY');
         expect(environment).not.toHaveProperty('OPENROUTER_API_KEY');

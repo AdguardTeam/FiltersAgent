@@ -28,6 +28,28 @@ describe('resolveReportAuthorLogin', () => {
         await expect(resolveReportAuthorLogin(octokit)).resolves.toBe(GITHUB_ACTIONS_BOT_LOGIN);
     });
 
+    it('rethrows a 403 that reports an exhausted rate limit: a user token gets one too', async () => {
+        const exhausted = Object.assign(httpError(403), {
+            response: { headers: { 'x-ratelimit-remaining': '0' } },
+        });
+        const secondary = Object.assign(httpError(403), {
+            response: { headers: { 'retry-after': '60' } },
+        });
+
+        const headerless = Object.assign(
+            new Error('You have exceeded a secondary rate limit. Please wait a few minutes.'),
+            { status: 403 },
+        );
+
+        for (const failure of [exhausted, secondary, headerless]) {
+            const octokit = octokitWhere(async () => {
+                throw failure;
+            });
+
+            await expect(resolveReportAuthorLogin(octokit)).rejects.toBe(failure);
+        }
+    });
+
     it('rethrows any other failure instead of guessing the identity', async () => {
         const failure = httpError(502);
         const octokit = octokitWhere(async () => {
