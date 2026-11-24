@@ -10,6 +10,8 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-11-23
+
 ### Added
 
 - Added a page check to `search_rules`: a selector query made while the
@@ -394,7 +396,8 @@ The format is based on [Keep a Changelog], and this project adheres to
     - Benchmark — replays fixed historical issues and compares the agent's
       rules with the maintainers' fixes.
 
-[Unreleased]: https://github.com/AdguardTeam/FiltersAgent/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/AdguardTeam/FiltersAgent/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/AdguardTeam/FiltersAgent/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/AdguardTeam/FiltersAgent/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/AdguardTeam/FiltersAgent/compare/v1.0.1...v1.1.0
 [1.0.1]: https://github.com/AdguardTeam/FiltersAgent/compare/v1.0.0...v1.0.1
