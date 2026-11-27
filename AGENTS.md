@@ -114,6 +114,12 @@ filters-agent/
 - You MUST add an entry under `[Unreleased]` in `CHANGELOG.md` for every change a user of the
   action or the CLI can notice, as part of the same change.
 
+- Each `CHANGELOG.md` entry MUST be written for a user: one or two sentences about
+  what changes for them, about as long as the neighboring entries, one bullet per
+  user-visible effect. Do not narrate the old behavior or what did not change, and
+  leave out internal mechanics and follow-up tickets. When an example needs a domain,
+  use `example.com` or `example.org`.
+
 - You MUST update `README.md`, `DEVELOPMENT.md`, `REQUIREMENTS.md` and the affected pages under
   `docs/` when a change affects what they describe.
 
